@@ -11,6 +11,7 @@ import pytest
 
 
 cli_main: Any = importlib.import_module("strix.interface.main")
+cli_args: Any = importlib.import_module("strix.interface.cli_args")
 
 
 def _stub_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -104,9 +105,23 @@ def test_parse_fail_on_requires_non_interactive(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _stub_settings(monkeypatch)
+    monkeypatch.setattr(cli_args, "terminal_attached", lambda: True)
     monkeypatch.setattr(sys, "argv", ["strix", "-t", "https://test.com/", "--fail-on", "high"])
 
     with pytest.raises(SystemExit):
         cli_main.parse_arguments()
 
     assert "--fail-on only applies to headless runs" in capsys.readouterr().err
+
+
+def test_parse_fail_on_without_a_terminal_waits_for_the_headless_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_settings(monkeypatch)
+    monkeypatch.setattr(cli_args, "terminal_attached", lambda: False)
+    monkeypatch.setattr(sys, "argv", ["strix", "-t", "https://test.com/", "--fail-on", "high"])
+
+    args = cli_main.parse_arguments()
+
+    assert args.fail_on == "high"
+    assert args.non_interactive is False

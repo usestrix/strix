@@ -7,7 +7,6 @@ import argparse
 import asyncio
 import contextlib
 import logging
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -24,6 +23,7 @@ from strix.interface.cli_args import (
     load_resume_state,
     parse_arguments,
     resume_run_list_message,
+    terminal_attached,
 )
 from strix.interface.environment import (
     check_docker_installed,
@@ -350,13 +350,6 @@ def _print_cli_error(message: str) -> None:
 HEADLESS_HINT = "If Strix runs without a terminal (CI, nohup, pipes), pass -n to run headless."
 
 
-def _terminal_attached() -> bool:
-    """Whether the TUI can take over the terminal: a tty on both ends, not dumb."""
-    if os.environ.get("TERM", "").strip().lower() == "dumb":
-        return False
-    return all(hasattr(stream, "isatty") and stream.isatty() for stream in (sys.stdin, sys.stdout))
-
-
 def _fall_back_to_headless(args: argparse.Namespace) -> None:
     """Run headless when there is no terminal for the TUI to attach to.
 
@@ -366,7 +359,7 @@ def _fall_back_to_headless(args: argparse.Namespace) -> None:
     enter a target, so stop with the fix instead. A bare ``--resume`` is left
     to the picker, which already explains itself without a terminal.
     """
-    if args.non_interactive or args.resume_picker or _terminal_attached():
+    if args.non_interactive or args.resume_picker or terminal_attached():
         return
     if args.needs_setup:
         report_error("no_terminal_for_setup")

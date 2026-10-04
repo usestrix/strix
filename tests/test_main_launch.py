@@ -11,6 +11,7 @@ import pytest
 
 
 cli_main: Any = importlib.import_module("strix.interface.main")
+cli_args: Any = importlib.import_module("strix.interface.cli_args")
 report_state_module: Any = importlib.import_module("strix.report.state")
 interactive: Any = importlib.import_module("strix.interface.interactive")
 tui_runtime: Any = importlib.import_module("strix.interface.tui.runtime")
@@ -42,7 +43,7 @@ def _launch(
         calls.append("cli")
 
     monkeypatch.setattr(sys, "argv", ["strix", "--target", "https://example.com"])
-    monkeypatch.setattr(cli_main, "_terminal_attached", lambda: terminal)
+    monkeypatch.setattr(cli_main, "terminal_attached", lambda: terminal)
     monkeypatch.setattr("strix.interface.cli.run_cli", run_cli)
     monkeypatch.setattr(cli_main, "report_error", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli_main, "_print_error_panel", lambda title, _msg: calls.append(title))
@@ -121,7 +122,7 @@ def test_tui_startup_failure_marks_the_prepared_run_failed(monkeypatch: pytest.M
         raise cli_main.InteractiveSetupUnavailableError("no sidecar")
 
     monkeypatch.setattr(sys, "argv", ["strix", "--target", "https://example.com"])
-    monkeypatch.setattr(cli_main, "_terminal_attached", lambda: True)
+    monkeypatch.setattr(cli_main, "terminal_attached", lambda: True)
     monkeypatch.setattr(cli_main, "setup_console_logging", lambda: None)
     monkeypatch.setattr(cli_main, "start_import_warmup", lambda: None)
     monkeypatch.setattr(cli_main, "parse_arguments", lambda: args)
@@ -160,6 +161,30 @@ def test_no_terminal_with_a_target_runs_headless_with_a_notice(
     assert "No terminal attached, running headless (same as -n)." in capsys.readouterr().out
 
 
+def test_no_terminal_fallback_keeps_the_fail_on_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    report_state = SimpleNamespace(
+        cleanup=lambda status: calls.append(f"cleanup:{status}"),
+        vulnerability_reports=[{"id": "vuln-0001", "severity": "high"}],
+    )
+    args = argparse.Namespace(
+        non_interactive=False,
+        needs_setup=False,
+        resume_picker=False,
+        run_name="run",
+        fail_on="high",
+    )
+    monkeypatch.setattr(cli_main.posthog, "end", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli_main.scarf, "end", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(report_state_module, "get_global_report_state", lambda: report_state)
+
+    with pytest.raises(SystemExit) as exit_info:
+        _launch(monkeypatch, needs_setup=False, terminal=False, args=args)
+
+    assert exit_info.value.code == 2
+    assert args.non_interactive is True
+
+
 def test_no_terminal_without_a_target_stops_with_the_headless_hint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -167,7 +192,7 @@ def test_no_terminal_without_a_target_stops_with_the_headless_hint(
     args = argparse.Namespace(
         non_interactive=False, needs_setup=True, resume_picker=False, run_name=None, fail_on=None
     )
-    monkeypatch.setattr(cli_main, "_terminal_attached", lambda: False)
+    monkeypatch.setattr(cli_main, "terminal_attached", lambda: False)
     monkeypatch.setattr(cli_main, "report_error", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         cli_main, "_print_error_panel", lambda title, msg: panels.append((title, msg))
@@ -191,7 +216,7 @@ def test_no_terminal_leaves_a_bare_resume_to_the_picker(monkeypatch: pytest.Monk
     args = argparse.Namespace(
         non_interactive=False, needs_setup=False, resume_picker=True, run_name=None, fail_on=None
     )
-    monkeypatch.setattr(cli_main, "_terminal_attached", lambda: False)
+    monkeypatch.setattr(cli_main, "terminal_attached", lambda: False)
 
     cli_main._fall_back_to_headless(args)
 
@@ -207,18 +232,18 @@ def test_terminal_attached_needs_a_tty_on_both_ends_and_a_real_term(
     monkeypatch.delenv("TERM", raising=False)
     monkeypatch.setattr(sys, "stdin", stream(tty=True))
     monkeypatch.setattr(sys, "stdout", stream(tty=True))
-    assert cli_main._terminal_attached() is True
+    assert cli_args.terminal_attached() is True
 
     monkeypatch.setattr(sys, "stdout", stream(tty=False))
-    assert cli_main._terminal_attached() is False
+    assert cli_args.terminal_attached() is False
 
     monkeypatch.setattr(sys, "stdout", stream(tty=True))
     monkeypatch.setattr(sys, "stdin", stream(tty=False))
-    assert cli_main._terminal_attached() is False
+    assert cli_args.terminal_attached() is False
 
     monkeypatch.setattr(sys, "stdin", stream(tty=True))
     monkeypatch.setenv("TERM", "dumb")
-    assert cli_main._terminal_attached() is False
+    assert cli_args.terminal_attached() is False
 
 
 def test_tui_process_dying_after_startup_prints_a_panel_instead_of_a_traceback(
@@ -235,7 +260,7 @@ def test_tui_process_dying_after_startup_prints_a_panel_instead_of_a_traceback(
         raise cli_main.InteractiveInterfaceExitedError("Bubble Tea TUI exited with status 1")
 
     monkeypatch.setattr(sys, "argv", ["strix", "--target", "https://example.com"])
-    monkeypatch.setattr(cli_main, "_terminal_attached", lambda: True)
+    monkeypatch.setattr(cli_main, "terminal_attached", lambda: True)
     monkeypatch.setattr(cli_main, "setup_console_logging", lambda: None)
     monkeypatch.setattr(cli_main, "start_import_warmup", lambda: None)
     monkeypatch.setattr(cli_main, "parse_arguments", lambda: args)

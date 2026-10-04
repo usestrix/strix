@@ -342,7 +342,9 @@ Strix Cloud:
     if args.update:
         sys.exit(0 if self_update() else 1)
 
-    if args.fail_on and not args.non_interactive:
+    if args.fail_on and not args.non_interactive and terminal_attached():
+        # Without a terminal main() switches to headless anyway, so the
+        # flag is only out of place when the TUI would actually open.
         parser.error("--fail-on only applies to headless runs; add -n/--non-interactive.")
 
     if args.instruction and args.instruction_file:
@@ -412,6 +414,13 @@ Strix Cloud:
             parser.error(str(e))
 
     return args
+
+
+def terminal_attached() -> bool:
+    """Whether the TUI can take over the terminal: a tty on both ends, not dumb."""
+    if os.environ.get("TERM", "").strip().lower() == "dumb":
+        return False
+    return all(hasattr(stream, "isatty") and stream.isatty() for stream in (sys.stdin, sys.stdout))
 
 
 class ResumeError(ValueError):
