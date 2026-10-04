@@ -197,7 +197,7 @@ async def _send_message(connection: socket.socket, message: dict[str, Any]) -> N
 
 
 @pytest.mark.asyncio
-async def test_runtime_does_not_initialize_or_scan_before_ready(
+async def test_runtime_prepares_state_before_launch_and_scans_only_after_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_args = args()
@@ -241,7 +241,7 @@ async def test_runtime_does_not_initialize_or_scan_before_ready(
     try:
         hello = await _receive_message(child)
         assert hello["type"] == "hello"
-        assert calls == []
+        assert calls == ["state"]
         await _send_message(
             child,
             {
@@ -1027,7 +1027,7 @@ async def test_direct_launch_starts_the_prepared_scan_without_a_model_round_trip
 
     assert runtime._start_preparation() is None
 
-    assert order == ["state", "scan"]
+    assert order == ["scan"]
     assert runtime.controller.setup_mode is False
     assert runtime.controller.scan_state == "running"
 

@@ -44,7 +44,7 @@ from strix.interface.utils import (
 )
 from strix.llm.warmup import start_import_warmup, wait_for_import_warmup
 from strix.telemetry import posthog, report_error, scarf, set_scan_phase
-from strix.telemetry.logging import configure_dependency_logging
+from strix.telemetry.logging import setup_console_logging
 
 
 BEDROCK_MODEL_PREFIX = "bedrock/"
@@ -428,7 +428,7 @@ def main() -> None:
         _force_utf8_streams()
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-    configure_dependency_logging()
+    setup_console_logging()
 
     if len(sys.argv) == 2 and sys.argv[1] in ("-h", "--help"):
         try:

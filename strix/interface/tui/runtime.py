@@ -167,7 +167,6 @@ class GoTuiRuntime:
         if self.controller.setup_mode:
             self._setup_preflight = asyncio.create_task(self.check_setup_model())
             return self._setup_preflight
-        self.init_run_state()
         self.start_scan()
         return None
 
@@ -418,6 +417,8 @@ class GoTuiRuntime:
         prepare_task: asyncio.Task[None] | None = None
         process: asyncio.subprocess.Process | subprocess.Popen[bytes] | None = None
         try:
+            if not self.controller.setup_mode:
+                self.init_run_state()
             env = child_environment()
             env["STRIX_VERSION"] = package_version()
             command = self.binary_command()
