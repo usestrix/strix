@@ -36,6 +36,7 @@ from strix.interface.interactive import (
 from strix.interface.scan_setup import (
     ModelConnectionError,
     preflight_model_connection,
+    preflight_request,
     prepare_run,
     telemetry_start,
 )
@@ -106,13 +107,10 @@ def _subscription_error_hint(exc: BaseException) -> str | None:
 
 
 async def warm_up_llm() -> None:
-    from agents.models.interface import ModelTracing
-
     from strix.config.models import (
         configure_sdk_model_defaults,
         is_known_openai_bare_model,
     )
-    from strix.core.inputs import make_model_settings
 
     console = Console()
     logger.info("Warming up LLM connection")
@@ -166,28 +164,11 @@ async def warm_up_llm() -> None:
             # A dedicated dedupe model may route to another provider, which must
             # never receive the main endpoint's headers; it has its own
             # DEDUPE_LLM_EXTRA_HEADERS.
-            deduper_settings = make_model_settings(
-                None,
+            await preflight_request(
+                deduper,
                 model_name=dedupe_model,
-                request_timeout=llm.timeout,
-                prompt_cache=False,
                 extra_headers=settings.dedupe.extra_headers,
-                has_tools=False,
-            )
-            await asyncio.wait_for(
-                deduper.get_response(
-                    system_instructions="You are a helpful assistant.",
-                    input="Reply with just 'OK'.",
-                    model_settings=deduper_settings,
-                    tools=[],
-                    output_schema=None,
-                    handoffs=[],
-                    tracing=ModelTracing.DISABLED,
-                    previous_response_id=None,
-                    conversation_id=None,
-                    prompt=None,
-                ),
-                timeout=llm.timeout,
+                timeout=llm.preflight_timeout,
             )
             logger.info("LLM warm-up succeeded for dedupe model %s", dedupe_model)
 

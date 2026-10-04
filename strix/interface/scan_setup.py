@@ -46,6 +46,8 @@ from strix.utils.api_spec import (
 if TYPE_CHECKING:
     import argparse
 
+    from agents.models.interface import Model
+
 logger = logging.getLogger(__name__)
 
 HOST_GATEWAY_HOSTNAME = "host.docker.internal"
@@ -104,38 +106,61 @@ async def preflight_model_connection(
     settings: Settings | None = None,
 ) -> None:
     """Verify the configured model route before starting a scan."""
-    from agents.models.interface import ModelTracing
-
     from strix.config.models import StrixProvider, configure_sdk_model_defaults
-    from strix.core.inputs import make_model_settings
 
     resolved_settings = load_settings() if settings is None else settings
     check_header_safe_credentials(resolved_settings)
     configure_sdk_model_defaults(resolved_settings)
     model = StrixProvider().get_model(model_name)
+    await preflight_request(
+        model,
+        model_name=model_name,
+        extra_headers=resolved_settings.llm.extra_headers,
+        timeout=resolved_settings.llm.preflight_timeout,
+    )
+
+
+async def preflight_request(
+    model: Model,
+    *,
+    model_name: str,
+    extra_headers: dict[str, str] | None,
+    timeout: int,
+) -> None:
+    """Send one tiny request to ``model`` and fail if it does not answer in ``timeout`` seconds."""
+    from agents.models.interface import ModelTracing
+
+    from strix.core.inputs import make_model_settings
+
     request_settings = make_model_settings(
         None,
         model_name=model_name,
-        request_timeout=resolved_settings.llm.timeout,
+        request_timeout=timeout,
         prompt_cache=False,
-        extra_headers=resolved_settings.llm.extra_headers,
+        extra_headers=extra_headers,
         has_tools=False,
     )
-    await asyncio.wait_for(
-        model.get_response(
-            system_instructions="You are a helpful assistant.",
-            input="Reply with just 'OK'.",
-            model_settings=request_settings,
-            tools=[],
-            output_schema=None,
-            handoffs=[],
-            tracing=ModelTracing.DISABLED,
-            previous_response_id=None,
-            conversation_id=None,
-            prompt=None,
-        ),
-        timeout=resolved_settings.llm.timeout,
-    )
+    try:
+        await asyncio.wait_for(
+            model.get_response(
+                system_instructions="You are a helpful assistant.",
+                input="Reply with just 'OK'.",
+                model_settings=request_settings,
+                tools=[],
+                output_schema=None,
+                handoffs=[],
+                tracing=ModelTracing.DISABLED,
+                previous_response_id=None,
+                conversation_id=None,
+                prompt=None,
+            ),
+            timeout=timeout,
+        )
+    except TimeoutError:
+        raise TimeoutError(
+            f"{model_name} did not answer within {timeout}s "
+            "(LLM_PREFLIGHT_TIMEOUT). Check LLM_API_BASE and that the endpoint is reachable."
+        ) from None
 
 
 def build_targets_info(args: argparse.Namespace) -> None:

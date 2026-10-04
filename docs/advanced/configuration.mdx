@@ -37,6 +37,11 @@ Configure Strix using environment variables or a config file.
   Request timeout in seconds for LLM calls.
 </ParamField>
 
+<ParamField path="LLM_PREFLIGHT_TIMEOUT" default="30" type="integer">
+  Seconds the startup connection check waits for the model to answer before
+  failing with `LLM CONNECTION FAILED`. Scan requests use `LLM_TIMEOUT`.
+</ParamField>
+
 <ParamField path="STRIX_LLM_MAX_RETRIES" default="5" type="integer">
   Maximum number of retries for LLM API calls on transient failures.
 </ParamField>
