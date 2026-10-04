@@ -887,6 +887,13 @@ class ReportState:
                 repository_context=self._sarif_repository_context(),
                 coverage=coverage,
             )
+            # Strix 2: fold the finding-annotation sidecar's ATT&CK/CIS/domain tags
+            # into the SARIF that was just written. No-op without annotations, so
+            # upstream-only runs are unaffected; isolated so a failure never breaks
+            # the base SARIF already on disk.
+            from strix.findings2.sarif_enrich import enrich_run_sarif
+
+            enrich_run_sarif(run_dir)
         except Exception:
             logger.exception("SARIF emit failed (non-fatal; CSV/MD unaffected)")
 
