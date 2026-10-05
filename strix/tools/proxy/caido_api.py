@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import time
 import urllib.request
@@ -22,6 +23,8 @@ if TYPE_CHECKING:
     from caido_sdk_client import Client as CaidoClient
     from caido_sdk_client.types import ConnectionInfoInput
 
+
+logger = logging.getLogger(__name__)
 
 RequestPart = Literal["request", "response"]
 SortBy = Literal[
@@ -94,13 +97,19 @@ def _login_as_guest() -> str:
 
 
 async def _new_client() -> Client:
-    from caido_sdk_client import Client, TokenAuthOptions, ConsoleLogger
+    from caido_sdk_client import Client, ConsoleLogger, TokenAuthOptions
 
     token = _access_token()
     if token is None:
         token = await asyncio.to_thread(_login_as_guest)
     client = Client(caido_url(), auth=TokenAuthOptions(token=token), logger=ConsoleLogger())
-    await client.connect()
+    try:
+        await client.connect()
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.exception("Caido client connect failed: %s", exc)
+        raise
     return client
 
 

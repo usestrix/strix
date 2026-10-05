@@ -129,7 +129,7 @@ async def bootstrap_caido(
     logger.info("Bootstrapping Caido client (host=%s, container=%s)", host_url, container_url)
 
     if pat:
-        from caido_sdk_client import Client, PATAuthOptions, ConsoleLogger
+        from caido_sdk_client import Client, ConsoleLogger, PATAuthOptions
 
         client = Client(
             host_url,
@@ -137,7 +137,7 @@ async def bootstrap_caido(
             logger=ConsoleLogger(),
         )
     else:
-        from caido_sdk_client import Client, TokenAuthOptions, ConsoleLogger
+        from caido_sdk_client import Client, ConsoleLogger, TokenAuthOptions
 
         access_token = await _login_as_guest(session, container_url=container_url)
         client = Client(host_url, auth=TokenAuthOptions(token=access_token), logger=ConsoleLogger())
@@ -145,7 +145,13 @@ async def bootstrap_caido(
         # connect() is inside the guard as well: a cancellation there (scan
         # teardown while the bootstrap is still in flight) would otherwise
         # leave the half-connected transport behind.
-        await client.connect()
+        try:
+            await client.connect()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("Caido client connect failed: %s", exc)
+            raise
         project = await client.project.create(
             CreateProjectOptions(name="sandbox", temporary=True),
         )
