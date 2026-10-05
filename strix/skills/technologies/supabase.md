@@ -35,7 +35,7 @@ Security testing for Supabase applications. Focus on mis-scoped Row Level Securi
 - Functions: `https://<ref>.functions.supabase.co/`
 
 **Headers**
-- `apikey: <anon-or-service>` — identifies project
+- `apikey: <publishable-or-secret-key>` — identifies the application component; legacy `anon` / `service_role` JWT keys can still coexist
 - `Authorization: Bearer <JWT>` — binds user context
 
 **Roles**
@@ -44,6 +44,13 @@ Security testing for Supabase applications. Focus on mis-scoped Row Level Securi
 
 **Key Principle**
 `auth.uid()` returns current user UUID from JWT. Policies must never trust client-supplied IDs over server context.
+
+### API Keys and Signing Keys
+
+- Opaque keys start with `sb_publishable_` or `sb_secret_`; JWT decoding will not classify them. Search bundles, server configuration, and responses for both formats. Publishable keys are intended for public clients; secret keys use `service_role` and bypass RLS. A browser 401 for a leaked secret key is not revocation: the browser restriction uses `User-Agent` and does not stop server-side use.
+- Creating new keys does not disable legacy keys. After migration, test whether the old `anon` / `service_role` credential remains accepted; dashboard revocation is a separate action. Verify supported key formats and migration/deprecation status from project settings and current Supabase documentation ([API keys](https://supabase.com/docs/guides/getting-started/api-keys)).
+- Edge Functions use user JWTs in `Authorization` and API keys in `apikey`. Verify the deployed platform's `verify_jwt` behavior with current docs and controlled requests, including API keys on either header; passing a platform check with a publishable key does not establish a signed-in user. Test whether the handler verifies user identity before using a privileged client. Conversely, `verify_jwt=false` with explicit secret-key or webhook verification is not necessarily public. Trace the configured `@supabase/server` auth mode or custom verification ([function authorization](https://supabase.com/docs/guides/functions/auth-headers)).
+- Asymmetric signing keys are discoverable at `/auth/v1/.well-known/jwks.json`. Test custom API/Edge Function validators for issuer/algorithm binding and stale cached keys after rotation/revocation. Measure cache lifetimes from response headers, SDK configuration, and controlled rotation tests; check service-specific revocation behavior in current documentation rather than assuming platform and custom validators share a cache ([signing keys](https://supabase.com/docs/guides/auth/signing-keys)).
 
 ## High-Value Targets
 

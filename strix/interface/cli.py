@@ -122,10 +122,32 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         console.print(vuln_panel)
         console.print()
 
+    def display_vulnerability_deleted(report: dict[str, Any]) -> None:
+        report_id = str(report.get("id", "unknown"))
+        deletion = report.get("deletion")
+        deletion = deletion if isinstance(deletion, dict) else {}
+        deleted_by = deletion.get("agent_name") or deletion.get("agent_id") or "agent"
+        text = Text()
+        text.append("Withdrawn: ", style="bold")
+        text.append(f"{report.get('title', '')}\n\n")
+        text.append(f"Deleted by {deleted_by}. ", style="dim")
+        text.append(str(deletion.get("reason") or ""))
+        console.print(
+            Panel(
+                text,
+                title=f"[bold yellow]{report_id.upper()} (withdrawn)",
+                title_align="left",
+                border_style="yellow",
+                padding=(1, 2),
+            )
+        )
+        console.print()
+
     report_state.vulnerability_found_callback = display_vulnerability
     report_state.vulnerability_updated_callback = lambda report: display_vulnerability(
         report, updated=True
     )
+    report_state.vulnerability_deleted_callback = display_vulnerability_deleted
 
     def cleanup_on_exit() -> None:
         report_state.cleanup()

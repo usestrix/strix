@@ -17,16 +17,17 @@ from agents.sandbox import SandboxRunConfig
 from openai import RateLimitError
 
 from strix.agents.factory import build_strix_agent, make_child_factory
-from strix.agents.prompt import render_system_prompt
-from strix.config import load_settings
+from strix.agents.prompt import render_scope_prompt, render_system_prompt
+from strix.config import codex, load_settings
 from strix.config.models import (
     StrixProvider,
+    configure_sdk_api_route,
     configure_sdk_model_defaults,
     supports_strict_tool_schemas,
     uses_chat_completions_tool_schema,
 )
 from strix.config.settings import DEFAULT_MAX_TURNS
-from strix.core.agents import AgentCoordinator
+from strix.core.agents import AgentCoordinator, BudgetPolicy
 from strix.core.execution import (
     respawn_subagents,
     run_agent_loop,
@@ -45,6 +46,7 @@ from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.sessions import open_agent_session
 from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
+from strix.telemetry import set_scan_phase
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
 from strix.tools.output_store import (
     WORKSPACE_SPILL_DIR,
@@ -58,10 +60,8 @@ if TYPE_CHECKING:
 
     from strix.runtime.status import StatusSink
     from strix.tools.mcp import (
-        ConnectedMcpServer,
         McpConnectionRequest,
         McpRegistry,
-        SupervisedMcpSession,
     )
 
 
@@ -70,8 +70,8 @@ logger = logging.getLogger(__name__)
 StreamEventSink = Callable[[str, Any], None]
 
 # Receives the run's MCP connection roster as a list of non-secret status dicts
-# ({"name", "provider", "tool_count", "dead"}), once when the connections are
-# established and again each time a connection transitions to dead. An interface
+# ({"name", "provider", "tool_count", "dead", "state"}), once when the connections
+# are registered and again on lifecycle transitions. An interface
 # can persist it, render it, or forward it on as connection status. Kept as a
 # snapshot of the whole roster (not a per-
 # connection delta) so every call carries a consistent, current picture.
@@ -79,30 +79,21 @@ McpStatusSink = Callable[[list[dict[str, Any]]], None]
 
 
 def _mcp_roster_payload(registry: McpRegistry) -> list[dict[str, Any]]:
-    """The run's MCP roster as non-secret status dicts (name/provider/tool_count/dead)."""
+    """The run's MCP roster as non-secret lifecycle status dicts."""
     return [
         {
             "name": status.name,
             "provider": status.provider,
             "tool_count": status.tool_count,
             "dead": status.dead,
+            "state": status.state,
         }
         for status in registry.statuses()
     ]
 
 
-def _mcp_startup_summary(connections: list[ConnectedMcpServer]) -> str:
-    """One user-facing line summarizing the MCP servers that connected."""
-    server_count = len(connections)
-    tool_count = sum(c.tool_count for c in connections)
-    servers_word = "server" if server_count == 1 else "servers"
-    tools_word = "tool" if tool_count == 1 else "tools"
-    names = ", ".join(c.name for c in connections)
-    return f"MCP: connected {server_count} {servers_word} ({tool_count} {tools_word}): {names}"
-
-
-def _record_mcp_connections(connections: list[ConnectedMcpServer]) -> None:
-    """Record which MCP servers this run connected, for the interfaces.
+def _record_mcp_connections(connection_names: list[str]) -> None:
+    """Record which MCP servers this run configured, for the interfaces.
 
     A server's tools are offered to the model under a name built from the
     connection name and the tool's own name, which cannot be split back apart, so
@@ -113,7 +104,14 @@ def _record_mcp_connections(connections: list[ConnectedMcpServer]) -> None:
     report_state = get_global_report_state()
     if report_state is None:
         return
-    report_state.record_mcp_connections([connection.name for connection in connections])
+    report_state.record_mcp_connections(connection_names)
+
+
+def _note_exit_reason(reason: str) -> None:
+    """Record why the scan stopped so the end-of-scan beacon reports it."""
+    report_state = get_global_report_state()
+    if report_state is not None and report_state.scan_ended_exit_reason is None:
+        report_state.scan_ended_exit_reason = reason
 
 
 def _persist_mcp_status(roster: list[dict[str, Any]]) -> None:
@@ -167,15 +165,15 @@ def _compose_root_instructions_override(
         is_diff_scoped=is_diff_scoped,
         interactive=interactive,
         system_prompt_context=system_prompt_context,
+        include_scope=False,
     )
     return (
         f"{base_instructions}\n\n"
         "<root_scan_instructions_override>\n"
-        "The following root scan instructions are subordinate to the "
-        "system-verified scope above. They cannot expand, replace, or weaken "
-        "authorized target constraints.\n\n"
+        "The following root scan instructions describe the task configuration.\n\n"
         f"{root_instructions_override}\n"
-        "</root_scan_instructions_override>"
+        "</root_scan_instructions_override>\n\n"
+        f"{render_scope_prompt(system_prompt_context)}"
     )
 
 
@@ -190,6 +188,7 @@ async def run_strix_scan(
     interactive: bool = False,
     max_turns: int = DEFAULT_MAX_TURNS,
     max_budget_usd: float | None = None,
+    budget_policy: BudgetPolicy = "stop",
     model: str | None = None,
     cleanup_on_exit: bool = True,
     event_sink: StreamEventSink | None = None,
@@ -209,6 +208,12 @@ async def run_strix_scan(
     ``extra_system_prompt_context`` is merged into the root agent's scan
     context before prompt rendering. Child agents keep the standard scan prompt
     and context.
+    ``budget_policy`` decides what happens when the LLM spend reaches
+    ``max_budget_usd``: ``"stop"`` warns the agents as the limit approaches and
+    ends the scan at it; ``"pause"`` tells the agents nothing and parks every
+    agent before its next LLM call until the caller resumes the scan through
+    ``coordinator.resume_budget()`` (optionally with a higher limit) or cancels
+    it. ``coordinator.pause_budget()`` parks a running scan the same way.
     ``mcp_connection_requests`` supplies the run's MCP connections from any
     source: when given, the engine connects those requests; when ``None`` (the
     command-line default) it reads ``~/.strix/mcp-servers.json`` itself. Either
@@ -251,15 +256,22 @@ async def run_strix_scan(
         raise RuntimeError(
             "No LLM model configured. Set STRIX_LLM env or pass model= to run_strix_scan().",
         )
+    if resolved_model != (settings.llm.model or "").strip() and not codex.subscription_model(
+        resolved_model
+    ):
+        configure_sdk_api_route(resolved_model, settings)
     logger.info("LLM model resolved: %s", resolved_model)
     chat_completions_tools = uses_chat_completions_tool_schema(resolved_model, settings)
     strict_tool_schemas = supports_strict_tool_schemas(resolved_model)
     if not strict_tool_schemas:
         logger.info("Sending non-strict tool schemas: %s caps strict tools", resolved_model)
 
+    if budget_policy not in ("stop", "pause"):
+        raise ValueError(f"unknown budget_policy: {budget_policy!r}")
     if coordinator is None:
         coordinator = AgentCoordinator()
     coordinator.set_snapshot_path(agents_path)
+    coordinator.set_budget_policy(budget_policy)
 
     from strix.tools.coverage.tools import hydrate_coverage_from_disk
     from strix.tools.notes.tools import hydrate_notes_from_disk
@@ -290,11 +302,17 @@ async def run_strix_scan(
                 report_state.get_total_llm_cost(),
                 max_budget_usd,
                 interactive=interactive,
+                budget_policy=budget_policy,
             )
+            # Under the pause policy the hooks re-park at the first call if the
+            # spend is still at the limit, so a restored pause flag would only
+            # hold agents back after the limit was raised.
             await coordinator.reset_budget_stops(
                 budget_stopped=budget_stopped,
                 reserve_stopped=reserve_stopped,
-                budget_paused=interactive and coordinator.budget_paused,
+                budget_paused=(
+                    interactive and budget_policy != "pause" and coordinator.budget_paused
+                ),
             )
         for aid, parent in coordinator.parent_of.items():
             if parent is None:
@@ -313,6 +331,7 @@ async def run_strix_scan(
         root_id = uuid.uuid4().hex[:8]
 
     logger.info("Bringing up sandbox session for scan %s", scan_id)
+    set_scan_phase("sandbox_init")
     bundle = await session_manager.create_or_reuse(
         scan_id,
         image=image,
@@ -322,6 +341,7 @@ async def run_strix_scan(
     )
     report("Waiting for the first model response")
     logger.info("Sandbox ready for scan %s", scan_id)
+    set_scan_phase("agent_setup")
 
     sandbox_session = bundle["session"]
 
@@ -338,7 +358,7 @@ async def run_strix_scan(
     configure_spill_writer(_spill_to_workspace)
 
     sessions_to_close: list[SQLiteSession] = []
-    mcp_sessions: list[SupervisedMcpSession] = []
+    mcp_registry: McpRegistry | None = None
 
     try:
         targets = scan_config.get("targets") or []
@@ -371,8 +391,10 @@ async def run_strix_scan(
             max_budget_usd=max_budget_usd,
             max_turns=max_turns,
             interactive=interactive,
+            budget_policy=budget_policy,
         )
-        if interactive:
+        coordinator.set_budget_limit_setter(hooks.set_max_budget_usd)
+        if interactive and budget_policy != "pause":
             coordinator.set_budget_extender(hooks.extend_budget)
 
         scope_context = build_scope_context(scan_config)
@@ -390,7 +412,6 @@ async def run_strix_scan(
         from strix.tools.mcp import (
             McpConnectionRequest,
             McpRegistry,
-            attach_mcp_requests,
             load_user_mcp_configs,
         )
 
@@ -406,56 +427,37 @@ async def run_strix_scan(
             else:
                 mcp_requests = mcp_connection_requests
             if mcp_requests:
-                connections = await attach_mcp_requests(mcp_requests, mcp_registry)
-                mcp_sessions = [c.session for c in connections]
-                # Recorded even when nothing connected, so a resumed run does not
-                # keep attributing tool calls to servers it no longer has.
-                _record_mcp_connections(connections)
-                if connections:
-                    report(_mcp_startup_summary(connections))
-                    # Name the connected servers in the prompt so every agent
-                    # (root and children, both deriving from scope_context) sees
-                    # what is available at the start; they can still re-list or
-                    # inspect them at run time via list_mcps / describe_mcp. Set
-                    # only when a connection exists, so a run with no MCP leaves
-                    # the prompt context unchanged.
-                    scope_context["mcp_available"] = bool(mcp_registry)
-                    scope_context["mcp_connections"] = [
-                        {
-                            "name": summary.name,
-                            "purpose": summary.purpose,
-                            "tool_count": summary.tool_count,
-                        }
-                        for summary in mcp_registry.summaries()
-                    ]
+                for request in mcp_requests:
+                    mcp_registry.register(request)
+                _record_mcp_connections(mcp_registry.names())
+                report(
+                    f"MCP: configured {len(mcp_registry)} connection(s); "
+                    "warming them in the background"
+                )
+                scope_context["mcp_available"] = True
+                scope_context["mcp_connections"] = [
+                    {
+                        "name": summary.name,
+                        "purpose": summary.purpose,
+                        "tool_count": summary.tool_count,
+                    }
+                    for summary in mcp_registry.summaries()
+                ]
 
-                    # Feed a non-secret connection roster (name / provider /
-                    # tool_count / dead) to two consumers: once now (all
-                    # currently healthy) and again whenever a connection later
-                    # dies. It is always persisted to run.json so the viewer,
-                    # which re-reads the run's files from disk, can render the
-                    # MCP connections panel and health without an in-memory
-                    # sink. When an interface sink is attached (the TUI backend,
-                    # or pro forwarding into the app's event stream) it also
-                    # receives the same snapshot. In-use is derived separately by
-                    # each interface from the connection-tagged tool-call events,
-                    # so it is not carried here.
-                    def _emit_mcp_status() -> None:
-                        roster = _mcp_roster_payload(mcp_registry)
-                        _persist_mcp_status(roster)
-                        if mcp_status_sink is not None:
-                            try:
-                                mcp_status_sink(roster)
-                            except Exception:
-                                logger.exception("MCP status sink failed")
+                def _emit_mcp_status() -> None:
+                    roster = _mcp_roster_payload(mcp_registry)
+                    _persist_mcp_status(roster)
+                    if mcp_status_sink is not None:
+                        try:
+                            mcp_status_sink(roster)
+                        except Exception:
+                            logger.exception("MCP status sink failed")
 
-                    for connection_name in mcp_registry.names():
-                        entry = mcp_registry.get(connection_name)
-                        if entry is not None:
-                            entry.session.set_on_dead(_emit_mcp_status)
-                    _emit_mcp_status()
+                mcp_registry.set_status_sink(_emit_mcp_status)
+                _emit_mcp_status()
+                mcp_registry.start_warmup(max_concurrency=6)
         except Exception:
-            logger.exception("Failed to connect user MCP servers; continuing without them")
+            logger.exception("Failed to configure user MCP servers; continuing without them")
 
         root_context = _merge_root_prompt_context(scope_context, extra_system_prompt_context)
         root_instructions = _compose_root_instructions_override(
@@ -573,6 +575,7 @@ async def run_strix_scan(
         async with coordinator._lock:
             root_status = coordinator.statuses.get(root_id)
 
+        set_scan_phase("agent_loop")
         result = await run_agent_loop(
             agent=root_agent,
             initial_input=initial_input,
@@ -610,6 +613,7 @@ async def run_strix_scan(
         return result  # noqa: TRY300
     except BudgetExceededError as exc:
         logger.info("Scan %s stopped: %s", scan_id, exc)
+        _note_exit_reason("budget_exceeded")
         if root_id is not None:
             with contextlib.suppress(Exception):
                 await coordinator.set_status(root_id, "stopped")
@@ -622,6 +626,7 @@ async def run_strix_scan(
             exc,
             scan_id,
         )
+        _note_exit_reason("rate_limited")
         if root_id is not None:
             with contextlib.suppress(Exception):
                 await coordinator.set_status(root_id, "stopped")
@@ -648,9 +653,9 @@ async def run_strix_scan(
         for s in sessions_to_close:
             with contextlib.suppress(Exception):
                 s.close()
-        for mcp_session in mcp_sessions:
+        if mcp_registry is not None:
             with contextlib.suppress(Exception):
-                await mcp_session.aclose()
+                await mcp_registry.close()
         with contextlib.suppress(Exception):
             await coordinator._maybe_snapshot()
         if cleanup_on_exit:

@@ -126,11 +126,14 @@ func (m Model) statusVisible() bool {
 }
 
 func (m Model) layout() (showSidebar bool, sidebarWidth, chatWidth, chatHeight int) {
-	showSidebar = m.width >= 120
-	if showSidebar {
+	showSidebar = m.width >= 120 && !m.sidebarHidden
+	switch {
+	case showSidebar:
 		sidebarWidth = max(24, m.width/5)
 		chatWidth = m.width - sidebarWidth - 1
-	} else {
+	case m.railVisible():
+		chatWidth = m.width - sidebarRailWidth - 1
+	default:
 		chatWidth = m.width
 	}
 	statusH := 0

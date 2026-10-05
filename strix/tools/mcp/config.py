@@ -62,6 +62,9 @@ class McpConnectionConfig(BaseModel):
     """Tool allowlist, applied after the server lists its tools. ``None`` (the
     default) exposes every tool the server lists; a list restricts to it."""
 
+    active_tools: list[str] = Field(default_factory=list)
+    """Small scan-relevant subset ranked ahead of the broader allowed catalog."""
+
     notes: str | None = None
     """Free-text notes for the agent describing what this connection is and how
     to use it. When set, the note becomes the connection's purpose line in the

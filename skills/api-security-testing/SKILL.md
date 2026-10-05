@@ -48,7 +48,7 @@ Out of scope: POST /billing/*, POST /notifications/broadcast."
 - **GraphQL:** point at the GraphQL endpoint and say whether introspection is enabled; call out that you want batching/aliasing abuse, depth/complexity limits, and per-field authorization tested.
 - **Internal/private APIs** unreachable from your machine: use the managed platform's network connector — see **managed-pentesting-with-strix**.
 - Use `--instruction-file` when the credential/context block gets long, and keep tokens out of shell history and out of committed files.
-- **Supporting files** the agents should read but not test, such as an endpoint wordlist or handwritten notes about the tenancy model: pass `--workspace-file ./notes.md`. The file lands read-only in `/workspace`. Add `:DEST` to choose the path, for example `--workspace-file ./wordlist.txt:lists/wordlist.txt`.
+- **Supporting files** the agents should read but not test, such as an endpoint wordlist or handwritten notes about the tenancy model: pass `--workspace-file ./notes.md`. Strix copies the file into `/workspace`. The file on your machine does not change. Add `:DEST` to choose the path, for example `--workspace-file ./wordlist.txt:lists/wordlist.txt`.
 
 ## 3. Verify findings
 

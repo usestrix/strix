@@ -180,6 +180,8 @@ hiddenimports = [
 ]
 
 hiddenimports += collect_submodules('litellm')
+hiddenimports += collect_submodules('google.auth')
+hiddenimports += collect_submodules('google.oauth2')
 hiddenimports += collect_submodules('rich')
 hiddenimports += collect_submodules('pydantic')
 hiddenimports += collect_submodules('pygments')
@@ -211,8 +213,6 @@ excludes = [
     'google.cloud',
     'google.cloud.aiplatform',
     'google.api_core',
-    'google.auth',
-    'google.oauth2',
     'google.protobuf',
     'grpc',
     'grpcio',

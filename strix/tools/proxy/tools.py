@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 import json
 import logging
 import re
@@ -65,6 +66,31 @@ async def _call[T](client: Client, fn: Callable[[Client], Awaitable[T]]) -> T:
     """Run ``fn`` against the shared client, serialized under ``_CAIDO_CALL_LOCK``."""
     async with _CAIDO_CALL_LOCK:
         return await fn(client)
+
+
+async def existing_request_ids(
+    ctx: RunContextWrapper,
+    request_ids: list[str],
+) -> set[str]:
+    """Return request IDs that exist in the current Caido project."""
+    if not request_ids:
+        return set()
+
+    client = await _ctx_client(ctx)
+    if client is None:
+        raise RuntimeError("Caido client is not available")
+
+    # Request IDs are not an HTTPQL field. Resolve each ID through the same
+    # project-bound lookup as view_request rather than constructing a filter.
+    existing: set[str] = set()
+    for request_id in request_ids:
+        result = await _call(
+            client,
+            functools.partial(caido_api.get_request_with_client, request_id=request_id),
+        )
+        if result is not None:
+            existing.add(str(result.request.id))
+    return existing
 
 
 def _to_tool_json(value: Any) -> Any:

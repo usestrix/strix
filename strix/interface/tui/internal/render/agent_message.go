@@ -11,8 +11,6 @@ import (
 // Markdown (agent_message_renderer.py)
 // ---------------------------------------------------------------------------
 
-var blankLineRuns = regexp.MustCompile(`\n\s*\n`)
-
 type mdHeader struct {
 	prefix string
 	strip  int
@@ -33,11 +31,34 @@ func renderAssistantMarkdown(content string) string {
 	if content == "" {
 		return ""
 	}
-	cleaned := strings.TrimSpace(blankLineRuns.ReplaceAllString(content, "\n\n"))
+	cleaned := strings.TrimSpace(collapseBlankLines(content))
 	if cleaned == "" {
 		return ""
 	}
 	return applyMarkdownStyles(cleaned)
+}
+
+func collapseBlankLines(content string) string {
+	lines := strings.Split(content, "\n")
+	out := make([]string, 0, len(lines))
+	inCode := false
+	blank := false
+	for _, line := range lines {
+		if strings.HasPrefix(line, "```") {
+			inCode = !inCode
+		}
+		if !inCode && strings.TrimSpace(line) == "" {
+			if blank {
+				continue
+			}
+			blank = true
+			out = append(out, "")
+			continue
+		}
+		blank = false
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }
 
 func applyMarkdownStyles(text string) string {

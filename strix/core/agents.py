@@ -24,7 +24,13 @@ logger = logging.getLogger(__name__)
 
 Status = Literal["running", "waiting", "completed", "stopped", "crashed", "failed", "budget_paused"]
 
+BudgetPolicy = Literal["stop", "pause"]
+
 TERMINAL_STATUSES: frozenset[str] = frozenset({"completed", "stopped", "crashed", "failed"})
+
+# Agents that still have work to do or to wake up for. A parked agent is mid-task:
+# a scan is not finished while one exists, and it can be stopped like any other.
+ACTIVE_STATUSES: frozenset[str] = frozenset({"running", "waiting", "budget_paused"})
 
 # Why an agent parked. The user can message any agent, so this - not the agent's
 # position in the tree - decides whether waiting is bounded: only an agent waiting
@@ -68,7 +74,10 @@ class AgentCoordinator:
         self._budget_stopped = False
         self._reserve_stopped = False
         self._budget_paused = False
+        self._resume_epoch = 0
+        self._budget_policy: BudgetPolicy = "stop"
         self._extend_budget: Callable[[], None] | None = None
+        self._set_budget_limit: Callable[[float | None], None] | None = None
 
     def set_snapshot_path(self, path: Path) -> None:
         self._snapshot_path = path
@@ -95,15 +104,100 @@ class AgentCoordinator:
     def budget_paused(self) -> bool:
         return self._budget_paused
 
+    @property
+    def resume_epoch(self) -> int:
+        """Bumped by every ``resume_budget``; an agent parks against the value it read."""
+        return self._resume_epoch
+
+    @property
+    def budget_policy(self) -> BudgetPolicy:
+        return self._budget_policy
+
+    def set_budget_policy(self, policy: BudgetPolicy) -> None:
+        self._budget_policy = policy
+
     def set_budget_extender(self, extend: Callable[[], None]) -> None:
         self._extend_budget = extend
+
+    def set_budget_limit_setter(self, setter: Callable[[float | None], None]) -> None:
+        self._set_budget_limit = setter
 
     async def pause_for_budget(self, agent_id: str) -> None:
         async with self._lock:
             self._budget_paused = True
         await self.set_status(agent_id, "budget_paused")
 
+    async def park_for_budget(self, agent_id: str) -> bool:
+        """Park ``agent_id`` before an LLM call (pause policy).
+
+        Only a ``running`` agent parks; returns False when it was stopped in the
+        meantime, so the stop is not overwritten.
+        """
+        async with self._lock:
+            if self.statuses.get(agent_id) != "running":
+                return False
+            self._set_status_locked(agent_id, "budget_paused")
+        logger.info("agent.status %s=budget_paused", agent_id)
+        await self._maybe_snapshot()
+        return True
+
+    async def pause_budget(self) -> None:
+        """Operator pause: every agent parks before its next LLM call.
+
+        Agents mid-call or mid-tool finish that step first, so their spend still
+        lands; nothing is cancelled.
+        """
+        async with self._lock:
+            self._budget_paused = True
+        logger.info("scan paused by the operator")
+        await self._maybe_snapshot()
+
+    async def resume_budget(self, *, max_budget_usd: float | None = None) -> list[str]:
+        """Lift the pause and wake every parked agent; returns the woken agent ids.
+
+        With ``max_budget_usd`` the scan's limit is replaced first (``None`` keeps
+        the current one). Agents continue with the LLM call they parked on; no
+        message is added to any session. An agent that parks again on its next
+        call (the new limit is already spent) is not an error.
+        """
+        if max_budget_usd is not None and self._set_budget_limit is not None:
+            self._set_budget_limit(max_budget_usd)
+        async with self._lock:
+            self._budget_paused = False
+            self._resume_epoch += 1
+            woken = [aid for aid, status in self.statuses.items() if status == "budget_paused"]
+            for aid in woken:
+                self.runtimes.setdefault(aid, AgentRuntime()).wake.set()
+        logger.info("scan resumed; woke %d parked agent(s)", len(woken))
+        await self._maybe_snapshot()
+        return woken
+
+    async def wait_for_budget_resume(self, agent_id: str, *, parked_epoch: int) -> None:
+        """Block until a resume newer than ``parked_epoch``, a scan-wide stop, or
+        the agent itself being stopped while parked.
+
+        ``parked_epoch`` is the ``resume_epoch`` the agent read when it decided to
+        park, so a resume that lands between that decision and this wait is not
+        missed. The switch back to ``running`` happens under the lock, so a stop
+        can never be overwritten by it; on return the agent is ``running`` unless
+        it was stopped.
+        """
+        while True:
+            async with self._lock:
+                runtime = self.runtimes.setdefault(agent_id, AgentRuntime())
+                if self._budget_stopped or self.statuses.get(agent_id) != "budget_paused":
+                    return
+                if self._resume_epoch != parked_epoch:
+                    self._set_status_locked(agent_id, "running")
+                    break
+                wake = runtime.wake
+                wake.clear()
+            await wake.wait()
+        logger.info("agent.status %s=running", agent_id)
+        await self._maybe_snapshot()
+
     async def resume_from_budget_pause(self, *, exclude: str | None = None) -> None:
+        """Legacy interactive resume: extend by the original budget and nudge agents."""
         async with self._lock:
             if not self._budget_paused:
                 return
@@ -197,12 +291,28 @@ class AgentCoordinator:
     async def mark_running(self, agent_id: str) -> None:
         async with self._lock:
             if agent_id in self.statuses:
-                self.statuses[agent_id] = "running"
-                self.errors.pop(agent_id, None)
-                self.wait_kinds.pop(agent_id, None)
-                self.runtimes.setdefault(agent_id, AgentRuntime()).user_wake_required = False
-                self._parent_notified.discard(agent_id)
+                self._set_running_locked(agent_id)
         await self._maybe_snapshot()
+
+    async def resume_silent_user_wait(self, agent_id: str) -> bool:
+        """Undo a park on the user, unless the agent's state has moved on since.
+
+        Returns False without touching anything when the agent is no longer
+        waiting on the user (a stop or a delivered message got there first).
+        """
+        async with self._lock:
+            if self.statuses.get(agent_id) != "waiting" or self.wait_kinds.get(agent_id) != "user":
+                return False
+            self._set_running_locked(agent_id)
+        await self._maybe_snapshot()
+        return True
+
+    def _set_running_locked(self, agent_id: str) -> None:
+        self.statuses[agent_id] = "running"
+        self.errors.pop(agent_id, None)
+        self.wait_kinds.pop(agent_id, None)
+        self.runtimes.setdefault(agent_id, AgentRuntime()).user_wake_required = False
+        self._parent_notified.discard(agent_id)
 
     async def park_waiting(self, agent_id: str, *, wait_kind: WaitKind) -> None:
         """Park an agent, recording what it is waiting on so the driver can time it."""
@@ -258,19 +368,24 @@ class AgentCoordinator:
         async with self._lock:
             if agent_id not in self.statuses:
                 return
-            self.statuses[agent_id] = status  # type: ignore[assignment]
-            if error is not None:
-                self.errors[agent_id] = error
-            elif status == "running":
-                self.errors.pop(agent_id, None)
-            if status == "running":
-                # Running again means a fresh stint that owes its parent its own notice.
-                self._parent_notified.discard(agent_id)
-            runtime = self.runtimes.setdefault(agent_id, AgentRuntime())
-            runtime.user_wake_required = status in {"failed", "crashed"}
-            runtime.wake.set()
+            self._set_status_locked(agent_id, status, error=error)
         logger.info("agent.status %s=%s", agent_id, status)
         await self._maybe_snapshot()
+
+    def _set_status_locked(
+        self, agent_id: str, status: Status | str, *, error: str | None = None
+    ) -> None:
+        self.statuses[agent_id] = status  # type: ignore[assignment]
+        if error is not None:
+            self.errors[agent_id] = error
+        elif status == "running":
+            self.errors.pop(agent_id, None)
+        if status == "running":
+            # Running again means a fresh stint that owes its parent its own notice.
+            self._parent_notified.discard(agent_id)
+        runtime = self.runtimes.setdefault(agent_id, AgentRuntime())
+        runtime.user_wake_required = status in {"failed", "crashed"}
+        runtime.wake.set()
 
     async def claim_parent_notice(self, agent_id: str) -> bool:
         """Reserve the one notice a child owes its parent when it stops running.
@@ -308,7 +423,7 @@ class AgentCoordinator:
         unknown, or it is terminal and its loop does not park for wake-ups.
         """
         from_user = message.get("from") == "user"
-        if from_user and self._budget_paused:
+        if from_user and self._budget_paused and self._budget_policy != "pause":
             await self.resume_from_budget_pause(exclude=target_agent_id)
         async with self._lock:
             if target_agent_id not in self.statuses:
@@ -462,7 +577,7 @@ class AgentCoordinator:
                     "parent_id": self.parent_of.get(aid),
                 }
                 for aid, status in self.statuses.items()
-                if aid != agent_id and status in {"running", "waiting"}
+                if aid != agent_id and status in ACTIVE_STATUSES
             ]
 
     async def graph_snapshot(

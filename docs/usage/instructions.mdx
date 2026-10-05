@@ -96,7 +96,8 @@ agent task, so the agent knows where to read them.
 
 Rules that apply to every workspace file:
 
-- The file is read-only inside the sandbox.
+- Strix copies the file into the sandbox. The agent can edit the copy, but the
+  file on your machine does not change.
 - The destination must stay inside `/workspace`.
 - The destination must not fall inside a target directory, because target files
   come from the target itself. Strix skips such a file and logs a warning.

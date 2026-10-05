@@ -43,12 +43,14 @@ jobs:
           python-version: '3.12'
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
+        with:
+          enable-cache: false
 
       - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00  # v6.0.0
         with:
           go-version: '1.24.x'
           check-latest: true
-          cache-dependency-path: strix/interface/tui/go.sum
+          cache: false
 
       - name: Build
         shell: bash
@@ -70,7 +72,10 @@ jobs:
             TUI_NAME="strix-tui"
             dist/strix --version
           fi
-          uv run pyi-archive_viewer -l "$PYI_BINARY" | grep -E "strix[/\\]+bin[/\\]+$TUI_NAME" >/dev/null
+          uv run pyi-archive_viewer -l -r "$PYI_BINARY" > archive.txt
+          grep -E "strix[/\\]+bin[/\\]+$TUI_NAME" archive.txt >/dev/null
+          grep -E "'google\.auth\.transport\.requests'" archive.txt >/dev/null
+          grep -E "'boto3\.session'" archive.txt >/dev/null
 
           if [[ "${{ matrix.target }}" == "linux-arm64" ]]; then
             file dist/strix
@@ -102,6 +107,7 @@ jobs:
           if-no-files-found: error
 
   release:
+    if: startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -116,6 +122,5 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2
         with:
-          prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           generate_release_notes: true
           files: release/**

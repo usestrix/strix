@@ -356,6 +356,8 @@ def build_openai_client() -> AsyncOpenAI:
     import httpx
     from openai import AsyncOpenAI
 
+    from strix.llm import request_log
+
     get_valid_token()  # fail fast at configure time if the sign-in is dead
 
     async def _auth_hook(request: httpx.Request) -> None:
@@ -367,6 +369,7 @@ def build_openai_client() -> AsyncOpenAI:
         timeout=httpx.Timeout(600.0, connect=30.0),
         event_hooks={"request": [_auth_hook]},
     )
+    request_log.observe_http_client(http_client)
     return AsyncOpenAI(
         api_key="strix-codex-oauth",  # placeholder; the hook overwrites Authorization
         base_url=CODEX_BASE_URL,

@@ -8,6 +8,7 @@ import {
   Radar,
   Rocket,
   ArrowUpRight,
+  Building2,
   History,
 } from "lucide-react";
 import type { Vulnerability, VulnerabilitySeverity } from "@/types/issues";
@@ -35,7 +36,7 @@ import {
   type LoadedRun,
   type RunsPayload,
 } from "@/data/serverSource";
-import { SIGNUP_URL, ctaUrl, trackCta } from "@/lib/cta";
+import { SIGNUP_URL, DEMO_URL, ctaUrl, trackCta } from "@/lib/cta";
 import { runTitle } from "@/lib/target-utils";
 import Sidebar from "@/components/Sidebar";
 import PastRunsView from "@/components/PastRunsView";
@@ -706,6 +707,31 @@ function OverviewTab({
         </div>
       )}
 
+      {finished && (
+        <div className="animate-card-in rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
+          <p className="text-sm font-semibold text-white">Strix Cloud</p>
+          <p className="mt-0.5 text-xs text-[#666]">Run your next pentest in Strix Cloud.</p>
+          <div className="mt-3 flex flex-wrap gap-2.5">
+            <ProInlineCta
+              label="Run a pentest in Strix Cloud"
+              desc="Validated findings, autofix, and PR reviews."
+              slug="overview_cloud"
+              surface="overview"
+              icon={Rocket}
+              primary
+            />
+            <ProInlineCta
+              label="Try Strix Enterprise"
+              desc="SSO, compliance-ready reports, VPC or self-hosted deployment."
+              slug="book_demo"
+              surface="overview"
+              icon={Building2}
+              href={DEMO_URL}
+            />
+          </div>
+        </div>
+      )}
+
       {sections.length > 0 ? (
         <div className="animate-card-in rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5 space-y-8">
           {sections.map((s) => (
@@ -789,14 +815,23 @@ function AgentsTab({ run, canSteer }: { run: LoadedRun; canSteer: boolean }) {
       {/* Re-run always routes to Strix Cloud. */}
       <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
         <p className="text-sm font-semibold text-white">Run this pentest with more depth</p>
-        <p className="mt-0.5 text-xs text-[#666]">Re-run this pentest on managed infra in the cloud.</p>
+        <p className="mt-0.5 text-xs text-[#666]">Run this pentest again in Strix Cloud.</p>
         <div className="mt-3 flex flex-wrap gap-2.5">
           <ProInlineCta
             label="Re-run in Strix Pro with more depth"
-            desc="Run this pentest on managed infra with more depth."
+            desc="More depth, validated findings, and autofix."
             slug="live_scan"
             surface="agents"
             icon={Rocket}
+            primary
+          />
+          <ProInlineCta
+            label="Try Strix Enterprise"
+            desc="SSO, compliance-ready reports, VPC or self-hosted deployment."
+            slug="book_demo"
+            surface="agents"
+            icon={Building2}
+            href={DEMO_URL}
           />
         </div>
       </div>

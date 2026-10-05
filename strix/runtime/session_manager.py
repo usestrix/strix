@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import os
-import shutil
 import sys
-import tempfile
+import tarfile
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from agents.sandbox.entries import BaseEntry, File, LocalDir
+from agents.sandbox.entries import BaseEntry, LocalDir
 from agents.sandbox.manifest import Environment, Manifest
 
 from strix.config import load_settings
@@ -21,6 +22,8 @@ from strix.runtime.caido_handle import CaidoBootstrapHandle
 
 
 if TYPE_CHECKING:
+    from agents.sandbox.session import BaseSandboxSession
+
     from strix.runtime.status import StatusSink
 
 
@@ -37,6 +40,13 @@ _SESSION_CACHE: dict[str, dict[str, Any]] = {}
 _WORKSPACE_ROOT = "/workspace"
 
 _PROTECTED_METADATA_NAMES = (".git", ".agents", ".codex")
+
+# Extra files travel as one tar archive: a single upload plus one extraction
+# inside the sandbox, instead of several round trips per file.
+_EXTRA_FILE_ARCHIVE_REL = ".strix-extra-files.tar"
+_EXTRA_FILE_ARCHIVE = f"{_WORKSPACE_ROOT}/{_EXTRA_FILE_ARCHIVE_REL}"
+_EXTRA_FILE_EXTRACT_TIMEOUT_S = 120
+_EXTRA_FILE_MODE = 0o644
 
 
 def _host_identity_env() -> dict[str, str]:
@@ -60,8 +70,9 @@ def build_bind_mounts(local_sources: list[dict[str, Any]]) -> list[dict[str, Any
             continue
         resolved = Path(host_path).expanduser().resolve()
         target = f"{_WORKSPACE_ROOT}/{ws_subdir}"
-        bind_mounts.append({"source": str(resolved), "target": target, "read_only": False})
-        if src.get("protect_metadata"):
+        read_only = bool(src.get("read_only"))
+        bind_mounts.append({"source": str(resolved), "target": target, "read_only": read_only})
+        if src.get("protect_metadata") and not read_only:
             bind_mounts.extend(_metadata_mounts(resolved, target))
     return bind_mounts
 
@@ -133,98 +144,82 @@ def _extra_file_content(extra_file: dict[str, Any]) -> bytes | None:
     return None
 
 
-def build_extra_file_entries(
+def build_extra_file_archive(
     extra_files: list[dict[str, Any]],
     local_sources: list[dict[str, Any]] | None = None,
-) -> dict[str | Path, BaseEntry]:
-    """Map extra files to in-memory ``File`` manifest entries.
+) -> bytes | None:
+    """Pack extra files into one tar archive rooted at ``/workspace``.
 
-    Each item is ``{"workspace_path": "/workspace/<rel>", "content": bytes|str}``;
-    manifest backends materialize the entry at the requested path alongside the
-    ``LocalDir`` source uploads. Invalid items — including paths that collide
-    with a ``local_sources`` tree or with an earlier extra file, which would
-    otherwise replace its manifest entry — are skipped with a warning.
+    Each item is ``{"workspace_path": "/workspace/<rel>", "content": bytes|str}``
+    and becomes a regular-file member at ``<rel>``. Extracting the archive as
+    the sandbox user (see ``stage_extra_files``) leaves every file owned by
+    that user, so the agent can edit it and create siblings. Invalid items —
+    including paths that collide with a ``local_sources`` tree or with an
+    earlier extra file — are skipped with a warning. Returns ``None`` when no
+    valid file remains.
     """
     source_roots = _source_root_rels(local_sources)
-    placed: list[str] = []
-    entries: dict[str | Path, BaseEntry] = {}
-    for extra_file in extra_files:
-        rel = _extra_file_rel_path(str(extra_file.get("workspace_path") or ""))
-        content = _extra_file_content(extra_file)
-        if rel is None or content is None:
-            logger.warning(
-                "Skipping invalid extra file entry (workspace_path=%r)",
-                extra_file.get("workspace_path"),
-            )
-            continue
-        if _collides_with_source_root(rel, source_roots + placed):
-            logger.warning(
-                "Skipping extra file colliding with a local source tree or an "
-                "earlier extra file (workspace_path=%r)",
-                extra_file.get("workspace_path"),
-            )
-            continue
-        placed.append(rel)
-        entries[rel] = File(content=content)
-    return entries
+    placed: list[str] = [_EXTRA_FILE_ARCHIVE_REL]
+    buffer = io.BytesIO()
+    mtime = int(time.time())
+    with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as archive:
+        for extra_file in extra_files:
+            rel, content = _validated_extra_file(extra_file, source_roots + placed)
+            if rel is None or content is None:
+                continue
+            placed.append(rel)
+            info = tarfile.TarInfo(name=rel)
+            info.size = len(content)
+            info.mode = _EXTRA_FILE_MODE
+            info.mtime = mtime
+            archive.addfile(info, io.BytesIO(content))
+    if len(placed) == 1:
+        return None
+    return buffer.getvalue()
 
 
-def extra_file_staging_dir(scan_id: str) -> Path:
-    """A fresh host staging directory for a scan's extra-file bind mounts.
-
-    The docker daemon resolves bind sources in its own filesystem. With a
-    remote daemon (e.g. a dind sidecar) the run directory is not shared, so
-    staging lives under the temp dir like every other bind-mount source.
-    """
-    safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in scan_id)
-    return Path(tempfile.mkdtemp(prefix=f"strix-extra-files-{safe}-"))
-
-
-def build_extra_file_bind_mounts(
-    extra_files: list[dict[str, Any]],
-    staging_dir: Path,
-    local_sources: list[dict[str, Any]] | None = None,
-) -> list[dict[str, Any]]:
-    """Stage extra files on the host and map them to read-only bind mounts.
-
-    Bind-mount backends bypass the manifest, so the content is written under
-    ``staging_dir`` (one numbered subdirectory per file to avoid basename
-    collisions) and mounted read-only at the same ``/workspace/<rel>`` path the
-    manifest path would use. Invalid items — including paths that collide with
-    a ``local_sources`` tree or with an earlier extra file, which would
-    duplicate or shadow its mount target — are skipped with a warning.
-    """
-    source_roots = _source_root_rels(local_sources)
-    placed: list[str] = []
-    mounts: list[dict[str, Any]] = []
-    for index, extra_file in enumerate(extra_files):
-        rel = _extra_file_rel_path(str(extra_file.get("workspace_path") or ""))
-        content = _extra_file_content(extra_file)
-        if rel is None or content is None:
-            logger.warning(
-                "Skipping invalid extra file entry (workspace_path=%r)",
-                extra_file.get("workspace_path"),
-            )
-            continue
-        if _collides_with_source_root(rel, source_roots + placed):
-            logger.warning(
-                "Skipping extra file colliding with a local source tree or an "
-                "earlier extra file (workspace_path=%r)",
-                extra_file.get("workspace_path"),
-            )
-            continue
-        placed.append(rel)
-        host_file = staging_dir / str(index) / Path(rel).name
-        host_file.parent.mkdir(parents=True, exist_ok=True)
-        host_file.write_bytes(content)
-        mounts.append(
-            {
-                "source": str(host_file),
-                "target": f"{_WORKSPACE_ROOT}/{rel}",
-                "read_only": True,
-            }
+def _validated_extra_file(
+    extra_file: dict[str, Any], taken: list[str]
+) -> tuple[str | None, bytes | None]:
+    rel = _extra_file_rel_path(str(extra_file.get("workspace_path") or ""))
+    content = _extra_file_content(extra_file)
+    if rel is None or content is None:
+        logger.warning(
+            "Skipping invalid extra file entry (workspace_path=%r)",
+            extra_file.get("workspace_path"),
         )
-    return mounts
+        return None, None
+    if _collides_with_source_root(rel, taken):
+        logger.warning(
+            "Skipping extra file colliding with a local source tree or an "
+            "earlier extra file (workspace_path=%r)",
+            extra_file.get("workspace_path"),
+        )
+        return None, None
+    return rel, content
+
+
+async def stage_extra_files(session: BaseSandboxSession, archive: bytes) -> None:
+    """Upload ``archive`` and unpack it under ``/workspace`` as the sandbox user.
+
+    ``--no-same-owner`` keeps ownership with the extracting user even where
+    the session runs as root, so the agent user can always write the files.
+    """
+    await session.write(Path(_EXTRA_FILE_ARCHIVE), io.BytesIO(archive))
+    result = await session.exec(
+        "sh",
+        "-c",
+        'tar --no-same-owner -xf "$1" -C "$2" && rm -f -- "$1"',
+        "sh",
+        _EXTRA_FILE_ARCHIVE,
+        _WORKSPACE_ROOT,
+        timeout=_EXTRA_FILE_EXTRACT_TIMEOUT_S,
+    )
+    if not result.ok():
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(
+            f"unpacking extra files in the sandbox failed (exit {result.exit_code}): {stderr}"
+        )
 
 
 def _metadata_mounts(tree: Path, target: str) -> list[dict[str, Any]]:
@@ -274,10 +269,9 @@ async def create_or_reuse(
     ``/workspace/<workspace_subdir>`` inside the container.
 
     Each ``extra_files`` entry (``{"workspace_path": "/workspace/<rel>",
-    "content": bytes | str}``) lands as a single file at its ``workspace_path``
-    regardless of backend: an in-memory ``File`` manifest entry on manifest
-    backends, a read-only bind mount of a host-staged copy on bind-mount
-    backends.
+    "content": bytes | str}``) lands as a regular, agent-writable file at its
+    ``workspace_path`` on every backend: the files are uploaded as one archive
+    and unpacked inside the sandbox right after bring-up.
     """
 
     def report(phase: str) -> None:
@@ -292,20 +286,15 @@ async def create_or_reuse(
     backend_name = load_settings().runtime.backend
     backend = get_backend(backend_name)
 
-    staging_dir: Path | None = None
     if backend_supports_bind_mounts(backend_name):
         bind_mounts = build_bind_mounts(local_sources)
         entries: dict[str | Path, BaseEntry] = {}
-        if extra_files:
-            staging_dir = extra_file_staging_dir(scan_id)
-            bind_mounts.extend(
-                build_extra_file_bind_mounts(extra_files, staging_dir, local_sources)
-            )
     else:
         bind_mounts = []
         entries = build_manifest_entries(local_sources)
-        if extra_files:
-            entries.update(build_extra_file_entries(extra_files, local_sources))
+    extra_file_archive = (
+        build_extra_file_archive(extra_files, local_sources) if extra_files else None
+    )
 
     # Caido runs as an in-container sidecar; HTTP(S) traffic from any
     # process started via ``session.exec`` (the SDK's Shell tool, etc.)
@@ -335,54 +324,58 @@ async def create_or_reuse(
         image,
     )
     report("Starting sandbox container")
-    try:
-        client, session = await backend(
-            image=image,
-            manifest=manifest,
-            exposed_ports=(_CONTAINER_CAIDO_PORT,),
-            bind_mounts=bind_mounts,
+    client, session = await backend(
+        image=image,
+        manifest=manifest,
+        exposed_ports=(_CONTAINER_CAIDO_PORT,),
+        bind_mounts=bind_mounts,
+    )
+
+    if extra_file_archive is not None:
+        report("Placing workspace files")
+        try:
+            await stage_extra_files(session, extra_file_archive)
+        except BaseException:
+            await _discard_session(client, session)
+            raise
+
+    report("Setting up the proxy")
+    caido_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_PORT)
+    scheme = "https" if caido_endpoint.tls else "http"
+    host_caido_url = f"{scheme}://{caido_endpoint.host}:{caido_endpoint.port}"
+    logger.debug("Caido host endpoint resolved: %s", host_caido_url)
+
+    # The Caido login + project setup polls the guest for a couple of seconds
+    # and nothing needs the client before the first proxy tool call, so it
+    # runs concurrently with the rest of scan start; consumers resolve the
+    # handle at first use (see CaidoBootstrapHandle).
+    caido_client = CaidoBootstrapHandle(
+        asyncio.create_task(
+            bootstrap_caido(
+                session,
+                host_url=host_caido_url,
+                container_url=container_caido_url,
+            ),
+            name=f"caido-bootstrap-{scan_id}",
         )
+    )
 
-        report("Setting up the proxy")
-        caido_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_PORT)
-        scheme = "https" if caido_endpoint.tls else "http"
-        host_caido_url = f"{scheme}://{caido_endpoint.host}:{caido_endpoint.port}"
-        logger.debug("Caido host endpoint resolved: %s", host_caido_url)
-
-        # The Caido login + project setup polls the guest for a couple of seconds
-        # and nothing needs the client before the first proxy tool call, so it
-        # runs concurrently with the rest of scan start; consumers resolve the
-        # handle at first use (see CaidoBootstrapHandle).
-        caido_client = CaidoBootstrapHandle(
-            asyncio.create_task(
-                bootstrap_caido(
-                    session,
-                    host_url=host_caido_url,
-                    container_url=container_caido_url,
-                ),
-                name=f"caido-bootstrap-{scan_id}",
-            )
-        )
-
-        bundle = {
-            "client": client,
-            "session": session,
-            "caido_client": caido_client,
-            "extra_file_staging_dir": staging_dir,
-        }
-        _SESSION_CACHE[scan_id] = bundle
-    except BaseException:
-        # Until the bundle is cached, cleanup(scan_id) cannot find the
-        # staging dir, so it is removed here.
-        _remove_staging_dir(staging_dir)
-        raise
+    bundle = {
+        "client": client,
+        "session": session,
+        "caido_client": caido_client,
+    }
+    _SESSION_CACHE[scan_id] = bundle
     logger.info("Sandbox session for scan %s ready and cached", scan_id)
     return bundle
 
 
-def _remove_staging_dir(staging_dir: Path | None) -> None:
-    if staging_dir is not None:
-        shutil.rmtree(staging_dir, ignore_errors=True)
+async def _discard_session(client: Any, session: Any) -> None:
+    """Best-effort teardown of a session that never made it into the cache."""
+    try:
+        await client.delete(session)
+    except Exception:  # noqa: BLE001
+        logger.warning("Discarding a half-started sandbox session failed", exc_info=True)
 
 
 async def cleanup(scan_id: str) -> None:
@@ -397,8 +390,6 @@ async def cleanup(scan_id: str) -> None:
     if bundle is None:
         logger.debug("cleanup(%s): no cached session", scan_id)
         return
-
-    _remove_staging_dir(bundle.get("extra_file_staging_dir"))
 
     caido_client = bundle.get("caido_client")
     if caido_client is not None:

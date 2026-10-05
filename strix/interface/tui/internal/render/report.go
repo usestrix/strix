@@ -21,6 +21,36 @@ func renderVulnerabilityReportUpdate(args map[string]any, result any) string {
 	return renderReport(args, result, "Vulnerability Report Updated", "Updating report...")
 }
 
+// A deletion names the report it withdraws and the reason; the result carries
+// the title the report had, so the reader knows what left the scan.
+func renderVulnerabilityReportDelete(args map[string]any, result any) string {
+	resultMap, _ := result.(map[string]any)
+	var b strings.Builder
+	b.WriteString("🐞 " + Bold(ReportHdr).Render("Vulnerability Report Deleted"))
+
+	reportID := StringValue(args["report_id"])
+	if reportID != "" {
+		b.WriteString("\n\n" + Bold(Field).Render("Report: ") + reportID)
+	}
+	if title := StringValue(resultMap["title"]); title != "" {
+		b.WriteString("\n\n" + Bold(Field).Render("Title: ") + title)
+	}
+	if sev := StringValue(resultMap["severity"]); sev != "" {
+		b.WriteString("\n\n" + Bold(Field).Render("Severity: ") +
+			lipgloss.NewStyle().Bold(true).Foreground(SeverityColor(sev)).Render(strings.ToUpper(sev)))
+	}
+	if reason := StringValue(args["delete_reason"]); reason != "" {
+		b.WriteString("\n\n" + Bold(Field).Render("Reason") + "\n" + reason)
+	}
+	if errMsg := StringValue(resultMap["error"]); errMsg != "" {
+		b.WriteString("\n\n" + Col(SevHigh).Render(errMsg))
+	}
+	if reportID == "" {
+		b.WriteString("\n  " + Dim().Render("Deleting report..."))
+	}
+	return "\n\n" + b.String() + "\n\n"
+}
+
 func renderReport(args map[string]any, result any, heading, pending string) string {
 	resultMap, _ := result.(map[string]any)
 	var b strings.Builder
@@ -59,7 +89,7 @@ func renderReport(args map[string]any, result any, heading, pending string) stri
 
 	section := func(label, value string) {
 		if value != "" {
-			b.WriteString("\n\n" + Bold(Field).Render(label) + "\n" + value)
+			b.WriteString("\n\n" + Bold(Field).Render(label) + "\n" + renderAssistantMarkdown(value))
 		}
 	}
 	if confidence := StringValue(args["confidence"]); confidence != "" {

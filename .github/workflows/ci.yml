@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    uses: ./.github/workflows/ci-python.yml
+
+  tui:
+    uses: ./.github/workflows/ci-tui.yml
+
+  viewer:
+    uses: ./.github/workflows/ci-viewer.yml
+
+  package:
+    uses: ./.github/workflows/ci-package.yml
+
+  workflows:
+    uses: ./.github/workflows/ci-workflows.yml
+
+  ci-passed:
+    name: ci-passed
+    if: always()
+    needs:
+      - python
+      - tui
+      - viewer
+      - package
+      - workflows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          failing=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<< "$NEEDS")
+          if [ -n "$failing" ]; then
+            echo "$failing"
+            exit 1
+          fi

@@ -148,6 +148,8 @@ Improper file path handling and dynamic inclusion enable sensitive file disclosu
 - Verify symlink handling and path canonicalization prior to write
 - Impact: overwrite config/templates or drop webshells into served directories
 
+**Python extraction filters:** Determine the effective `filter` and `TarFile.extraction_filter` from the installed Python runtime, caller configuration, and matching documentation; verify patch/backport status against current advisories ([documentation](https://docs.python.org/3/library/tarfile.html#extraction-filters)). Filters do not eliminate link-handling bugs: test archive link ordering and post-extraction reads for outside-file disclosure or permission/timestamp changes, separately from content overwrite ([security advisory](https://mail.python.org/archives/list/security-announce@python.org/thread/EFJWGAZJA56AKSBR2WHMHQZO7RRLZPRH/)).
+
 ### File Write to Execution
 
 Characterize the write primitive before choosing a payload:

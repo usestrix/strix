@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from agents import RunContextWrapper, function_tool
 
 from strix.tools.nullish import clean_optional
+from strix.tools.proxy.tools import existing_request_ids
 
 
 if TYPE_CHECKING:
@@ -168,6 +169,8 @@ _REQUIRED_FIELDS = {
 
 _VALID_FIX_EFFORT = frozenset({"trivial", "low", "medium", "high"})
 _VALID_CONFIDENCE = frozenset({"high", "medium", "low"})
+_MAX_HTTP_EXCHANGE_IDS = 10
+_MAX_HTTP_EXCHANGE_ID_CHARS = 128
 
 
 def _validate_required_text(fields: dict[str, str]) -> list[str]:
@@ -175,6 +178,97 @@ def _validate_required_text(fields: dict[str, str]) -> list[str]:
     return [
         msg for name, msg in _REQUIRED_FIELDS.items() if not str(fields.get(name) or "").strip()
     ]
+
+
+def _normalize_http_exchange_ids(raw: Any) -> tuple[list[str] | None, list[str]]:
+    """Return distinct proxy exchange ids in their original order."""
+    if raw is None:
+        return None, []
+    if not isinstance(raw, list):
+        return None, ["http_exchange_ids must be a list of proxy request ids"]
+
+    normalized: list[str] = []
+    errors: list[str] = []
+    seen: set[str] = set()
+    for index, value in enumerate(raw):
+        if not isinstance(value, str):
+            errors.append(f"http_exchange_ids[{index}] must be a string")
+            continue
+        request_id = value.strip()
+        if not request_id:
+            errors.append(f"http_exchange_ids[{index}] cannot be empty")
+            continue
+        if len(request_id) > _MAX_HTTP_EXCHANGE_ID_CHARS:
+            errors.append(
+                f"http_exchange_ids[{index}] must be {_MAX_HTTP_EXCHANGE_ID_CHARS} "
+                "characters or fewer"
+            )
+            continue
+        if any(ord(char) < 0x21 or ord(char) > 0x7E for char in request_id):
+            errors.append(f"http_exchange_ids[{index}] must contain only visible ASCII characters")
+            continue
+        if not request_id.isdigit():
+            errors.append(f"http_exchange_ids[{index}] must be a numeric proxy request id")
+            continue
+        if request_id not in seen:
+            seen.add(request_id)
+            normalized.append(request_id)
+            if len(normalized) > _MAX_HTTP_EXCHANGE_IDS:
+                errors.append(
+                    f"http_exchange_ids can contain at most "
+                    f"{_MAX_HTTP_EXCHANGE_IDS} distinct request ids"
+                )
+                break
+    return normalized, errors
+
+
+_HTTP_EXCHANGE_DROPPED_WARNING = (
+    "http_exchange_ids were not stored: the proxy project could not be reached to verify "
+    "them. Attach them with update_vulnerability_report when the proxy responds again."
+)
+
+
+async def _verify_http_exchange_ids(
+    ctx: RunContextWrapper,
+    raw: Any,
+) -> tuple[list[str] | None, list[str], str | None]:
+    """Verify proxy exchange IDs against the current Caido project.
+
+    IDs the project does not know are rejected. When the proxy itself cannot be
+    queried the IDs are dropped and a warning is returned instead, so a proxy
+    outage never blocks a finding and unverified IDs are never recorded as
+    evidence.
+    """
+    request_ids, errors = _normalize_http_exchange_ids(raw)
+    if request_ids is None or errors or not request_ids:
+        return request_ids, errors, None
+
+    try:
+        existing_ids = await existing_request_ids(ctx, request_ids)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "Could not verify HTTP exchange IDs against the current Caido project",
+            exc_info=True,
+        )
+        return None, [], _HTTP_EXCHANGE_DROPPED_WARNING
+
+    missing_ids = [request_id for request_id in request_ids if request_id not in existing_ids]
+    if missing_ids:
+        return (
+            None,
+            [
+                "http_exchange_ids do not exist in the current proxy project: "
+                + ", ".join(missing_ids)
+            ],
+            None,
+        )
+    return request_ids, [], None
+
+
+def _with_warning(result: dict[str, Any], warning: str | None) -> dict[str, Any]:
+    if warning and result.get("success"):
+        result["warning"] = warning
+    return result
 
 
 def _validate_cvss_breakdown(breakdown: Any) -> list[str]:
@@ -299,7 +393,7 @@ _UPDATE_TEXT_FIELDS = (
 )
 
 
-def _collect_update_changes(  # noqa: PLR0912
+def _collect_update_changes(  # noqa: PLR0912, PLR0915
     fields: dict[str, Any],
 ) -> tuple[dict[str, Any], list[str]]:
     """Validate the fields a revision replaces and return them with any errors."""
@@ -368,6 +462,12 @@ def _collect_update_changes(  # noqa: PLR0912
     if cwe:
         changes["cwe"] = cwe
 
+    raw_http_exchange_ids = fields.get("http_exchange_ids")
+    http_exchange_ids, http_exchange_errors = _normalize_http_exchange_ids(raw_http_exchange_ids)
+    errors.extend(http_exchange_errors)
+    if raw_http_exchange_ids is not None and not http_exchange_errors:
+        changes["http_exchange_ids"] = http_exchange_ids or []
+
     return changes, errors
 
 
@@ -378,6 +478,7 @@ _DYNAMIC_ONLY_UPDATE_FIELDS = (
     "method",
     "poc_description",
     "poc_script_code",
+    "http_exchange_ids",
 )
 
 # A dependency finding is rated in the context of the codebase that pins it, and
@@ -551,13 +652,24 @@ def _do_update(
     if class_error is not None:
         return class_error
 
-    updated = report_state.update_vulnerability_report(
-        report_id,
-        changes,
-        update_reason=update_reason,
-        updated_by_agent_id=agent_id,
-        updated_by_agent_name=agent_name,
-    )
+    try:
+        updated = report_state.update_vulnerability_report(
+            report_id,
+            changes,
+            update_reason=update_reason,
+            updated_by_agent_id=agent_id,
+            updated_by_agent_name=agent_name,
+        )
+    except Exception as e:
+        logger.exception("update_vulnerability_report persistence failed")
+        return {
+            "success": False,
+            "error": (
+                f"Failed to revise report '{report_id}': {e!s}. "
+                "The report still carries its previous content; retry the update."
+            ),
+            "report_id": report_id,
+        }
     if updated is None:
         known = [r.get("id") for r in report_state.get_existing_vulnerabilities()]
         if report_id not in known:
@@ -584,6 +696,87 @@ def _do_update(
     }
 
 
+def _do_delete(
+    *,
+    report_id: str,
+    delete_reason: str,
+    agent_id: str | None = None,
+    agent_name: str | None = None,
+) -> dict[str, Any]:
+    """Withdraw a report an agent filed and has since disproved.
+
+    Deletion is for a finding that is not a vulnerability at all. A finding
+    that is real but weaker than filed is revised, not deleted.
+    """
+    report_id = (report_id or "").strip()
+    delete_reason = (delete_reason or "").strip()
+    if not report_id or not delete_reason:
+        missing = "report_id" if not report_id else "delete_reason"
+        return {
+            "success": False,
+            "error": (
+                f"{missing} cannot be empty - name the report you are withdrawing and state "
+                "what disproved it"
+            ),
+        }
+
+    from strix.report.state import ReportRollbackError, get_global_report_state
+
+    report_state = get_global_report_state()
+    if report_state is None:
+        return {
+            "success": False,
+            "error": "Report state unavailable - no reports have been filed yet",
+        }
+
+    try:
+        deleted = report_state.delete_vulnerability_report(
+            report_id,
+            delete_reason=delete_reason,
+            deleted_by_agent_id=agent_id,
+            deleted_by_agent_name=agent_name,
+        )
+    except Exception as e:
+        logger.exception("delete_vulnerability_report persistence failed")
+        if isinstance(e, ReportRollbackError):
+            outcome = (
+                f"{e.cause!s}. The report is still on file, but its on-disk indexes could "
+                "not be rewritten and may be stale until the next report is saved"
+            )
+        else:
+            outcome = f"{e!s}. The report is still on file"
+        return {
+            "success": False,
+            "error": f"Failed to delete report '{report_id}': {outcome}; retry the deletion.",
+            "report_id": report_id,
+        }
+    if deleted is None:
+        return {
+            "success": False,
+            "error": f"Report with id '{report_id}' not found",
+            "report_id": report_id,
+        }
+
+    logger.info(
+        "Vulnerability report %s deleted by %s: %s",
+        report_id,
+        agent_name or agent_id or "an agent",
+        delete_reason[:200],
+    )
+    return {
+        "success": True,
+        "action": "deleted",
+        "message": (
+            f"Report '{report_id}' ({deleted.get('title')}) is withdrawn and no longer "
+            "counts as a finding of this scan. Do not file it again unless new evidence "
+            "proves it."
+        ),
+        "report_id": report_id,
+        "title": deleted.get("title"),
+        "severity": deleted.get("severity"),
+    }
+
+
 async def _do_create(
     *,
     title: str,
@@ -606,6 +799,7 @@ async def _do_create(
     cve: str | None,
     cwe: str | None,
     code_locations: list[dict[str, Any]] | None,
+    http_exchange_ids: list[str] | None = None,
     confidence_rationale: str | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
@@ -651,6 +845,10 @@ async def _do_create(
     errors.extend(_validate_fix_verification(parsed_locations, fix_verification))
     cve, cwe, identifier_errors = _validate_identifiers(cve, cwe)
     errors.extend(identifier_errors)
+    normalized_http_exchange_ids, http_exchange_errors = _normalize_http_exchange_ids(
+        http_exchange_ids
+    )
+    errors.extend(http_exchange_errors)
 
     if errors:
         return {"success": False, "error": "Validation failed", "errors": errors}
@@ -712,6 +910,7 @@ async def _do_create(
             "code_locations": parsed_locations,
             "fix_verification": fix_verification,
             "fix_pr_body": fix_pr_body,
+            "http_exchange_ids": normalized_http_exchange_ids,
         }
 
         dedupe = await check_duplicate(candidate, existing)
@@ -738,9 +937,15 @@ async def _do_create(
             agent_id=agent_id if isinstance(agent_id, str) else None,
             agent_name=agent_name if isinstance(agent_name, str) else None,
         )
-    except (ImportError, AttributeError) as e:
+    except Exception as e:
         logger.exception("create_vulnerability_report persistence failed")
-        return {"success": False, "error": f"Failed to create vulnerability report: {e!s}"}
+        return {
+            "success": False,
+            "error": (
+                f"Failed to create vulnerability report: {e!s}. "
+                "The finding was not stored; file it again."
+            ),
+        }
     else:
         logger.info(
             "Vulnerability report created: id=%s severity=%s cvss=%.1f title=%s",
@@ -796,6 +1001,7 @@ async def create_vulnerability_report(
     cve: str | None = None,
     cwe: str | None = None,
     code_locations: list[dict[str, Any]] | None = None,
+    http_exchange_ids: list[str] | None = None,
     confidence_rationale: str | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
@@ -869,11 +1075,11 @@ async def create_vulnerability_report(
       "Techniques" that read like an engineering runbook rather than a
       client deliverable.
     - **Use markdown in every text field**: ``**bold**`` for emphasis,
-      ``inline code`` for identifiers/values/parameters, and fenced
-      code blocks (```` ```language ````) for any code/payload/HTTP
+      ``inline code`` for identifiers/values/parameters, and
+      language-tagged fenced code blocks for any code/payload/HTTP
       excerpt. Never leave code bare/unformatted. When referencing a
-      file, annotate the fence, e.g.
-      ```` ```python title=app.py startLineNumber=42 endLineNumber=50 ````.
+      file, annotate the opening fence with
+      ``title=app.py startLineNumber=42 endLineNumber=50`` after the language.
     - Field discipline: ``poc_description`` is steps only — NO code (all
       code goes in ``poc_script_code``); ``remediation_steps`` is prose
       only — NO code/diffs (code fixes go in ``code_locations``).
@@ -985,6 +1191,57 @@ async def create_vulnerability_report(
       Broken / Risky Crypto, CWE-311 Missing Encryption, CWE-916 Weak
       Password Hashing.
 
+    Example (abbreviated — mirror this structure)::
+
+        title: "Reflected XSS in /search q parameter"
+        description:
+            The **`q`** parameter of `/search` reflects user input into
+            the HTML response without encoding, allowing script
+            injection.
+        technical_analysis:
+            The handler interpolates `q` directly into the page body:
+
+            ```python title=views.py startLineNumber=42 endLineNumber=44
+            html = f"<h2>Results for {q}</h2>"
+            return HttpResponse(html)
+            ```
+
+            No output encoding is applied, so `<script>` executes.
+        poc_description:
+            1. Navigate to `/search?q=<payload>`.
+            2. Observe the payload executes in the victim's browser.
+        poc_script_code:
+            ```
+            GET /search?q=<script>alert(document.domain)</script>
+            ```
+        evidence:
+            Response echoes the payload verbatim:
+
+            ```html
+            <h2>Results for <script>alert(document.domain)</script></h2>
+            ```
+        assumptions:
+            Assumes a victim can be induced to open a crafted link.
+        remediation_steps:
+            Context-encode all user input rendered into HTML; prefer the
+            template engine's auto-escaping over string interpolation.
+        counterevidence:
+            No output encoding, CSP, or WAF observed on this response;
+            payload executed in a current browser. The parameter is
+            reflected on an unauthenticated route, so no privileged
+            position is required.
+        confidence: "high"
+        severity_change_conditions:
+            A restrictive CSP that blocks inline script execution would
+            reduce impact and lower the severity.
+        fix_effort: "low"
+
+    Nice to have: for code findings, if the checkout has git history, a quick
+    ``git blame`` (quote the paths) on the vulnerable line is worth weaving into
+    ``technical_analysis`` — who last touched it, when, and in which commit, as
+    part of the prose, not a separate section. Skip it if the line is
+    uncommitted or the command fails.
+
     Args:
         title: Specific finding title (e.g.
             ``"SQL Injection in /api/users login parameter"``). Don't
@@ -1040,6 +1297,18 @@ async def create_vulnerability_report(
         cve: ``CVE-YYYY-NNNNN`` if certain, else omit.
         cwe: ``CWE-NNN`` (most specific child) if certain, else omit.
         code_locations: White-box findings — list of location objects.
+        http_exchange_ids: Proxy request IDs that prove this finding.
+            Copy these IDs from ``list_requests`` or ``view_request``.
+            For a finding validated over HTTP, capture and inspect the
+            supporting exchanges and include their IDs here before filing.
+            Include relevant baseline/control requests as well as the exploit.
+            Omit only when the finding has no captured HTTP evidence (for
+            example a static-only code finding). Never invent IDs or drop
+            them to bypass a verification error; retry the capture instead.
+            If the result carries a ``warning`` that the IDs were not
+            stored, the finding is filed without them: attach them with
+            ``update_vulnerability_report`` once the proxy responds.
+            Keep IDs out of ``evidence`` and all other report text.
 
             **How ``fix_before`` / ``fix_after`` work**: they're used as
             literal GitHub/GitLab PR suggestion blocks. When a reviewer
@@ -1141,52 +1410,23 @@ async def create_vulnerability_report(
             fix (summary + rationale). Prose/markdown only — the code
             change itself belongs in ``code_locations``. Omit for
             black-box findings.
-
-    Example (abbreviated — mirror this structure)::
-
-        title: "Reflected XSS in /search q parameter"
-        description:
-            The **`q`** parameter of `/search` reflects user input into
-            the HTML response without encoding, allowing script
-            injection.
-        technical_analysis:
-            The handler interpolates `q` directly into the page body:
-
-            ```python title=views.py startLineNumber=42 endLineNumber=44
-            html = f"<h2>Results for {q}</h2>"
-            return HttpResponse(html)
-            ```
-
-            No output encoding is applied, so `<script>` executes.
-        poc_description:
-            1. Navigate to `/search?q=<payload>`.
-            2. Observe the payload executes in the victim's browser.
-        poc_script_code:
-            ```
-            GET /search?q=<script>alert(document.domain)</script>
-            ```
-        evidence:
-            Response echoes the payload verbatim:
-
-            ```html
-            <h2>Results for <script>alert(document.domain)</script></h2>
-            ```
-        assumptions:
-            Assumes a victim can be induced to open a crafted link.
-        remediation_steps:
-            Context-encode all user input rendered into HTML; prefer the
-            template engine's auto-escaping over string interpolation.
-        counterevidence:
-            No output encoding, CSP, or WAF observed on this response;
-            payload executed in a current browser. The parameter is
-            reflected on an unauthenticated route, so no privileged
-            position is required.
-        confidence: "high"
-        severity_change_conditions:
-            A restrictive CSP that blocks inline script execution would
-            reduce impact and lower the severity.
-        fix_effort: "low"
     """
+    (
+        http_exchange_ids,
+        http_exchange_errors,
+        http_exchange_warning,
+    ) = await _verify_http_exchange_ids(ctx, http_exchange_ids)
+    if http_exchange_errors:
+        return json.dumps(
+            {
+                "success": False,
+                "error": "Validation failed",
+                "errors": http_exchange_errors,
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+
     agent_id, agent_name = _caller_identity(ctx)
 
     result = await _do_create(
@@ -1211,12 +1451,13 @@ async def create_vulnerability_report(
         cve=cve,
         cwe=cwe,
         code_locations=code_locations,
+        http_exchange_ids=http_exchange_ids,
         fix_verification=fix_verification,
         fix_pr_body=fix_pr_body,
         agent_id=agent_id,
         agent_name=agent_name,
     )
-    return json.dumps(result, ensure_ascii=False, default=str)
+    return json.dumps(_with_warning(result, http_exchange_warning), ensure_ascii=False, default=str)
 
 
 @function_tool(timeout=60, strict_mode=False)
@@ -1245,6 +1486,7 @@ async def update_vulnerability_report(
     cve: str | None = None,
     cwe: str | None = None,
     code_locations: list[dict[str, Any]] | None = None,
+    http_exchange_ids: list[str] | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
     contextual_cvss_reasoning: str | None = None,
@@ -1317,43 +1559,112 @@ async def update_vulnerability_report(
         cve: Replacement CVE id.
         cwe: Replacement CWE id.
         code_locations: Replacement code locations.
+        http_exchange_ids: Replacement proxy request ids. Pass an empty
+            list to remove all linked exchanges.
         fix_verification: Verification statement for an applyable fix.
         fix_pr_body: Replacement fix PR body.
         contextual_cvss_reasoning: Dependency findings only. What you
             observed in this codebase that justifies the contextual
             ``cvss_breakdown``.
     """
+    (
+        http_exchange_ids,
+        http_exchange_errors,
+        http_exchange_warning,
+    ) = await _verify_http_exchange_ids(ctx, http_exchange_ids)
+    if http_exchange_errors:
+        return json.dumps(
+            {
+                "success": False,
+                "error": "Validation failed",
+                "errors": http_exchange_errors,
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+
+    fields = {
+        "title": title,
+        "description": description,
+        "impact": impact,
+        "target": target,
+        "technical_analysis": technical_analysis,
+        "poc_description": poc_description,
+        "poc_script_code": poc_script_code,
+        "remediation_steps": remediation_steps,
+        "evidence": evidence,
+        "assumptions": assumptions,
+        "counterevidence": counterevidence,
+        "confidence": confidence,
+        "confidence_rationale": confidence_rationale,
+        "severity_change_conditions": severity_change_conditions,
+        "fix_effort": fix_effort,
+        "cvss_breakdown": cvss_breakdown,
+        "endpoint": endpoint,
+        "method": method,
+        "cve": cve,
+        "cwe": cwe,
+        "code_locations": code_locations,
+        "http_exchange_ids": http_exchange_ids,
+        "fix_verification": fix_verification,
+        "fix_pr_body": fix_pr_body,
+        "contextual_cvss_reasoning": contextual_cvss_reasoning,
+    }
+    if http_exchange_warning and all(value is None for value in fields.values()):
+        return json.dumps(
+            {"success": False, "error": http_exchange_warning, "report_id": report_id},
+            ensure_ascii=False,
+            default=str,
+        )
+
     agent_id, agent_name = _caller_identity(ctx)
     result = await asyncio.to_thread(
         _do_update,
         report_id=report_id,
         update_reason=update_reason,
-        fields={
-            "title": title,
-            "description": description,
-            "impact": impact,
-            "target": target,
-            "technical_analysis": technical_analysis,
-            "poc_description": poc_description,
-            "poc_script_code": poc_script_code,
-            "remediation_steps": remediation_steps,
-            "evidence": evidence,
-            "assumptions": assumptions,
-            "counterevidence": counterevidence,
-            "confidence": confidence,
-            "confidence_rationale": confidence_rationale,
-            "severity_change_conditions": severity_change_conditions,
-            "fix_effort": fix_effort,
-            "cvss_breakdown": cvss_breakdown,
-            "endpoint": endpoint,
-            "method": method,
-            "cve": cve,
-            "cwe": cwe,
-            "code_locations": code_locations,
-            "fix_verification": fix_verification,
-            "fix_pr_body": fix_pr_body,
-            "contextual_cvss_reasoning": contextual_cvss_reasoning,
-        },
+        fields=fields,
+        agent_id=agent_id,
+        agent_name=agent_name,
+    )
+    return json.dumps(_with_warning(result, http_exchange_warning), ensure_ascii=False, default=str)
+
+
+@function_tool(timeout=60)
+async def delete_vulnerability_report(
+    ctx: RunContextWrapper,
+    report_id: str,
+    delete_reason: str,
+) -> str:
+    """Withdraw a vulnerability report that later testing disproved.
+
+    Use this when a finding you filed turns out not to be a vulnerability
+    at all: the exploit only worked because of a mistake in your own test
+    setup (a mixed-up session, a self-inflicted state change, a misread
+    response), the behaviour is documented and intended, or the control
+    you believed was missing is in fact enforced. The report is removed
+    from the scan; it does not stay behind as a zero-severity entry.
+
+    Do NOT use this for a finding that is real but weaker than filed —
+    revise it with ``update_vulnerability_report`` so the severity, the
+    impact and the counterevidence come down together. Do NOT rewrite a
+    report into a "retracted" or "false positive" note either: delete it.
+
+    Only withdraw a report you have re-tested yourself, whoever filed it.
+    Call ``get_report`` first to read what it claims, then state in
+    ``delete_reason`` exactly what disproved it, so the scan history shows
+    who withdrew the finding and why. A withdrawn report cannot be restored; if new
+    evidence later proves the issue, file it again.
+
+    Args:
+        report_id: Id of the report to withdraw (format ``vuln-NNNN``).
+        delete_reason: What disproved the finding, in one or two
+            sentences.
+    """
+    agent_id, agent_name = _caller_identity(ctx)
+    result = await asyncio.to_thread(
+        _do_delete,
+        report_id=report_id,
+        delete_reason=delete_reason,
         agent_id=agent_id,
         agent_name=agent_name,
     )
@@ -1747,9 +2058,15 @@ async def _do_create_dependency(  # noqa: PLR0912
             agent_id=agent_id if isinstance(agent_id, str) else None,
             agent_name=agent_name if isinstance(agent_name, str) else None,
         )
-    except (ImportError, AttributeError) as e:
+    except Exception as e:
         logger.exception("create_dependency_report persistence failed")
-        return {"success": False, "error": f"Failed to create dependency report: {e!s}"}
+        return {
+            "success": False,
+            "error": (
+                f"Failed to create dependency report: {e!s}. "
+                "The finding was not stored; file it again."
+            ),
+        }
     else:
         logger.info(
             "Dependency report created: id=%s cve=%s package=%s severity=%s",

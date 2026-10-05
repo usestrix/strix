@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import urllib.parse
 from typing import TYPE_CHECKING, Any
@@ -7,10 +8,13 @@ from typing import TYPE_CHECKING, Any
 import requests
 
 from strix.config import load_settings
+from strix.skills import get_loaded_skill_names
 from strix.telemetry._common import (
     SEND_TIMEOUT,
     SESSION_ID,
     base_props,
+    exception_props,
+    get_scan_phase,
     get_version,
     is_first_run,
 )
@@ -90,17 +94,6 @@ def finding(severity: str, cwe: str | None = None, is_cve: bool = False) -> None
     )
 
 
-def skill_loaded(skill_name: str) -> None:
-    _send(
-        "skill_loaded",
-        {
-            **base_props(),
-            "session": SESSION_ID,
-            "skill": skill_name,
-        },
-    )
-
-
 def end(report_state: ReportState, exit_reason: str = "completed") -> None:
     if report_state.scarf_scan_ended_sent:
         return
@@ -128,6 +121,7 @@ def end(report_state: ReportState, exit_reason: str = "completed") -> None:
             }
     except (TypeError, ValueError, AttributeError):
         pass
+    providers = report_state.get_process_llm_providers()
 
     report_state.scarf_scan_ended_sent = _send(
         "scan_ended",
@@ -140,14 +134,20 @@ def end(report_state: ReportState, exit_reason: str = "completed") -> None:
             "vulnerabilities_total": len(report_state.vulnerability_reports),
             **{f"vulnerabilities_{k}": v for k, v in vulnerabilities_counts.items()},
             **llm_props,
+            # Query params are flat, so the per-provider tally travels as JSON.
+            **({"llm_providers": json.dumps(providers)} if providers else {}),
+            "skills": ",".join(get_loaded_skill_names()),
         },
     )
 
 
-def error(error_type: str) -> None:
+def error(error_type: str, exc: BaseException | None = None) -> None:
     props: dict[str, Any] = {
         **base_props(),
         "session": SESSION_ID,
         "error_type": error_type,
+        "phase": get_scan_phase(),
     }
+    if exc is not None:
+        props.update(exception_props(exc))
     _send("error", props)

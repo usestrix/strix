@@ -2,23 +2,32 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import json
+import re
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+from agents.tool_context import ToolContext
 
 from strix.report.dedupe import (
     _check_dependency_duplicate,
     _prepare_report_for_comparison,
     check_duplicate,
 )
-from strix.report.state import ReportState, set_global_report_state
+from strix.report.state import ReportRollbackError, ReportState, set_global_report_state
+from strix.report.writer import write_run_record
 from strix.tools.finish.tool import finish_scan
+from strix.tools.reporting import tool as reporting_tool
 from strix.tools.reporting.tool import (
     _do_create,
     _do_create_dependency,
+    _do_delete,
     _do_update,
+    _normalize_http_exchange_ids,
+    _verify_http_exchange_ids,
     create_dependency_report,
     create_vulnerability_report,
+    delete_vulnerability_report,
     update_vulnerability_report,
 )
 
@@ -115,6 +124,7 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
         cve=None,
         cwe="CWE-79",
         code_locations=None,
+        http_exchange_ids=["1042", "1042", "1088"],
         fix_pr_body="## Fix\nEncode output.",
     )
     assert result["success"] is True
@@ -127,6 +137,51 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
     assert report["counterevidence"] == "No output encoding or CSP observed on this response."
     assert report["confidence"] == "high"
     assert report["severity_change_conditions"] == "A strict CSP would lower the severity."
+    assert report["http_exchange_ids"] == ["1042", "1088"]
+
+
+def test_create_report_does_not_commit_when_callback_fails(
+    report_state: ReportState,
+) -> None:
+    def fail_persistence(_report: dict[str, Any]) -> None:
+        raise RuntimeError("persistence failed")
+
+    report_state.vulnerability_found_callback = fail_persistence
+
+    with pytest.raises(RuntimeError, match="persistence failed"):
+        report_state.add_vulnerability_report(
+            title="Unstored finding",
+            severity="high",
+            http_exchange_ids=["1042"],
+        )
+
+    assert report_state.vulnerability_reports == []
+
+
+def test_failed_revision_keeps_old_evidence_and_can_be_retried(
+    report_state: ReportState,
+) -> None:
+    report_id = report_state.add_vulnerability_report(
+        title="Original finding", severity="high", http_exchange_ids=["1042"]
+    )
+    original = dict(report_state.vulnerability_reports[0])
+
+    def fail_persistence(revised: dict[str, Any]) -> None:
+        assert revised["http_exchange_ids"] == ["1088"]
+        assert report_state.vulnerability_reports[0] == original
+        raise RuntimeError("persistence failed")
+
+    report_state.vulnerability_updated_callback = fail_persistence
+    changes = {"title": "Revised finding", "http_exchange_ids": ["1088"]}
+    with pytest.raises(RuntimeError, match="persistence failed"):
+        report_state.update_vulnerability_report(report_id, changes)
+    assert report_state.vulnerability_reports[0] == original
+
+    report_state.vulnerability_updated_callback = None
+    revised = report_state.update_vulnerability_report(report_id, changes)
+    assert revised is not None
+    assert revised["http_exchange_ids"] == ["1088"]
+    assert len(revised["update_history"]) == 1
 
 
 async def test_create_report_requires_evidence_and_assumptions(
@@ -1031,16 +1086,36 @@ def test_tool_descriptions_include_formatting_guidance() -> None:
 
     finish_desc = finish_scan.description
     assert "markdown" in finish_desc.lower()
-    assert "# Executive Summary" in finish_desc
+    assert "section body" in finish_desc.lower()
+    assert "do not start a field with a heading" in finish_desc.lower()
+    example = finish_desc.split("Example (abbreviated", 1)[1]
+    heading_lines = [line for line in example.splitlines() if re.match(r"^\s*#{1,6}\s", line)]
+    assert heading_lines == []
 
     dep_desc = create_dependency_report.description
     assert "cve" in dep_desc.lower()
     assert "reachab" in dep_desc.lower()
 
 
+def test_git_blame_hint_is_a_trailing_note() -> None:
+    desc = create_vulnerability_report.description
+    assert desc.count("blame") == 1
+    tail = desc[desc.index("Nice to have:") :]
+    assert "git blame" in tail
+    assert "technical_analysis" in tail
+    assert "Example" not in tail
+    assert "blame" not in update_vulnerability_report.description
+
+
 def test_vuln_tool_exposes_new_params() -> None:
     props = create_vulnerability_report.params_json_schema["properties"]
-    for field in ("evidence", "assumptions", "fix_effort", "fix_pr_body"):
+    for field in (
+        "evidence",
+        "assumptions",
+        "fix_effort",
+        "fix_pr_body",
+        "http_exchange_ids",
+    ):
         assert field in props
 
     dep_props = create_dependency_report.params_json_schema["properties"]
@@ -1353,6 +1428,158 @@ def test_update_vulnerability_report_records_chained_impact(report_state: Report
     assert updated["severity"] == "critical"
     assert updated["updated_at"]
     assert report_state.update_vulnerability_report("vuln-0404", {"severity": "high"}) is None
+
+
+def test_update_replaces_http_exchange_ids(report_state: ReportState) -> None:
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="A replay produced a clearer proving exchange.",
+        fields={"http_exchange_ids": ["204", "204", "205"]},
+    )
+
+    assert result["success"] is True
+    assert report_state.vulnerability_reports[0]["http_exchange_ids"] == ["204", "205"]
+
+
+async def test_create_rejects_invalid_http_exchange_ids(report_state: ReportState) -> None:
+    result = await _do_create(
+        **_CONFIRMED_KWARGS,
+        http_exchange_ids=["ok", "contains space"],
+    )
+
+    assert result["success"] is False
+    assert any("visible ASCII" in error for error in result["errors"])
+    assert report_state.vulnerability_reports == []
+
+
+def test_http_exchange_id_limit_applies_after_deduplication() -> None:
+    request_ids, errors = _normalize_http_exchange_ids(["1042"] * 11)
+
+    assert errors == []
+    assert request_ids == ["1042"]
+
+
+async def test_http_exchange_ids_must_exist_in_current_proxy_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def existing_request_ids(
+        _ctx: Any,
+        _request_ids: list[str],
+    ) -> set[str]:
+        return {"1042"}
+
+    monkeypatch.setattr(reporting_tool, "existing_request_ids", existing_request_ids)
+
+    request_ids, errors, warning = await _verify_http_exchange_ids(
+        cast("Any", object()),
+        ["1042", "1088"],
+    )
+
+    assert request_ids is None
+    assert errors == ["http_exchange_ids do not exist in the current proxy project: 1088"]
+    assert warning is None
+
+
+async def test_http_exchange_ids_are_dropped_when_proxy_cannot_be_queried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def existing_request_ids(
+        _ctx: Any,
+        _request_ids: list[str],
+    ) -> set[str]:
+        raise RuntimeError("Caido client is not available")
+
+    monkeypatch.setattr(reporting_tool, "existing_request_ids", existing_request_ids)
+
+    request_ids, errors, warning = await _verify_http_exchange_ids(
+        cast("Any", object()),
+        ["1042", "1042", "1088"],
+    )
+
+    assert request_ids is None
+    assert errors == []
+    assert warning is not None
+    assert "not stored" in warning
+    assert "update_vulnerability_report" in warning
+
+
+async def test_create_reports_persistence_failure_as_tool_error(
+    report_state: ReportState,
+) -> None:
+    def fail_persistence(_report: dict[str, Any]) -> None:
+        raise RuntimeError("persistence failed")
+
+    report_state.vulnerability_found_callback = fail_persistence
+
+    result = await _do_create(**_CONFIRMED_KWARGS, http_exchange_ids=["1042"])
+
+    assert result["success"] is False
+    assert "persistence failed" in result["error"]
+    assert "file it again" in result["error"]
+    assert report_state.vulnerability_reports == []
+
+
+async def test_evidence_only_update_reports_proxy_outage_as_retryable(
+    report_state: ReportState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_weak_report(report_state)
+    original = dict(report_state.vulnerability_reports[0])
+
+    async def existing_request_ids(
+        _ctx: Any,
+        _request_ids: list[str],
+    ) -> set[str]:
+        raise RuntimeError("Caido client is not available")
+
+    monkeypatch.setattr(reporting_tool, "existing_request_ids", existing_request_ids)
+
+    ctx = ToolContext(
+        context={"agent_id": "root"},
+        tool_name="update_vulnerability_report",
+        tool_call_id="call-1",
+        tool_arguments="{}",
+    )
+    raw = await update_vulnerability_report.on_invoke_tool(
+        ctx,
+        json.dumps(
+            {
+                "report_id": "vuln-0009",
+                "update_reason": "A replay produced a clearer proving exchange.",
+                "http_exchange_ids": ["204"],
+            }
+        ),
+    )
+    result = json.loads(raw)
+
+    assert result["success"] is False
+    assert "No fields to update" not in result["error"]
+    assert "update_vulnerability_report" in result["error"]
+    assert result["report_id"] == "vuln-0009"
+    assert report_state.vulnerability_reports[0] == original
+
+
+def test_update_reports_persistence_failure_as_tool_error(report_state: ReportState) -> None:
+    _seed_weak_report(report_state)
+    original = dict(report_state.vulnerability_reports[0])
+
+    def fail_persistence(_report: dict[str, Any]) -> None:
+        raise RuntimeError("persistence failed")
+
+    report_state.vulnerability_updated_callback = fail_persistence
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="A replay produced a clearer proving exchange.",
+        fields={"http_exchange_ids": ["204"]},
+    )
+
+    assert result["success"] is False
+    assert "persistence failed" in result["error"]
+    assert result["report_id"] == "vuln-0009"
+    assert report_state.vulnerability_reports[0] == original
 
 
 def test_update_vulnerability_report_ignores_identical_content(report_state: ReportState) -> None:
@@ -1757,3 +1984,270 @@ def test_update_refuses_code_locations_it_cannot_use(report_state: ReportState) 
 
     assert result["success"] is False
     assert any("start_line" in error for error in result["errors"])
+
+
+def _seed_saved_report(report_state: ReportState) -> Path:
+    """The weak report, written to disk the way a filed finding is."""
+    _seed_weak_report(report_state)
+    report_state._saved_vuln_ids.clear()
+    report_state.save_run_data()
+    run_dir = report_state._run_dir
+    assert run_dir is not None
+    md_path = run_dir / "vulnerabilities" / "vuln-0009.md"
+    assert md_path.exists()
+    return run_dir
+
+
+def test_delete_withdraws_a_disproved_report_and_its_artifacts(
+    report_state: ReportState,
+) -> None:
+    """A deleted finding leaves the run's state and every rendered artifact."""
+    run_dir = _seed_saved_report(report_state)
+    persisted: list[dict[str, Any]] = []
+    report_state.vulnerability_deleted_callback = persisted.append
+
+    result = _do_delete(
+        report_id="vuln-0009",
+        delete_reason="The cross-tenant read came from the harness reusing the victim's session.",
+        agent_id="aaaa1111",
+        agent_name="Recon Agent",
+    )
+
+    assert result["success"] is True
+    assert result["action"] == "deleted"
+    assert result["report_id"] == "vuln-0009"
+    assert result["title"].startswith("Directus 11.5.1")
+    assert report_state.vulnerability_reports == []
+    assert not (run_dir / "vulnerabilities" / "vuln-0009.md").exists()
+    assert json.loads((run_dir / "vulnerabilities.json").read_text(encoding="utf-8")) == []
+    assert "vuln-0009" not in (run_dir / "vulnerabilities.csv").read_text(encoding="utf-8")
+
+    assert len(persisted) == 1
+    assert persisted[0]["id"] == "vuln-0009"
+    assert persisted[0]["agent_id"] == "aaaa1111", "the callback sees the finding as filed"
+    deletion = persisted[0]["deletion"]
+    assert deletion["agent_id"] == "aaaa1111"
+    assert deletion["agent_name"] == "Recon Agent"
+    assert deletion["filed_by_agent_id"] == "aaaa1111"
+    assert deletion["reason"].startswith("The cross-tenant read")
+
+    run = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    history = run["deleted_vulnerability_reports"]
+    assert [entry["id"] for entry in history] == ["vuln-0009"]
+    assert history[0]["severity"] == "medium"
+    assert history[0]["deleted_at"]
+
+
+def test_delete_never_reissues_the_withdrawn_id(report_state: ReportState) -> None:
+    """The next finding must not inherit a deleted report's id, file or history."""
+    _seed_saved_report(report_state)
+    assert report_state.delete_vulnerability_report(
+        "vuln-0009", delete_reason="Disproved.", deleted_by_agent_id="aaaa1111"
+    )
+
+    new_id = report_state.add_vulnerability_report(title="A real finding", severity="high")
+
+    assert new_id == "vuln-0010"
+    assert [r["id"] for r in report_state.vulnerability_reports] == ["vuln-0010"]
+
+
+def _assert_report_still_filed(
+    report_state: ReportState, run_dir: Path, original: dict[str, Any]
+) -> None:
+    """The report is in memory and in every artifact exactly as it was filed."""
+    assert report_state.vulnerability_reports == [original]
+    assert "vuln-0009" in report_state._saved_vuln_ids
+    assert (run_dir / "vulnerabilities" / "vuln-0009.md").exists()
+    indexed = json.loads((run_dir / "vulnerabilities.json").read_text(encoding="utf-8"))
+    assert [r["id"] for r in indexed] == ["vuln-0009"]
+    assert "vuln-0009" in (run_dir / "vulnerabilities.csv").read_text(encoding="utf-8")
+    run = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    assert "deleted_vulnerability_reports" not in run
+    assert "deleted_vulnerability_reports" not in report_state.run_record
+    assert report_state._next_report_id() == "vuln-0010"
+
+
+def test_any_agent_in_the_run_may_delete_a_report(report_state: ReportState) -> None:
+    """Agents in a run share one trust boundary: a report another agent filed can be
+    withdrawn once disproved, and the history keeps both identities apart."""
+    run_dir = _seed_saved_report(report_state)
+    calls: list[dict[str, Any]] = []
+    report_state.vulnerability_deleted_callback = calls.append
+
+    result = _do_delete(
+        report_id="vuln-0009",
+        delete_reason="Disproved.",
+        agent_id="834f79fb",
+        agent_name="Validation Agent",
+    )
+
+    assert result["success"] is True
+    assert report_state.vulnerability_reports == []
+    assert [c["id"] for c in calls] == ["vuln-0009"]
+    assert not (run_dir / "vulnerabilities" / "vuln-0009.md").exists()
+    (deletion,) = report_state.run_record["deleted_vulnerability_reports"]
+    assert deletion["filed_by_agent_id"] == "aaaa1111"
+    assert deletion["agent_id"] == "834f79fb"
+    assert deletion["agent_name"] == "Validation Agent"
+
+
+def test_delete_reports_persistence_failure_and_keeps_the_report(
+    report_state: ReportState,
+) -> None:
+    """Persistence refused after the local indexes were rewritten: they are rewritten back."""
+    run_dir = _seed_saved_report(report_state)
+    original = dict(report_state.vulnerability_reports[0])
+
+    def fail_persistence(_report: dict[str, Any]) -> None:
+        assert report_state.vulnerability_reports == [], "indexes are rewritten first"
+        raise RuntimeError("persistence failed")
+
+    report_state.vulnerability_deleted_callback = fail_persistence
+
+    result = _do_delete(report_id="vuln-0009", delete_reason="Disproved.", agent_id="aaaa1111")
+
+    assert result["success"] is False
+    assert "persistence failed" in result["error"]
+    assert "still on file" in result["error"]
+    _assert_report_still_filed(report_state, run_dir, original)
+
+
+def test_delete_reports_an_artifact_write_failure_and_keeps_the_report(
+    report_state: ReportState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A disk that cannot take the rewritten run record is a failed deletion, not a
+    success with stale artifacts; persistence is never told about it."""
+    run_dir = _seed_saved_report(report_state)
+    original = dict(report_state.vulnerability_reports[0])
+    calls: list[dict[str, Any]] = []
+    report_state.vulnerability_deleted_callback = calls.append
+    attempts = 0
+
+    def write_run_record_once_failing(run_dir_: Path, record: dict[str, Any]) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError(28, "No space left on device")
+        (run_dir_ / "run.json").write_text(json.dumps(record), encoding="utf-8")
+
+    monkeypatch.setattr("strix.report.state.write_run_record", write_run_record_once_failing)
+
+    result = _do_delete(report_id="vuln-0009", delete_reason="Disproved.", agent_id="aaaa1111")
+
+    assert result["success"] is False
+    assert "No space left on device" in result["error"]
+    assert "still on file" in result["error"]
+    assert calls == []
+    assert attempts == 2, "the run record is written back after the failed rewrite"
+    _assert_report_still_filed(report_state, run_dir, original)
+
+
+def test_delete_reports_when_the_rollback_itself_cannot_be_written(
+    report_state: ReportState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A disk that stays full: memory is restored, the caller is told the indexes
+    may be stale, and the next save rewrites them."""
+    run_dir = _seed_saved_report(report_state)
+    original = dict(report_state.vulnerability_reports[0])
+    calls: list[dict[str, Any]] = []
+    report_state.vulnerability_deleted_callback = calls.append
+    disk_full = True
+
+    def write_run_record_while_disk_full(run_dir_: Path, record: dict[str, Any]) -> None:
+        if disk_full:
+            raise OSError(28, "No space left on device")
+        write_run_record(run_dir_, record)
+
+    monkeypatch.setattr("strix.report.state.write_run_record", write_run_record_while_disk_full)
+
+    with pytest.raises(ReportRollbackError) as excinfo:
+        report_state.delete_vulnerability_report(
+            "vuln-0009", delete_reason="Disproved.", deleted_by_agent_id="aaaa1111"
+        )
+
+    assert isinstance(excinfo.value.cause, OSError)
+    assert calls == []
+    assert report_state.vulnerability_reports == [original]
+    assert "vuln-0009" in report_state._saved_vuln_ids
+    assert "deleted_vulnerability_reports" not in report_state.run_record
+
+    result = _do_delete(report_id="vuln-0009", delete_reason="Disproved.", agent_id="aaaa1111")
+    assert result["success"] is False
+    assert "No space left on device" in result["error"]
+    assert "may be stale" in result["error"]
+
+    disk_full = False
+    report_state.save_run_data()
+    _assert_report_still_filed(report_state, run_dir, original)
+
+
+def test_delete_can_be_retried_after_persistence_recovers(report_state: ReportState) -> None:
+    run_dir = _seed_saved_report(report_state)
+    outcomes = iter([RuntimeError("persistence failed"), None])
+
+    def flaky_persistence(_report: dict[str, Any]) -> None:
+        outcome = next(outcomes)
+        if outcome is not None:
+            raise outcome
+
+    report_state.vulnerability_deleted_callback = flaky_persistence
+
+    first = _do_delete(report_id="vuln-0009", delete_reason="Disproved.", agent_id="aaaa1111")
+    second = _do_delete(report_id="vuln-0009", delete_reason="Disproved.", agent_id="aaaa1111")
+
+    assert first["success"] is False
+    assert second["success"] is True
+    assert report_state.vulnerability_reports == []
+    assert not (run_dir / "vulnerabilities" / "vuln-0009.md").exists()
+    assert json.loads((run_dir / "vulnerabilities.json").read_text(encoding="utf-8")) == []
+    run = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    assert [e["id"] for e in run["deleted_vulnerability_reports"]] == ["vuln-0009"]
+
+
+@pytest.mark.parametrize(
+    ("report_id", "delete_reason", "expected"),
+    [
+        ("  ", "reason", "report_id cannot be empty"),
+        ("vuln-0009", "   ", "delete_reason cannot be empty"),
+        ("vuln-0404", "reason", "not found"),
+    ],
+)
+def test_delete_rejects_a_call_it_cannot_act_on(
+    report_state: ReportState,
+    report_id: str,
+    delete_reason: str,
+    expected: str,
+) -> None:
+    _seed_weak_report(report_state)
+    calls: list[dict[str, Any]] = []
+    report_state.vulnerability_deleted_callback = calls.append
+
+    result = _do_delete(report_id=report_id, delete_reason=delete_reason, agent_id="aaaa1111")
+
+    assert result["success"] is False
+    assert expected in result["error"]
+    assert len(report_state.vulnerability_reports) == 1
+    assert calls == [], "nothing reaches persistence for a call that is refused"
+
+
+async def test_delete_tool_carries_the_caller_identity(report_state: ReportState) -> None:
+    _seed_saved_report(report_state)
+    coordinator = type("Coordinator", (), {"names": {"aaaa1111": "Recon Agent"}})()
+    ctx = ToolContext(
+        context={"agent_id": "aaaa1111", "coordinator": coordinator},
+        tool_name="delete_vulnerability_report",
+        tool_call_id="call-1",
+        tool_arguments="{}",
+    )
+
+    raw = await delete_vulnerability_report.on_invoke_tool(
+        ctx,
+        json.dumps({"report_id": "vuln-0009", "delete_reason": "Disproved on re-test."}),
+    )
+    result = json.loads(raw)
+
+    assert result["success"] is True
+    history = report_state.run_record["deleted_vulnerability_reports"]
+    assert history[0]["agent_id"] == "aaaa1111"
+    assert history[0]["agent_name"] == "Recon Agent"
+    assert "update_vulnerability_report" in delete_vulnerability_report.description

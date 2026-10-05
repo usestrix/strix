@@ -86,12 +86,16 @@ func Tool(data map[string]any) string {
 		return renderVulnerabilityReport(args, result)
 	case "update_vulnerability_report":
 		return renderVulnerabilityReportUpdate(args, result)
+	case "delete_vulnerability_report":
+		return renderVulnerabilityReportDelete(args, result)
 	case "create_dependency_report":
 		return renderDependencyReport(args, result)
 	case "list_reports":
 		return renderListReports(result)
 	case "get_report":
 		return renderGetReport(result)
+	case "wait_for_user":
+		return renderWaitForUser()
 	case "respond_to_user":
 		return renderRespondToUser(args)
 	case "finish_scan":

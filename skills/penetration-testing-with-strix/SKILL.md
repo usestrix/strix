@@ -91,9 +91,10 @@ Key flags:
 | `-n, --non-interactive` | Headless, exits on completion. Required for agents. |
 | `-m, --scan-mode` | `quick` (minutes) / `standard` (~30 min) / `deep` (hours, default). |
 | `--instruction` / `--instruction-file` | Credentials, focus areas, scope rules. |
-| `--workspace-file PATH[:DEST]` | Place a file from this machine into `/workspace` read-only before the scan, for a wordlist, a spec, or notes. Repeatable. |
+| `--workspace-file PATH[:DEST]` | Copy a file from this machine into `/workspace` before the scan, for a wordlist, a spec, or notes. Repeatable. |
 | `--max-budget USD` | Hard LLM spend cap; scan wraps up cleanly at the limit. |
 | `--max-turns N` | Per-agent turn cap (default 500). |
+| `--fail-on SEVERITY` | Headless only: exit `2` only for findings at or above `critical`/`high`/`medium`/`low`/`info`. Default: any finding. |
 | `--resume RUN_NAME` | Resume a prior run from `strix_runs/`, with its agent history and targets. Cannot be combined with `-t`. |
 | `--scope-mode` | For code targets: `auto` (diff-scope in CI/headless), `diff` (force changed files only), `full` (whole tree). |
 | `--diff-base REF` | Branch or commit that `diff` scope compares against. Defaults to the repo's default branch. |
@@ -102,9 +103,9 @@ Scans take minutes (`quick`) to hours (`deep`). Run them in the background and p
 
 ### Exit codes (headless)
 
-- `0` — finished with no validated vulnerabilities **in what was analyzed**
+- `0` — finished with no validated vulnerabilities **in what was analyzed** (with `--fail-on`, none at or above the threshold; lower ones are still in the artifacts)
 - `1` — fatal error (missing env vars, Docker down, bad config)
-- `2` — vulnerabilities found
+- `2` — vulnerabilities found (with `--fail-on`, at least one at or above that severity)
 
 A `0` is not proof of full coverage: if `--max-budget`/`--max-turns` is reached before the scan completes, it wraps up early and still exits `0`. When you need assurance the scan finished, give it enough budget and check `strix_runs/<run>/run.json`: a hard budget stop leaves `status: "stopped"`, but an agent that wrapped up early on a budget *warning* still calls `finish_scan` and records `"completed"` — so also sanity-check the run's cost against `--max-budget` and the report's stated coverage before treating a clean result as full coverage.
 

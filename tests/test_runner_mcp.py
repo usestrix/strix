@@ -80,13 +80,14 @@ async def test_none_default_attaches_from_the_user_config_file(
     )
     monkeypatch.setattr(mcp_pkg, "load_user_mcp_configs", lambda: [file_config])
 
-    captured: list[list[McpConnectionRequest]] = []
+    captured: list[McpConnectionRequest] = []
+    original_register = mcp_pkg.McpRegistry.register
 
-    async def _capture(requests: list[McpConnectionRequest], _registry: Any) -> list[Any]:
-        captured.append(requests)
-        return []
+    def _capture(registry: Any, request: McpConnectionRequest) -> Any:
+        captured.append(request)
+        return original_register(registry, request)
 
-    monkeypatch.setattr(mcp_pkg, "attach_mcp_requests", _capture)
+    monkeypatch.setattr(mcp_pkg.McpRegistry, "register", _capture)
 
     await runner.run_strix_scan(
         scan_config={"targets": [], "scan_mode": "deep"},
@@ -97,12 +98,11 @@ async def test_none_default_attaches_from_the_user_config_file(
 
     # Each config from the file is wrapped in a bare request: no provider, no
     # transform, no explicit purpose (purpose falls back to notes at attach time).
-    (requests,) = captured
-    assert len(requests) == 1
-    assert requests[0].config is file_config
-    assert requests[0].provider is None
-    assert requests[0].result_transform is None
-    assert requests[0].purpose is None
+    (request,) = captured
+    assert request.config is file_config
+    assert request.provider is None
+    assert request.result_transform is None
+    assert request.purpose is None
 
 
 @pytest.mark.asyncio
@@ -116,13 +116,14 @@ async def test_supplied_requests_are_attached_and_the_user_file_is_not_read(
 
     monkeypatch.setattr(mcp_pkg, "load_user_mcp_configs", _fail_if_read)
 
-    captured: list[list[McpConnectionRequest]] = []
+    captured: list[McpConnectionRequest] = []
+    original_register = mcp_pkg.McpRegistry.register
 
-    async def _capture(requests: list[McpConnectionRequest], _registry: Any) -> list[Any]:
-        captured.append(requests)
-        return []
+    def _capture(registry: Any, request: McpConnectionRequest) -> Any:
+        captured.append(request)
+        return original_register(registry, request)
 
-    monkeypatch.setattr(mcp_pkg, "attach_mcp_requests", _capture)
+    monkeypatch.setattr(mcp_pkg.McpRegistry, "register", _capture)
 
     supplied = [
         McpConnectionRequest(
@@ -139,7 +140,7 @@ async def test_supplied_requests_are_attached_and_the_user_file_is_not_read(
         mcp_connection_requests=supplied,
     )
 
-    assert captured == [supplied]
+    assert captured == supplied
 
 
 @pytest.mark.asyncio
@@ -147,27 +148,14 @@ async def test_roster_is_persisted_even_without_a_status_sink(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
     """The viewer reads the roster off disk, so persistence must not depend on the
-    interface status sink: with ``mcp_status_sink=None`` the connect-time roster is
-    still written, carrying only the non-secret name/provider/tool_count/dead."""
+    interface status sink: with ``mcp_status_sink=None`` the configured roster is
+    still written, carrying only non-secret lifecycle fields."""
     _wire_runner(monkeypatch, tmp_path)
     monkeypatch.setattr(
         mcp_pkg,
         "load_user_mcp_configs",
         lambda: [McpConnectionConfig(name="local_fs", transport="stdio", command="npx")],
     )
-
-    class _FakeSession:
-        is_dead = False
-
-        def set_on_dead(self, _callback: Any) -> None:
-            return None
-
-    async def _attach(_requests: list[McpConnectionRequest], registry: Any) -> list[Any]:
-        registry.add(name="local_fs", session=_FakeSession(), tool_count=3, provider=None)
-        entry = registry.get("local_fs")
-        return [types.SimpleNamespace(name="local_fs", tool_count=3, session=entry.session)]
-
-    monkeypatch.setattr(mcp_pkg, "attach_mcp_requests", _attach)
 
     persisted: list[list[dict[str, Any]]] = []
 
@@ -185,4 +173,12 @@ async def test_roster_is_persisted_even_without_a_status_sink(
     )
 
     assert persisted, "roster must persist even when no status sink is attached"
-    assert persisted[-1] == [{"name": "local_fs", "provider": None, "tool_count": 3, "dead": False}]
+    assert persisted[0] == [
+        {
+            "name": "local_fs",
+            "provider": None,
+            "tool_count": 0,
+            "dead": False,
+            "state": "configured",
+        }
+    ]

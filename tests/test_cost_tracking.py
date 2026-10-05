@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import uuid
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock, call, patch
 
+import httpx
 import litellm
 import pytest
 from litellm.types.utils import LlmProviders
@@ -14,6 +17,7 @@ from strix.config.models import (
     _configure_litellm_compatibility,
     _install_openrouter_stream_cost_capture,
 )
+from strix.llm import request_log
 from strix.report.state import (
     ReportState,
     litellm_cost_callback,
@@ -21,6 +25,11 @@ from strix.report.state import (
     set_global_report_state,
     streamed_openrouter_costs,
 )
+from strix.report.usage import LLMUsageLedger
+
+
+if TYPE_CHECKING:
+    from litellm.types.llms.openai import AllMessageValues
 
 
 @pytest.fixture(autouse=True)
@@ -257,3 +266,126 @@ def test_openrouter_stream_handler_records_cost() -> None:
     assert streamed_openrouter_costs.take(SimpleNamespace(id="gen-stream")) == pytest.approx(
         0.0035055
     )
+
+
+def test_openrouter_tallies_provider() -> None:
+    _install_openrouter_stream_cost_capture()
+    config = ProviderConfigManager.get_provider_chat_config(
+        model="z-ai/glm-5.3", provider=LlmProviders.OPENROUTER
+    )
+    assert config is not None
+    handler = config.get_model_response_iterator(streaming_response=iter([]), sync_stream=True)
+    report_state = MagicMock()
+    usage = {
+        "prompt_tokens": 1000,
+        "completion_tokens": 10,
+        "cost": 0.002,
+        "prompt_tokens_details": {"cached_tokens": 900},
+    }
+    with patch("strix.report.state.get_global_report_state", return_value=report_state):
+        handler.chunk_parser(
+            {
+                "id": "gen-a",
+                "created": 1,
+                "model": "z-ai/glm-5.3",
+                "provider": "Together",
+                "choices": [{"index": 0, "delta": {"content": None}}],
+                "usage": usage,
+            }
+        )
+        # Non-streamed replies (LLM_DISABLE_STREAMING) carry the same fields.
+        reply = {
+            "choices": [{"message": {"role": "assistant"}}],
+            "provider": "Together",
+            "usage": usage,
+        }
+        config.transform_response(
+            "z-ai/glm-5.3",
+            httpx.Response(200, json=reply),
+            litellm.ModelResponse(),
+            MagicMock(),
+            {},
+            [],
+            {},
+            {},
+            None,
+        )
+
+    tally = call("Together", agent_id=None, input_tokens=1000, cached_tokens=900, cost=0.002)
+    assert report_state.record_llm_provider.call_args_list == [tally, tally]
+
+
+def test_provider_tally_survives_run_record_round_trip() -> None:
+    ledger = LLMUsageLedger()
+    for input_tokens, cached_tokens, cost in [(1000, 900, 0.002), (500, 0, 0.001)]:
+        ledger.record_provider(
+            "Together",
+            agent_id=None,
+            input_tokens=input_tokens,
+            cached_tokens=cached_tokens,
+            cost=cost,
+            cache_block_tokens=128,
+        )
+
+    restored = LLMUsageLedger()
+    restored.hydrate(ledger.to_record())
+
+    assert restored.to_record()["providers"] == {
+        "Together": {
+            "requests": 2,
+            "input_tokens": 1500,
+            "cached_tokens": 900,
+            "cost": 0.003,
+            "cache_misses": 0,
+            "missed_tokens": 0,
+        }
+    }
+
+
+def test_provider_tally_counts_cache_misses_per_agent() -> None:
+    ledger = LLMUsageLedger()
+    calls = [
+        ("Z.AI", "a1", 1000, 0),  # first call: nothing to miss
+        ("Z.AI", "a1", 1200, 960),  # 40 short of the previous 1000: within a block
+        ("DeepInfra", "a1", 1500, 200),  # 1000 of the previous 1200 lost
+        ("Z.AI", "a2", 800, 0),  # another agent's first call
+        ("Z.AI", "a1", 600, 0),  # prompt shrank: compaction, not a miss
+    ]
+    for provider, agent_id, input_tokens, cached_tokens in calls:
+        ledger.record_provider(
+            provider,
+            agent_id=agent_id,
+            input_tokens=input_tokens,
+            cached_tokens=cached_tokens,
+            cost=0.0,
+            cache_block_tokens=128,
+        )
+
+    providers = ledger.to_record()["providers"]
+    assert providers["DeepInfra"]["cache_misses"] == 1
+    assert providers["DeepInfra"]["missed_tokens"] == 1000
+    assert providers["Z.AI"]["cache_misses"] == 0
+
+
+def test_openrouter_request_carries_agent_session_id() -> None:
+    _install_openrouter_stream_cost_capture()
+    config = ProviderConfigManager.get_provider_chat_config(
+        model="moonshotai/kimi-k3", provider=LlmProviders.OPENROUTER
+    )
+    assert config is not None
+    messages: list[AllMessageValues] = [{"role": "user", "content": "hi"}]
+
+    def body() -> dict[str, Any]:
+        return config.transform_request("moonshotai/kimi-k3", messages, {}, {}, {})
+
+    assert "session_id" not in body()
+    token = request_log.bind_call_context("a1b2c3d4", "root")
+    try:
+        assert "session_id" not in body()
+        with patch("strix.config.models.load_settings") as settings:
+            settings.return_value.llm.openrouter_sticky_sessions = True
+            session_id = body()["session_id"]
+            assert str(uuid.UUID(session_id)) == session_id
+            assert body()["session_id"] == session_id
+    finally:
+        request_log.reset_call_context(token)
