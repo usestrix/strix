@@ -95,7 +95,7 @@ Key flags:
 | `--max-budget USD` | Hard LLM spend cap; scan wraps up cleanly at the limit. |
 | `--max-turns N` | Per-agent turn cap (default 500). |
 | `--fail-on SEVERITY` | Headless only: exit `2` only for findings at or above `critical`/`high`/`medium`/`low`/`info`. Default: any finding. |
-| `--resume RUN_NAME` | Resume a prior run from `strix_runs/`, with its agent history and targets. Cannot be combined with `-t`. |
+| `-r`, `--resume RUN_NAME` | Resume a prior run from `strix_runs/`, with its agent history and targets. Cannot be combined with `-t`. |
 | `--scope-mode` | For code targets: `auto` (diff-scope in CI/headless), `diff` (force changed files only), `full` (whole tree). |
 | `--diff-base REF` | Branch or commit that `diff` scope compares against. Defaults to the repo's default branch. |
 

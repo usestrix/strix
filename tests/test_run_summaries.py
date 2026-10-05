@@ -139,3 +139,25 @@ def test_blank_instruction_does_not_break_the_listing(
     [summary] = list_run_summaries()
 
     assert summary.target == ""
+
+
+def test_title_is_the_instruction_else_the_most_severe_finding(tmp_path: Path) -> None:
+    base = tmp_path / "strix_runs"
+    _write_run(
+        base, "instructed_1111", {"user_instruction": "focus on auth\nand billing"}, modified=2
+    )
+    _write_run(base, "found_2222", {}, modified=1)
+    (base / "found_2222" / "vulnerabilities.json").write_text(
+        json.dumps(
+            [
+                {"title": "Verbose errors", "severity": "low"},
+                {"title": "SQL injection via id on /login", "severity": "critical"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert [run.title for run in list_run_summaries(cwd=tmp_path)] == [
+        "focus on auth",
+        "SQL injection",
+    ]

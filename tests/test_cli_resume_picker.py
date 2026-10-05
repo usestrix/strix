@@ -41,10 +41,13 @@ def _write_run(base: Path, name: str, *, state: bool = True) -> None:
         (run_dir / ".state" / "agents.json").write_text("{}", encoding="utf-8")
 
 
-def test_bare_resume_defers_to_the_picker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("flag", ["--resume", "-r"])
+def test_bare_resume_defers_to_the_picker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flag: str
+) -> None:
     monkeypatch.chdir(tmp_path)
     _write_run(tmp_path / "strix_runs", "example-com_1111")
-    monkeypatch.setattr(sys, "argv", ["strix", "--resume"])
+    monkeypatch.setattr(sys, "argv", ["strix", flag])
 
     args = cli_main.parse_arguments()
 

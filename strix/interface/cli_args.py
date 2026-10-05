@@ -299,6 +299,7 @@ Strix Cloud:
     )
 
     parser.add_argument(
+        "-r",
         "--resume",
         type=str,
         nargs="?",

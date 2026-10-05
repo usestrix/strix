@@ -38,6 +38,7 @@ def _run(
     status: str = "completed",
     findings: int = 0,
     resumable: bool = True,
+    title: str = "",
 ) -> RunSummary:
     started = (NOW - timedelta(minutes=minutes_ago)).isoformat()
     return RunSummary(
@@ -48,6 +49,7 @@ def _run(
         status=status,
         findings=findings,
         resumable=resumable,
+        title=title,
     )
 
 
@@ -62,6 +64,7 @@ RUNS = [
         minutes_ago=60 * 26,
         status="stopped",
         findings=7,
+        title="SQL injection",
     ),
     _run(
         "strix_41c0",
@@ -127,7 +130,8 @@ def test_render_lists_every_run_with_its_metadata() -> None:
     for run in RUNS:
         assert run.run_name in text
     assert "12 min ago" in text
-    assert "https://juice-shop.herokuapp.com" in text
+    assert "https://juice-shop" in text
+    assert "SQL injection" in text
     assert "interrupted" in text
     assert "failed · no state" in text
     assert text.splitlines()[3].startswith(" \u276f ")

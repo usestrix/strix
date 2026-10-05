@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -22,6 +23,7 @@ class RunSummary:
     status: str
     findings: int
     resumable: bool
+    title: str = ""
 
 
 def list_run_summaries(*, cwd: Path | None = None) -> list[RunSummary]:
@@ -55,7 +57,21 @@ def _summarize(run_dir: Path, record: Any) -> RunSummary:
         status=str(record.get("status") or "unknown"),
         findings=len(findings) if isinstance(findings, list) else 0,
         resumable=(runtime_state_dir(run_dir) / "agents.json").is_file(),
+        title=_title(record, findings),
     )
+
+
+_SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+
+def _title(record: dict[str, Any], findings: Any) -> str:
+    """The instruction's first line, else the most severe finding's title, shortened."""
+    instruction = str(record.get("user_instruction") or record.get("instruction") or "").strip()
+    if instruction:
+        return instruction.splitlines()[0]
+    found = [f for f in findings if isinstance(f, dict)] if isinstance(findings, list) else []
+    worst = min(found, key=lambda f: _SEVERITY_RANK.get(str(f.get("severity")), 4), default={})
+    return re.split(r" via | on | \(", str(worst.get("title") or ""))[0]
 
 
 def _describe_target(record: dict[str, Any]) -> str:

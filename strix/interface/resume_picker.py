@@ -175,6 +175,7 @@ def filter_runs(runs: list[RunSummary], needle: str) -> list[RunSummary]:
         for run in runs
         if needle in run.run_name.lower()
         or needle in run.target.lower()
+        or needle in run.title.lower()
         or needle in run.status.lower()
     ]
 
@@ -215,16 +216,18 @@ class ResumePicker:
     def _visible(self) -> int:
         return max(3, min(len(self.rows), _MAX_VISIBLE, self.console.height - _CHROME_LINES))
 
-    def _columns(self) -> tuple[int, int, int]:
+    def _columns(self) -> tuple[int, int, int, int]:
         width = max(40, self.console.width - 1)
         status_width = max(len("status"), *(len(_status_text(run)) for run in self.runs))
         run_width = min(_MAX_RUN_WIDTH, max(len("run"), *(len(run.run_name) for run in self.runs)))
-        fixed = len(_CURSOR) + _STARTED_WIDTH + _FINDINGS_WIDTH + status_width + 4 * 2
+        fixed = len(_CURSOR) + _STARTED_WIDTH + _FINDINGS_WIDTH + status_width + 5 * 2
         target_width = width - fixed - run_width
-        if target_width < _MIN_TARGET_WIDTH:
-            run_width = max(8, run_width + target_width - _MIN_TARGET_WIDTH)
+        if target_width < 2 * _MIN_TARGET_WIDTH:
+            run_width = max(8, run_width + target_width - 2 * _MIN_TARGET_WIDTH)
             target_width = width - fixed - run_width
-        return max(_MIN_TARGET_WIDTH, target_width), status_width, run_width
+        title_width = max(_MIN_TARGET_WIDTH, target_width // 2)
+        target_width = max(_MIN_TARGET_WIDTH, target_width - title_width)
+        return title_width, target_width, status_width, run_width
 
     def _scroll(self) -> range:
         rows = self.rows
@@ -250,7 +253,7 @@ class ResumePicker:
             title.append(self.filter)
         header = Text(
             " " * len(_CURSOR)
-            + self._cells("started", "target", "status", "findings", "run", widths),
+            + self._cells("started", "title", "target", "status", "findings", "run", widths),
             style="dim",
         )
         lines = [title, Text(), header]
@@ -276,16 +279,18 @@ class ResumePicker:
     @staticmethod
     def _cells(
         started: str,
+        title: str,
         target: str,
         status: str,
         findings: str,
         run: str,
-        widths: tuple[int, int, int],
+        widths: tuple[int, int, int, int],
     ) -> str:
-        target_width, status_width, run_width = widths
+        title_width, target_width, status_width, run_width = widths
         return "  ".join(
             [
                 _fit(started, _STARTED_WIDTH),
+                _fit(title, title_width),
                 _fit(target, target_width),
                 _fit(status, status_width),
                 _fit(findings, _FINDINGS_WIDTH),
@@ -293,8 +298,8 @@ class ResumePicker:
             ]
         )
 
-    def _row(self, run: RunSummary, selected: bool, widths: tuple[int, int, int]) -> Text:
-        target_width, status_width, run_width = widths
+    def _row(self, run: RunSummary, selected: bool, widths: tuple[int, int, int, int]) -> Text:
+        title_width, target_width, status_width, run_width = widths
         primary = "bold" if selected else ""
         muted = "" if selected else "dim"
         status_style = _STATUS_STYLES.get(run.status, "")
@@ -304,7 +309,9 @@ class ResumePicker:
         line.append(_CURSOR if selected else " " * len(_CURSOR), style=_GREEN)
         line.append(_fit(relative_time(run.started_at, self.now), _STARTED_WIDTH), style=muted)
         line.append("  ")
-        line.append(_fit(run.target, target_width), style=primary)
+        line.append(_fit(run.title, title_width), style=primary)
+        line.append("  ")
+        line.append(_fit(run.target, target_width), style=muted)
         line.append("  ")
         line.append(_fit(_status_text(run), status_width), style=status_style)
         line.append("  ")
