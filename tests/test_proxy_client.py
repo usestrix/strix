@@ -9,6 +9,8 @@ call at a time against the shared client.
 from __future__ import annotations
 
 import asyncio
+import sys
+import types
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -76,6 +78,62 @@ async def test_call_with_client_creates_and_caches_when_empty(
     assert await caido_api.call_with_client(fn) == "ok"
     assert seen["client"] is created
     assert caido_api._CLIENT_CACHE["default"] is created
+
+
+async def test_new_client_uses_published_access_token_instead_of_guest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    token_path = tmp_path / "access-token"
+    token_path.write_text("published-token", encoding="utf-8")
+    monkeypatch.setattr(caido_api, "ACCESS_TOKEN_PATH", str(token_path))
+
+    def _guest() -> str:
+        raise AssertionError("guest login must not run when an access token is published")
+
+    monkeypatch.setattr(caido_api, "_login_as_guest", _guest)
+    created: dict[str, Any] = {}
+
+    class _Client:
+        async def connect(self) -> None:
+            return None
+
+    def _client(_url: str, *, auth: Any, **_kwargs: Any) -> _Client:
+        created["auth"] = auth
+        return _Client()
+
+    sdk = types.ModuleType("caido_sdk_client")
+    sdk.Client = _client  # type: ignore[attr-defined]
+    sdk.TokenAuthOptions = lambda token: token  # type: ignore[attr-defined]
+    sdk.ConsoleLogger = lambda: None  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "caido_sdk_client", sdk)
+
+    client = await caido_api._new_client()
+
+    assert created["auth"] == "published-token"
+    assert isinstance(client, _Client)
+
+
+async def test_new_client_logs_connect_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(caido_api, "_login_as_guest", lambda: "guest-token")
+
+    class _Client:
+        async def connect(self) -> None:
+            raise ConnectionError("listener down")
+
+    sdk = types.ModuleType("caido_sdk_client")
+    sdk.Client = lambda *_a, **_k: _Client()  # type: ignore[attr-defined]
+    sdk.TokenAuthOptions = lambda token: token  # type: ignore[attr-defined]
+    sdk.ConsoleLogger = lambda: None  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "caido_sdk_client", sdk)
+
+    with caplog.at_level("ERROR", logger="strix.tools.proxy.caido_api"), pytest.raises(
+        ConnectionError, match="listener down"
+    ):
+        await caido_api._new_client()
+
+    assert "Caido client connect failed: listener down" in caplog.text
 
 
 async def test_failed_init_does_not_poison_cache(monkeypatch: pytest.MonkeyPatch) -> None:
