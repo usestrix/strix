@@ -129,14 +129,18 @@ async def bootstrap_caido(
     logger.info("Bootstrapping Caido client (host=%s, container=%s)", host_url, container_url)
 
     if pat:
-        from caido_sdk_client import Client, PATAuthOptions
+        from caido_sdk_client import Client, PATAuthOptions, ConsoleLogger
 
-        client = Client(host_url, auth=PATAuthOptions(pat=pat, cache=_RunTokenCache(session)))
+        client = Client(
+            host_url,
+            auth=PATAuthOptions(pat=pat, cache=_RunTokenCache(session)),
+            logger=ConsoleLogger(),
+        )
     else:
-        from caido_sdk_client import Client, TokenAuthOptions
+        from caido_sdk_client import Client, TokenAuthOptions, ConsoleLogger
 
         access_token = await _login_as_guest(session, container_url=container_url)
-        client = Client(host_url, auth=TokenAuthOptions(token=access_token))
+        client = Client(host_url, auth=TokenAuthOptions(token=access_token), logger=ConsoleLogger())
     try:
         # connect() is inside the guard as well: a cancellation there (scan
         # teardown while the bootstrap is still in flight) would otherwise

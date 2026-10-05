@@ -62,7 +62,7 @@ _HANDLER_TAG = "_strix_scan_handler"
 
 
 # ``openai.agents`` is the openai-agents SDK's canonical logger root.
-_TRACKED_ROOTS: tuple[str, ...] = ("strix", "openai.agents")
+_TRACKED_ROOTS: tuple[str, ...] = ("strix", "openai.agents", "caido")
 
 _STDOUT_QUIET_ROOTS: frozenset[str] = frozenset({"openai.agents"})
 

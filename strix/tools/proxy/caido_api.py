@@ -94,12 +94,12 @@ def _login_as_guest() -> str:
 
 
 async def _new_client() -> Client:
-    from caido_sdk_client import Client, TokenAuthOptions
+    from caido_sdk_client import Client, TokenAuthOptions, ConsoleLogger
 
     token = _access_token()
     if token is None:
         token = await asyncio.to_thread(_login_as_guest)
-    client = Client(caido_url(), auth=TokenAuthOptions(token=token))
+    client = Client(caido_url(), auth=TokenAuthOptions(token=token), logger=ConsoleLogger())
     await client.connect()
     return client
 
