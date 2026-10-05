@@ -118,6 +118,7 @@ def end(report_state: "ReportState", exit_reason: str = "completed") -> None:
             }
     except (TypeError, ValueError, AttributeError):
         pass
+    providers = report_state.get_process_llm_providers()
 
     report_state.posthog_scan_ended_sent = _send(
         "scan_ended",
@@ -129,6 +130,7 @@ def end(report_state: "ReportState", exit_reason: str = "completed") -> None:
             "vulnerabilities_total": len(report_state.vulnerability_reports),
             **{f"vulnerabilities_{k}": v for k, v in vulnerabilities_counts.items()},
             **llm_props,
+            **({"llm_providers": providers} if providers else {}),
             "skills": get_loaded_skill_names(),
         },
     )

@@ -11,7 +11,7 @@ import shutil
 import sys
 from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TextIO
 
 from strix.config import load_settings, persist_current
 from strix.core.agents import AgentCoordinator
@@ -58,6 +58,10 @@ class GoTuiPreActivationError(RuntimeError):
     """A sidecar failure raised before the Go TUI activates."""
 
 
+def _open_output_sink() -> TextIO:
+    return Path(os.devnull).open("a", buffering=1, encoding="utf-8")
+
+
 class GoTuiRuntime:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
@@ -69,6 +73,7 @@ class GoTuiRuntime:
         self.scan_error: BaseException | None = None
         self._last_sync_fingerprint = ""
         self._error_noted_agents: set[str] = set()
+        self._output_syncs: set[asyncio.Task[None]] = set()
         self.model_verified = False
         self._setup_preflight: asyncio.Task[None] | None = None
         self.controller = TuiController(
@@ -122,8 +127,8 @@ class GoTuiRuntime:
     async def check_setup_model(self) -> None:
         """Verify the model route as soon as the start screen is up.
 
-        The same round trip a direct launch makes in prepare_and_start, run in
-        the background so the screen paints first and the outcome lands in the
+        The same round trip main() makes before a direct launch, run in the
+        background so the screen paints first and the outcome lands in the
         setup log before the user has finished typing.
         """
         if not (load_settings().llm.model or "").strip():
@@ -157,13 +162,13 @@ class GoTuiRuntime:
         await preflight_model_connection(model)
         self.model_verified = True
 
-    def _start_preparation(self) -> asyncio.Task[None]:
+    def _start_preparation(self) -> asyncio.Task[None] | None:
         """Kick off the work that runs behind the freshly painted TUI."""
         if self.controller.setup_mode:
             self._setup_preflight = asyncio.create_task(self.check_setup_model())
             return self._setup_preflight
-        self.controller.begin_preparation()
-        return asyncio.create_task(self.prepare_and_start())
+        self.start_scan()
+        return None
 
     async def start_from_setup(self) -> None:
         candidate = deepcopy(self.args)
@@ -200,34 +205,6 @@ class GoTuiRuntime:
         telemetry_start(candidate)
 
         vars(self.args).update(vars(candidate))
-        self.init_run_state()
-        self.start_scan()
-
-    async def prepare_and_start(self) -> None:
-        """Prepare a directly-launched scan once the TUI is on screen.
-
-        The model round trip and run preparation run here rather than before
-        launch so the interface appears immediately.
-        """
-        model = (load_settings().llm.model or "").strip()
-        set_scan_phase("preflight")
-        try:
-            await preflight_model_connection(model)
-        except Exception as exc:
-            logger.exception("Go TUI scan preparation failed")
-            report_error("model_connection_failed", exc)
-            self.controller.fail_preparation(str(exc))
-            return
-        try:
-            persist_current()
-            prepare_run(self.args)
-            telemetry_start(self.args)
-        except Exception as exc:
-            logger.exception("Go TUI scan preparation failed")
-            report_error("scan_preparation_failed", exc)
-            self.controller.fail_preparation(str(exc))
-            return
-        self.controller.scan_state = "running"
         self.init_run_state()
         self.start_scan()
 
@@ -276,6 +253,18 @@ class GoTuiRuntime:
 
     def capture_event(self, agent_id: str, event: Any) -> None:
         self.live_view.ingest_sdk_event(agent_id, event)
+        if getattr(getattr(event, "item", None), "type", "") == "tool_call_output_item":
+            # A tool that parks its agent has already set the agent's status by
+            # the time it returns; sync it now so both reach the TUI together.
+            task = asyncio.get_running_loop().create_task(self._sync_and_notify())
+            self._output_syncs.add(task)
+            task.add_done_callback(self._output_syncs.discard)
+            return
+        self.controller.notify_changed()
+
+    async def _sync_and_notify(self) -> None:
+        with contextlib.suppress(Exception):
+            await self._sync_agent_state()
         self.controller.notify_changed()
 
     def capture_mcp_status(self, roster: list[dict[str, Any]]) -> None:
@@ -420,7 +409,7 @@ class GoTuiRuntime:
         # only the Python-level bindings change.
         original_stdout = sys.stdout
         original_stderr = sys.stderr
-        output_sink = Path(os.devnull).open("a", buffering=1)  # noqa: SIM115
+        output_sink = _open_output_sink()
         sys.stdout = output_sink
         sys.stderr = output_sink
         backend_socket: socket.socket | None = None
@@ -428,6 +417,8 @@ class GoTuiRuntime:
         prepare_task: asyncio.Task[None] | None = None
         process: asyncio.subprocess.Process | subprocess.Popen[bytes] | None = None
         try:
+            if not self.controller.setup_mode:
+                self.init_run_state()
             env = child_environment()
             env["STRIX_VERSION"] = package_version()
             command = self.binary_command()

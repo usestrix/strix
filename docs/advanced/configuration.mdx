@@ -37,6 +37,11 @@ Configure Strix using environment variables or a config file.
   Request timeout in seconds for LLM calls.
 </ParamField>
 
+<ParamField path="LLM_PREFLIGHT_TIMEOUT" default="30" type="integer">
+  Seconds the startup connection check waits for the model to answer before
+  failing with `LLM CONNECTION FAILED`. Scan requests use `LLM_TIMEOUT`.
+</ParamField>
+
 <ParamField path="STRIX_LLM_MAX_RETRIES" default="5" type="integer">
   Maximum number of retries for LLM API calls on transient failures.
 </ParamField>
@@ -47,6 +52,14 @@ Configure Strix using environment variables or a config file.
 
 <ParamField path="STRIX_MEMORY_COMPRESSOR_TIMEOUT" default="30" type="integer">
   Timeout in seconds for memory compression operations (context summarization).
+</ParamField>
+
+<ParamField path="STRIX_OPENROUTER_STICKY_SESSIONS" default="false" type="boolean">
+  Send a per-agent `session_id` on OpenRouter requests, so each agent's calls stay on one upstream provider and its prompt cache carries over between turns. When unset, OpenRouter routes every request freely.
+</ParamField>
+
+<ParamField path="STRIX_CACHE_BLOCK_TOKENS" default="128" type="integer">
+  Token block size that providers cache prompts in. A turn counts as a cache miss in the run report only when the cached tokens fall at least this many tokens short of the previous prompt and the prompt did not shrink. Lower it for providers with smaller blocks (DeepSeek and GLM use 64; vLLM defaults to 16).
 </ParamField>
 
 ### Dedicated deduplication model
@@ -137,7 +150,7 @@ When remote vars are set, Strix dual-writes telemetry to both local JSONL and th
 </ParamField>
 
 <ParamField path="DOCKER_HOST" type="string">
-  Docker daemon socket path. Use for remote Docker hosts or custom configurations.
+  Docker daemon address, for example `unix:///var/run/docker.sock` or `tcp://10.0.0.5:2375`. When not set, Strix connects to the same daemon as the `docker` CLI: the current docker context (`docker context use`), then the default socket. Docker Desktop, OrbStack and Colima register their sockets as contexts, so no extra configuration is needed for them.
 </ParamField>
 
 <ParamField path="STRIX_RUNTIME_BACKEND" default="docker" type="string">

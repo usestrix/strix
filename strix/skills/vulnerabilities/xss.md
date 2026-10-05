@@ -53,6 +53,10 @@ Cross-site scripting persists because context, parser, and framework edges are c
 
 ## Key Vulnerabilities
 
+### DOMPurify Live-Node Sanitization
+
+Distinguish HTML-string input from live DOM objects sanitized with `IN_PLACE`. Resolve the deployed DOMPurify build and check relevant upstream advisories; a controlled observable `nodeName` is one live-node bypass mechanism. Trace same-origin foreign nodes or `adoptNode()` into this mode before selecting the bypass ([example advisory](https://github.com/cure53/DOMPurify/security/advisories/GHSA-x4vx-rjvf-j5p4)).
+
 ### DOM XSS
 
 **Sources**

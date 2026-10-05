@@ -1075,11 +1075,11 @@ async def create_vulnerability_report(
       "Techniques" that read like an engineering runbook rather than a
       client deliverable.
     - **Use markdown in every text field**: ``**bold**`` for emphasis,
-      ``inline code`` for identifiers/values/parameters, and fenced
-      code blocks (```` ```language ````) for any code/payload/HTTP
+      ``inline code`` for identifiers/values/parameters, and
+      language-tagged fenced code blocks for any code/payload/HTTP
       excerpt. Never leave code bare/unformatted. When referencing a
-      file, annotate the fence, e.g.
-      ```` ```python title=app.py startLineNumber=42 endLineNumber=50 ````.
+      file, annotate the opening fence with
+      ``title=app.py startLineNumber=42 endLineNumber=50`` after the language.
     - Field discipline: ``poc_description`` is steps only — NO code (all
       code goes in ``poc_script_code``); ``remediation_steps`` is prose
       only — NO code/diffs (code fixes go in ``code_locations``).
@@ -1190,6 +1190,57 @@ async def create_vulnerability_report(
     - **Crypto / Config**: CWE-798 Hard-coded Credentials, CWE-327
       Broken / Risky Crypto, CWE-311 Missing Encryption, CWE-916 Weak
       Password Hashing.
+
+    Example (abbreviated — mirror this structure)::
+
+        title: "Reflected XSS in /search q parameter"
+        description:
+            The **`q`** parameter of `/search` reflects user input into
+            the HTML response without encoding, allowing script
+            injection.
+        technical_analysis:
+            The handler interpolates `q` directly into the page body:
+
+            ```python title=views.py startLineNumber=42 endLineNumber=44
+            html = f"<h2>Results for {q}</h2>"
+            return HttpResponse(html)
+            ```
+
+            No output encoding is applied, so `<script>` executes.
+        poc_description:
+            1. Navigate to `/search?q=<payload>`.
+            2. Observe the payload executes in the victim's browser.
+        poc_script_code:
+            ```
+            GET /search?q=<script>alert(document.domain)</script>
+            ```
+        evidence:
+            Response echoes the payload verbatim:
+
+            ```html
+            <h2>Results for <script>alert(document.domain)</script></h2>
+            ```
+        assumptions:
+            Assumes a victim can be induced to open a crafted link.
+        remediation_steps:
+            Context-encode all user input rendered into HTML; prefer the
+            template engine's auto-escaping over string interpolation.
+        counterevidence:
+            No output encoding, CSP, or WAF observed on this response;
+            payload executed in a current browser. The parameter is
+            reflected on an unauthenticated route, so no privileged
+            position is required.
+        confidence: "high"
+        severity_change_conditions:
+            A restrictive CSP that blocks inline script execution would
+            reduce impact and lower the severity.
+        fix_effort: "low"
+
+    Nice to have: for code findings, if the checkout has git history, a quick
+    ``git blame`` (quote the paths) on the vulnerable line is worth weaving into
+    ``technical_analysis`` — who last touched it, when, and in which commit, as
+    part of the prose, not a separate section. Skip it if the line is
+    uncommitted or the command fails.
 
     Args:
         title: Specific finding title (e.g.
@@ -1359,57 +1410,6 @@ async def create_vulnerability_report(
             fix (summary + rationale). Prose/markdown only — the code
             change itself belongs in ``code_locations``. Omit for
             black-box findings.
-
-    Example (abbreviated — mirror this structure)::
-
-        title: "Reflected XSS in /search q parameter"
-        description:
-            The **`q`** parameter of `/search` reflects user input into
-            the HTML response without encoding, allowing script
-            injection.
-        technical_analysis:
-            The handler interpolates `q` directly into the page body:
-
-            ```python title=views.py startLineNumber=42 endLineNumber=44
-            html = f"<h2>Results for {q}</h2>"
-            return HttpResponse(html)
-            ```
-
-            No output encoding is applied, so `<script>` executes.
-        poc_description:
-            1. Navigate to `/search?q=<payload>`.
-            2. Observe the payload executes in the victim's browser.
-        poc_script_code:
-            ```
-            GET /search?q=<script>alert(document.domain)</script>
-            ```
-        evidence:
-            Response echoes the payload verbatim:
-
-            ```html
-            <h2>Results for <script>alert(document.domain)</script></h2>
-            ```
-        assumptions:
-            Assumes a victim can be induced to open a crafted link.
-        remediation_steps:
-            Context-encode all user input rendered into HTML; prefer the
-            template engine's auto-escaping over string interpolation.
-        counterevidence:
-            No output encoding, CSP, or WAF observed on this response;
-            payload executed in a current browser. The parameter is
-            reflected on an unauthenticated route, so no privileged
-            position is required.
-        confidence: "high"
-        severity_change_conditions:
-            A restrictive CSP that blocks inline script execution would
-            reduce impact and lower the severity.
-        fix_effort: "low"
-
-    Nice to have: for code findings, if the checkout has git history, a quick
-    ``git blame`` (quote the paths) on the vulnerable line is worth weaving into
-    ``technical_analysis`` — who last touched it, when, and in which commit, as
-    part of the prose, not a separate section. Skip it if the line is
-    uncommitted or the command fails.
     """
     (
         http_exchange_ids,

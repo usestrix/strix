@@ -55,7 +55,8 @@ func renderAgentGraphTool(name string, args map[string]any, result any) string {
 			b.WriteString("\n  " + Dim().Render("Completing task..."))
 		}
 	case "wait_for_agents":
-		b.WriteString(Col(Gray).Render("○ ") + Dim().Render("waiting"))
+		// The chat pane animates the marker while the agent is parked here.
+		b.WriteString(Col(Gray).Render(SpinnerMarker+" ") + Dim().Render("waiting"))
 		if reason := StringValue(args["reason"]); reason != "" {
 			b.WriteString("\n  " + Dim().Render(reason))
 		}

@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 
 _PROMPT_DIRNAME = "prompts"
 
+# Marks where the system prompt is split so the part before it can be cached.
+# Removed before the prompt is sent.
+CACHE_POINT = "<cache_point>"
+
 
 def _resolve_skills(
     *,
@@ -80,8 +84,13 @@ def render_system_prompt(
     is_diff_scoped: bool = False,
     interactive: bool = False,
     system_prompt_context: dict[str, Any] | None = None,
+    include_scope: bool = True,
 ) -> str:
-    """Render the system prompt. Returns empty string on template failure."""
+    """Render the system prompt. Returns empty string on template failure.
+
+    The per-run scope (targets, MCP connections) goes last so the rest of the
+    prompt is an identical prefix across runs and can be served from cache.
+    """
     try:
         prompt_dir = get_strix_resource_path("agents", _PROMPT_DIRNAME)
         loader_dirs = [prompt_dir, *skill_search_dirs()]
@@ -93,6 +102,16 @@ def render_system_prompt(
             ),
         )
 
+        shared = {
+            name.split("/")[-1]
+            for name in _resolve_skills(
+                requested=None,
+                scan_mode=scan_mode,
+                is_whitebox=is_whitebox,
+                is_root=is_root,
+                is_diff_scoped=is_diff_scoped,
+            )
+        }
         skills_to_load = _resolve_skills(
             requested=skills,
             scan_mode=scan_mode,
@@ -103,12 +122,16 @@ def render_system_prompt(
         skill_content = load_skills(skills_to_load)
         env.globals["get_skill"] = lambda name: skill_content.get(name, "")
 
+        # Skills every agent of this kind loads come first, so siblings share them
+        # as a cached prefix; the ones the caller asked for vary and go after.
         rendered = env.get_template("system_prompt.jinja").render(
-            loaded_skill_names=list(skill_content.keys()),
+            shared_skill_names=[name for name in skill_content if name in shared],
+            requested_skill_names=[name for name in skill_content if name not in shared],
             available_skills=get_available_skills(),
             interactive=interactive,
             is_root=is_root,
             system_prompt_context=system_prompt_context or {},
+            include_scope=include_scope,
             **skill_content,
         )
     except Exception:
@@ -124,3 +147,16 @@ def render_system_prompt(
             len(rendered),
         )
         return str(rendered)
+
+
+def render_scope_prompt(system_prompt_context: dict[str, Any] | None) -> str:
+    """Render only the per-run scope block that ends the system prompt."""
+    prompt_dir = get_strix_resource_path("agents", _PROMPT_DIRNAME)
+    env = Environment(
+        loader=FileSystemLoader(prompt_dir),
+        autoescape=select_autoescape(enabled_extensions=(), default_for_string=False),
+    )
+    rendered = env.get_template("scope.jinja").render(
+        system_prompt_context=system_prompt_context or {},
+    )
+    return str(rendered).strip()

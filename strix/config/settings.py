@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,6 +12,12 @@ ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "
 ApiType = Literal["responses", "chat_completions"]
 
 DEFAULT_MAX_TURNS = 500
+
+
+def _lowercase(value: object) -> object:
+    """Enum-like env values are matched case-insensitively (``None`` is ``none``)."""
+    return value.strip().lower() if isinstance(value, str) else value
+
 
 _BASE_CONFIG = SettingsConfigDict(
     case_sensitive=False,
@@ -58,17 +64,31 @@ class LlmSettings(BaseSettings):
         default=True,
         alias="STRIX_PROMPT_CACHE",
     )
+    # Providers cache prompts in fixed-size token blocks, so a fully cached prompt
+    # can read back up to a block short. 128 covers the largest common size
+    # (OpenAI; DeepSeek and GLM use 64, vLLM defaults to 16).
+    cache_block_tokens: int = Field(default=128, ge=1, alias="STRIX_CACHE_BLOCK_TOKENS")
+    openrouter_sticky_sessions: bool = Field(
+        default=False,
+        alias="STRIX_OPENROUTER_STICKY_SESSIONS",
+    )
     disable_streaming: bool = Field(
         default=False,
         alias="LLM_DISABLE_STREAMING",
     )
     timeout: int = Field(default=300, alias="LLM_TIMEOUT")
+    preflight_timeout: int = Field(default=30, ge=1, alias="LLM_PREFLIGHT_TIMEOUT")
     stream_idle_timeout: int = Field(default=300, ge=0, alias="LLM_STREAM_IDLE_TIMEOUT")
     max_tool_calls_per_turn: int = Field(
         default=32,
         ge=0,
         alias="LLM_MAX_TOOL_CALLS_PER_TURN",
     )
+
+    @field_validator("api_type", "reasoning_effort", mode="before")
+    @classmethod
+    def _normalize_case(cls, value: object) -> object:
+        return _lowercase(value)
 
 
 class DedupeSettings(BaseSettings):
@@ -86,6 +106,11 @@ class DedupeSettings(BaseSettings):
         alias="DEDUPE_LLM_EXTRA_HEADERS",
         repr=False,
     )
+
+    @field_validator("reasoning_effort", mode="before")
+    @classmethod
+    def _normalize_case(cls, value: object) -> object:
+        return _lowercase(value)
 
 
 class ContextSettings(BaseSettings):

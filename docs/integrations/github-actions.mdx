@@ -46,8 +46,10 @@ The workflow fails when vulnerabilities are found:
 
 | Code | Result |
 |------|--------|
-| 0 | Pass — No vulnerabilities |
+| 0 | Pass — No vulnerabilities (with `--fail-on`, none at or above the threshold) |
 | 2 | Fail — Vulnerabilities found |
+
+Add `--fail-on high` (or `critical`, `medium`, `low`) to fail only on findings at or above that severity. Lower findings still appear in the report, so a passing run is not necessarily finding-free.
 
 ## Scan Modes for CI
 

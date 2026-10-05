@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from strix.config import load_settings
-from strix.config.models import is_recommended_or_frontier_model
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui.backend.live_view import TuiLiveView
 from strix.interface.tui.backend.projection import (
@@ -153,11 +152,6 @@ class TuiController:
         ]
         self.notify_changed()
 
-    def begin_preparation(self) -> None:
-        """Mark a directly-launched run as preparing behind the live TUI."""
-        self.scan_state = "preparing"
-        self.notify_changed()
-
     def fail_preparation(self, detail: str) -> None:
         self.scan_state = "failed"
         self.error = detail
@@ -189,11 +183,6 @@ class TuiController:
         subscription = False
         with contextlib.suppress(Exception):
             subscription = is_subscription_run(self.report_state)
-        model_warning = ""
-        if model and not is_recommended_or_frontier_model(model):
-            model_warning = (
-                f"{model} is not a recommended frontier model. Pentest quality could be degraded."
-            )
         state = {
             "setup_mode": self.setup_mode,
             "scan_started": self.scan_started,
@@ -211,7 +200,6 @@ class TuiController:
             "scope_mode": self.scope_mode,
             "diff_base": terminal_projection(self.diff_base, max_string=256),
             "model": terminal_projection(model, max_string=256),
-            "model_warning": terminal_projection(model_warning, max_string=512),
             "caido_url": terminal_projection(
                 getattr(self.report_state, "caido_url", None), max_string=1024
             ),

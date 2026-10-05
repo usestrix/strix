@@ -13,10 +13,10 @@ from agents.exceptions import MaxTurnsExceeded
 from agents.items import MessageOutputItem
 from agents.memory import SQLiteSession
 from agents.tool_context import ToolContext
-from openai.types.responses import ResponseOutputMessage, ResponseOutputRefusal
+from openai.types.responses import ResponseOutputMessage, ResponseOutputRefusal, ResponseOutputText
 
 from strix.core import execution
-from strix.core.agents import AgentCoordinator
+from strix.core.agents import AgentCoordinator, WaitKind
 from strix.core.execution import (
     _notify_root_on_budget_reserve,
     notify_parent_on_terminal,
@@ -1030,7 +1030,7 @@ async def test_interactive_text_only_turn_is_nudged_instead_of_parking(
     # The retry carries an explicit "call a tool" nudge rather than empty input.
     nudge = calls[1][0]["content"]
     assert "without a tool call" in nudge
-    assert "respond_to_user" in nudge
+    assert "wait_for_user" in nudge
     assert coordinator.statuses["root"] == "completed"
 
 
@@ -1038,7 +1038,7 @@ async def test_interactive_text_only_turn_is_nudged_instead_of_parking(
 async def test_interactive_explicit_park_gets_no_nudge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``waiting`` is only reachable via respond_to_user / wait_for_agents."""
+    """``waiting`` is only reachable via wait_for_user / wait_for_agents."""
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)
     calls: list[Any] = []
@@ -1161,7 +1161,7 @@ async def test_tool_required_message_is_persisted_to_the_session(tmp_path: Any) 
 
     stored = [cast("dict[str, Any]", i) for i in await session.get_items()]
     assert "finish_scan" in stored[0]["content"]
-    assert "respond_to_user" in stored[0]["content"]
+    assert "wait_for_user" in stored[0]["content"]
     session.close()
 
 
@@ -1277,13 +1277,9 @@ async def test_wait_kind_survives_a_snapshot_round_trip() -> None:
 async def test_interactive_nudge_offers_waiting_without_repeating() -> None:
     """The nudge is the instruction an agent reads when it is stranded here.
 
-    It is where the option to wait on what was already said has to be, not only
-    in the system prompt: an agent that ended a turn on plain text reasons off
-    this text, and without the clause it restates its answer to reach a tool
-    call, so the user reads it twice.
-
-    The clause holds whatever the turn did, because the agent is the one who
-    knows whether it spoke — this fires for a turn that produced no text at all.
+    An agent that ended a turn on plain text reasons off this text, and without
+    the clause it restates its answer to reach a tool call, so the user reads it
+    twice.
     """
     items = await execution._append_tool_required_message(
         session=None,
@@ -1293,7 +1289,234 @@ async def test_interactive_nudge_offers_waiting_without_repeating() -> None:
         interactive=True,
     )
 
-    assert "with no message if you have already said it" in items[0]["content"]
+    assert "call wait_for_user" in items[0]["content"]
+    assert "do not repeat it" in items[0]["content"]
+
+
+def _cycle_with_items(
+    coordinator: AgentCoordinator,
+    agent_id: str,
+    script: list[tuple[str, WaitKind | None, list[Any]]],
+    calls: list[Any],
+) -> Any:
+    """Fake run cycle scripted as (status, wait_kind, new_items) per call."""
+
+    async def _cycle(*_args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs.get("input_data"))
+        status, wait_kind, new_items = script[min(len(calls) - 1, len(script) - 1)]
+        if wait_kind is not None:
+            await coordinator.park_waiting(agent_id, wait_kind=wait_kind)
+        else:
+            await coordinator.set_status(agent_id, status)
+        return MagicMock(final_output="", new_items=new_items)
+
+    return _cycle
+
+
+def _text_item(text: str) -> MessageOutputItem:
+    return MessageOutputItem(
+        agent=MagicMock(),
+        raw_item=ResponseOutputMessage(
+            id="msg-1",
+            content=[ResponseOutputText(type="output_text", text=text, annotations=[])],
+            role="assistant",
+            status="completed",
+            type="message",
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_silent_wait_for_user_is_sent_back_to_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``wait_for_user`` carries no text, so a park with nothing said is a silent turn.
+
+    The driver undoes the park and nudges the agent to write its reply; the
+    second cycle, which does say something, parks for real.
+    """
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        execution,
+        "_run_cycle_parked",
+        _cycle_with_items(
+            coordinator,
+            "root",
+            [("waiting", "user", []), ("waiting", "user", [_text_item("Here is the answer.")])],
+            calls,
+        ),
+    )
+
+    await _drive(coordinator, "root", interactive=True)
+
+    assert len(calls) == 2
+    nudge = calls[1][0]["content"]
+    assert "without having written anything" in nudge
+    assert "wait_for_user" in nudge
+    assert coordinator.statuses["root"] == "waiting"
+    assert coordinator.wait_kinds["root"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_user_after_text_parks_without_a_nudge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Text written in the same turn as the call is the reply; the park stands."""
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        execution,
+        "_run_cycle_parked",
+        _cycle_with_items(
+            coordinator, "root", [("waiting", "user", [_text_item("Done, see above.")])], calls
+        ),
+    )
+
+    await _drive(coordinator, "root", interactive=True)
+
+    assert len(calls) == 1
+    assert coordinator.statuses["root"] == "waiting"
+
+
+@pytest.mark.asyncio
+async def test_text_from_an_earlier_nudged_turn_counts_as_the_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A text-only turn is nudged; the bare ``wait_for_user`` that follows is right.
+
+    The words already reached the user in the first cycle, so the second must
+    not be bounced back for repeating them.
+    """
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        execution,
+        "_run_cycle_parked",
+        _cycle_with_items(
+            coordinator,
+            "root",
+            [
+                ("running", None, [_text_item("The scan found two issues.")]),
+                ("waiting", "user", []),
+            ],
+            calls,
+        ),
+    )
+
+    await _drive(coordinator, "root", interactive=True)
+
+    assert len(calls) == 2
+    assert coordinator.statuses["root"] == "waiting"
+
+
+@pytest.mark.asyncio
+async def test_whitespace_only_text_does_not_count_as_a_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        execution,
+        "_run_cycle_parked",
+        _cycle_with_items(
+            coordinator,
+            "root",
+            [("waiting", "user", [_text_item(" \n")]), ("waiting", "user", [_text_item("ok")])],
+            calls,
+        ),
+    )
+
+    await _drive(coordinator, "root", interactive=True)
+
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_stop_during_a_silent_yield_is_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An operator stop that lands while the agent is parked must survive the bounce."""
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    calls: list[Any] = []
+
+    async def _park_then_get_stopped(*_args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs.get("input_data"))
+        await coordinator.park_waiting("root", wait_kind="user")
+        await coordinator.request_stop("root")
+        return MagicMock(final_output="", new_items=[])
+
+    monkeypatch.setattr(execution, "_run_cycle_parked", _park_then_get_stopped)
+
+    await _drive(coordinator, "root", interactive=True)
+
+    assert len(calls) == 1
+    assert coordinator.statuses["root"] == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_resume_silent_user_wait_only_touches_a_user_park() -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+
+    await coordinator.park_waiting("root", wait_kind="user")
+    assert await coordinator.resume_silent_user_wait("root") is True
+    assert coordinator.statuses["root"] == "running"
+    assert "root" not in coordinator.wait_kinds
+
+    await coordinator.park_waiting("root", wait_kind="agents")
+    assert await coordinator.resume_silent_user_wait("root") is False
+    assert coordinator.statuses.get("root") == "waiting"
+
+    await coordinator.request_stop("root")
+    assert await coordinator.resume_silent_user_wait("root") is False
+    assert coordinator.statuses.get("root") == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_a_wait_on_agents_is_never_a_silent_yield(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the human wait needs words first; waiting on a child says nothing by design."""
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        execution,
+        "_run_cycle_parked",
+        _cycle_with_items(coordinator, "root", [("waiting", "agents", [])], calls),
+    )
+
+    await _drive(coordinator, "root", interactive=True)
+
+    assert len(calls) == 1
+    assert coordinator.statuses["root"] == "waiting"
+
+
+@pytest.mark.asyncio
+async def test_repeated_silent_yields_exhaust_the_recovery_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An agent that never writes anything is parked as stalled, not looped forever."""
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        execution,
+        "_run_cycle_parked",
+        _cycle_with_items(coordinator, "root", [("waiting", "user", [])], calls),
+    )
+
+    await _drive(coordinator, "root", interactive=True)
+
+    assert len(calls) == execution._INTERACTIVE_TOOL_RECOVERY_LIMIT
+    assert coordinator.statuses["root"] == "waiting"
+    assert coordinator.wait_kinds["root"] == "stalled"
 
 
 @pytest.mark.asyncio
@@ -1307,4 +1530,4 @@ async def test_autonomous_nudge_does_not_offer_the_user() -> None:
         interactive=False,
     )
 
-    assert "respond_to_user" not in items[0]["content"]
+    assert "wait_for_user" not in items[0]["content"]

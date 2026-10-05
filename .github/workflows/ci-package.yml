@@ -1,0 +1,76 @@
+name: Package
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00  # v6.0.0
+        with:
+          go-version-file: strix/interface/tui/go.mod
+          cache-dependency-path: strix/interface/tui/go.sum
+      - uses: ./.github/actions/setup-python-env
+      - run: uv build --wheel
+      - name: Wheel ships the TUI sidecar and the viewer bundle
+        run: |
+          uv run --frozen python - <<'PY'
+          import glob, zipfile
+          (wheel,) = glob.glob("dist/*.whl")
+          names = zipfile.ZipFile(wheel).namelist()
+          assert "strix/bin/strix-tui" in names, names
+          assert "strix/interface/viewer/static/index.html" in names, names
+          assert not any(name.startswith("strix/interface/viewer/frontend/") for name in names)
+          assert not any(name.startswith("strix/interface/tui/cmd/") for name in names)
+          PY
+      - name: Install into a clean environment and run the CLI
+        run: |
+          uv venv --python 3.12 /tmp/strix-smoke
+          uv pip install --python /tmp/strix-smoke/bin/python dist/*.whl
+          /tmp/strix-smoke/bin/strix --version
+          /tmp/strix-smoke/bin/strix --help >/dev/null
+      - name: Vertex AI and Bedrock dependencies install with the wheel
+        run: /tmp/strix-smoke/bin/python -c "import google.auth.transport.requests, boto3"
+
+  binary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00  # v6.0.0
+        with:
+          go-version-file: strix/interface/tui/go.mod
+          cache-dependency-path: strix/interface/tui/go.sum
+      - uses: ./.github/actions/setup-python-env
+      - run: make tui-build
+      - run: uv run --frozen pyinstaller strix.spec --noconfirm
+      - run: dist/strix --version
+      - name: Binary bundles the TUI sidecar and the provider dependencies
+        run: |
+          uv run --frozen pyi-archive_viewer -l -r dist/strix > archive.txt
+          grep -E "strix/bin/strix-tui" archive.txt >/dev/null
+          grep -E "'google\.auth\.transport\.requests'" archive.txt >/dev/null
+          grep -E "'boto3\.session'" archive.txt >/dev/null
+      - name: Binary reaches Vertex AI and Bedrock authentication
+        env:
+          STRIX_TELEMETRY: "false"
+          STRIX_IMAGE: alpine:3.20
+          VERTEXAI_PROJECT: strix-ci
+          VERTEXAI_LOCATION: us-central1
+          AWS_REGION: us-east-1
+        run: |
+          mkdir -p /tmp/target && echo 'print("hi")' > /tmp/target/app.py
+          STRIX_LLM=vertex_ai/gemini-2.5-pro dist/strix -n -t /tmp/target --scan-mode quick > vertex.log 2>&1 || true
+          grep -q "DefaultCredentialsError" vertex.log
+          if grep -q "No module named" vertex.log; then exit 1; fi
+          STRIX_LLM=bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0 dist/strix -n -t /tmp/target --scan-mode quick > bedrock.log 2>&1 || true
+          grep -q "Unable to locate credentials" bedrock.log
+          if grep -q "No module named" bedrock.log; then exit 1; fi

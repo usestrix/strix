@@ -79,6 +79,8 @@ JNDI injection is not itself a serialization format. It becomes part of this wor
 
 ### Python Pickle
 
+**Model checkpoints:** `torch.load(..., weights_only=True)` does not rule out parser/storage memory corruption. Resolve the installed loader build and check current upstream advisories/backports before trusting that flag. Trace untrusted checkpoints through the exact loader and inspect safe-global allowlists ([example advisory](https://github.com/pytorch/pytorch/security/advisories/GHSA-63cw-57p8-fm3p)).
+
 Pickle executes arbitrary code during unpickling by design:
 ```python
 import pickle, os, base64
@@ -101,12 +103,14 @@ When `yaml.load` used instead of `yaml.safe_load`.
 - POP chains through framework classes (Laravel, Symfony, WordPress plugins)
 
 **Phar Deserialization**
-- Upload or reference `phar://` wrapper triggering metadata deserialization on file operations
+- Trace `phar://` file operations and explicit `Phar::getMetadata()` / `PharFileInfo::getMetadata()` calls. Verify the installed PHP version's metadata-deserialization behavior and `allowed_classes` handling from source/docs; archive opening alone does not establish a deserialization sink ([migration reference](https://www.php.net/manual/en/migration80.incompatible.php#migration80.incompatible.phar)).
 
 ### .NET Deserialization
 
 **BinaryFormatter / LosFormatter**
 - Never safe on untrusted input; full RCE with known gadget chains (ysoserial.net)
+
+Inspect the target framework and resolved serialization packages to establish whether `BinaryFormatter` executes, throws, or is restored through a compatibility package. Check the matching runtime documentation before choosing gadget chains; `LosFormatter` and other serializers are separate surfaces ([Microsoft guide](https://learn.microsoft.com/en-us/dotnet/standard/serialization/binaryformatter-migration-guide/)).
 
 **Json.NET**
 ```json
@@ -193,7 +197,7 @@ Payload generation is the practitioner's core tool here. The sandbox has `git`/`
 | **ysoserial** (frohoff) | Java native | Gadget-chain payloads: `CommonsCollections1-7`, `Groovy1`, `Spring1/2`, and `URLDNS` for a safe no-exec DNS oracle. Needs a JRE. |
 | **phpggc** (ambionics) | PHP `unserialize` / Phar | Framework POP chains (Laravel, Symfony, WordPress, Drupal, Monolog). Needs `php-cli`. |
 | **ysoserial.net** | .NET `BinaryFormatter` / Json.NET | Windows/.NET gadget payloads. Needs .NET/mono — usually out of scope in a Linux sandbox. |
-| **marshalsec** | Java Hessian/Burlap, Kryo, JSON, and JNDI reference tooling | Use only from a reviewed, pinned upstream commit when a non-native Java marshaller requires it. It has no stable release and intentionally bundles historical gadget dependencies; do not treat it as a globally installed default tool. |
+| **marshalsec** | Java Hessian/Burlap, Kryo, JSON, and JNDI reference tooling | Use only from a reviewed, pinned upstream commit when a non-native Java marshaller requires it. Check upstream release status and bundled gadget dependencies before selecting a commit; do not treat it as a globally installed default tool. |
 
 ```
 # Java: prove the sink with a no-exec DNS oracle BEFORE any RCE chain

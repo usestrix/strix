@@ -27,10 +27,13 @@ func mcpModel(t *testing.T) Model {
 func TestMcpPanelShowsHealthyAndOffline(t *testing.T) {
 	m := mcpModel(t)
 	out := ansi.Strip(m.mcpConnectionsView(40, 6))
-	for _, want := range []string{"MCP Connections (2)", "supabase", "3 tools", "vercel", "offline"} {
+	for _, want := range []string{"supabase", "3 tools", "vercel", "offline"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("panel missing %q:\n%s", want, out)
 		}
+	}
+	if sidebar := ansi.Strip(m.sidebarView(26, 40)); !strings.Contains(sidebar, "MCP (2)") {
+		t.Fatalf("sidebar header did not carry the connection count:\n%s", sidebar)
 	}
 }
 
@@ -46,9 +49,8 @@ func TestMcpPanelWindowsLargeRosterAndCountsAll(t *testing.T) {
 	}
 	m.snapshot.Connections = conns
 
-	// rows = 6 → one header line + five roster rows.
 	out := ansi.Strip(m.mcpConnectionsView(40, 6))
-	if !strings.Contains(out, "MCP Connections (12)") {
+	if !strings.Contains(ansi.Strip(m.sidebarView(26, 40)), "MCP (12)") {
 		t.Fatalf("header did not carry the full connection count:\n%s", out)
 	}
 	if !strings.Contains(out, "conn-00") {
@@ -58,14 +60,13 @@ func TestMcpPanelWindowsLargeRosterAndCountsAll(t *testing.T) {
 		t.Fatalf("a roster past the panel height should be windowed, not fully drawn:\n%s", out)
 	}
 	if got := strings.Count(out, "\n") + 1; got != 6 {
-		t.Fatalf("panel rendered %d lines, want 6 (header + five rows)", got)
+		t.Fatalf("panel rendered %d lines, want 6", got)
 	}
 
-	// Scrolling the roster brings the tail into view while the header count holds.
-	m.mcpOffset = 7
+	m.mcpOffset = 6
 	scrolled := ansi.Strip(m.mcpConnectionsView(40, 6))
-	if !strings.Contains(scrolled, "conn-11") || !strings.Contains(scrolled, "MCP Connections (12)") {
-		t.Fatalf("scrolled window did not reveal the tail with the count intact:\n%s", scrolled)
+	if !strings.Contains(scrolled, "conn-11") {
+		t.Fatalf("scrolled window did not reveal the tail:\n%s", scrolled)
 	}
 }
 
