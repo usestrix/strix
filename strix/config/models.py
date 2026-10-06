@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import json
 import logging
 import os
 import time
@@ -745,6 +746,11 @@ def _install_openrouter_stream_cost_capture() -> None:
 
     class _StrixOpenRouterStreamingHandler(OpenRouterChatCompletionStreamingHandler):
         def chunk_parser(self, chunk: dict[str, Any]) -> Any:
+            # Before parsing: LiteLLM raises on an error chunk and drops its
+            # top-level ``provider``.
+            request_log.record_upstream_provider(
+                chunk.get("provider"), _openrouter_error_type(chunk.get("error"))
+            )
             stream = super().chunk_parser(chunk)
             usage = chunk.get("usage")
             response_id = chunk.get("id") or getattr(stream, "id", None)
@@ -763,12 +769,22 @@ def _install_openrouter_stream_cost_capture() -> None:
                 json_mode=json_mode,
             )
 
+        def get_error_class(self, error_message: str, status_code: int, headers: Any) -> Any:
+            # A non-2xx reply names the provider in ``error.metadata``.
+            with contextlib.suppress(Exception):
+                error = json.loads(error_message)["error"]
+                request_log.record_upstream_provider(
+                    error["metadata"].get("provider_name"), _openrouter_error_type(error)
+                )
+            return super().get_error_class(error_message, status_code, headers)
+
         def transform_response(self, *args: Any, **kwargs: Any) -> Any:
             # Non-streamed replies (LLM_DISABLE_STREAMING) skip the chunk parser.
             response = super().transform_response(*args, **kwargs)
             raw_response = kwargs.get("raw_response", args[1] if len(args) > 1 else None)
             with contextlib.suppress(Exception):
                 body = raw_response.json()  # type: ignore[union-attr]
+                request_log.record_upstream_provider(body.get("provider"))
                 if body.get("usage"):
                     record_openrouter_provider(body.get("provider"), body["usage"])
             return response
@@ -787,6 +803,14 @@ def _install_openrouter_stream_cost_capture() -> None:
     # time, so overriding the attribute is enough for the subclass to take
     # effect. (type: ignore — mypy rejects reassigning a class attribute.)
     litellm.OpenrouterConfig = _StrixOpenrouterConfig  # type: ignore[misc]
+
+
+def _openrouter_error_type(error: object) -> object:
+    if isinstance(error, dict):
+        metadata = error.get("metadata")
+        if isinstance(metadata, dict):
+            return metadata.get("error_type")
+    return None
 
 
 OPENROUTER_ATTRIBUTION_HEADERS = {
