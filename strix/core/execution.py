@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from functools import cache
 from typing import TYPE_CHECKING, Any, cast
 
@@ -30,6 +32,7 @@ from strix.core.sessions import (
     enforce_image_budget,
     open_agent_session,
     replace_session_items,
+    scrub_images_from_items,
     seed_initial_input,
     strip_all_images_from_session,
 )
@@ -44,6 +47,7 @@ if TYPE_CHECKING:
     from agents.lifecycle import RunHooks
     from agents.memory import Session, SQLiteSession
     from agents.result import RunResultBase
+    from agents.run_config import CallModelData, ModelInputData
 
     from strix.core.agents import AgentCoordinator, Status
 
@@ -118,6 +122,28 @@ async def _compact_session(
         tools_text=_agent_tools_text(agent),
         force=force,
     )
+
+
+_TEXT_ONLY_IMAGE_TEXT = "[error: this model cannot view images; use `snapshot -i` instead]"
+
+
+def _with_image_scrub(run_config: RunConfig, context: dict[str, Any]) -> RunConfig:
+    if context.get("supports_images", True):
+        return run_config
+    # Chain any filter already set; it sees the scrubbed input.
+    inner = run_config.call_model_input_filter
+
+    async def _scrub(data: CallModelData[Any]) -> ModelInputData:
+        model_data = replace(
+            data.model_data,
+            input=scrub_images_from_items(data.model_data.input, text=_TEXT_ONLY_IMAGE_TEXT),
+        )
+        if inner is None:
+            return model_data
+        result = inner(replace(data, model_data=model_data))
+        return await result if inspect.isawaitable(result) else result
+
+    return replace(run_config, call_model_input_filter=_scrub)
 
 
 _MAX_TRANSIENT_MODEL_RETRIES = 5
@@ -747,7 +773,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             stream = Runner.run_streamed(
                 agent,
                 input=input_data,
-                run_config=run_config,
+                run_config=_with_image_scrub(run_config, context),
                 context=context,
                 max_turns=max_turns,
                 session=session,

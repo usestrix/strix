@@ -917,6 +917,17 @@ async def test_call_mcp_replaces_images_for_a_text_only_model() -> None:
         {"type": "text", "text": "[image/png image omitted: this model cannot view images]"},
     ]
 
+    transformed: list[Any] = []
+    registry.add(
+        name="pro",
+        server=_ImageServer("pro", [_mcp_tool("shot")]),
+        purpose=None,
+        tool_count=1,
+        result_transform=lambda _label, result: transformed.append(result),
+    )
+    await call_mcp.on_invoke_tool(ctx, json.dumps({"connection": "pro", "tool": "shot"}))
+    assert [block["type"] for block in transformed[0]["content"]] == ["text", "text"]
+
 
 # --- generic MCP tools are the only MCP surface every agent gets -------------
 

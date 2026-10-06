@@ -9,9 +9,11 @@ from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
+from agents import RunConfig
 from agents.exceptions import MaxTurnsExceeded
 from agents.items import MessageOutputItem
 from agents.memory import SQLiteSession
+from agents.run_config import CallModelData, ModelInputData
 from agents.tool_context import ToolContext
 from openai.types.responses import ResponseOutputMessage, ResponseOutputRefusal, ResponseOutputText
 
@@ -1531,3 +1533,32 @@ async def test_autonomous_nudge_does_not_offer_the_user() -> None:
     )
 
     assert "wait_for_user" not in items[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_text_only_filter_scrubs_images_then_chains_existing_filter() -> None:
+    run_config = RunConfig(model="m")
+    assert execution._with_image_scrub(run_config, {"supports_images": True}) is run_config
+
+    seen: list[ModelInputData] = []
+
+    def _inner(data: CallModelData[Any]) -> ModelInputData:
+        seen.append(data.model_data)
+        return data.model_data
+
+    run_config = RunConfig(model="m", call_model_input_filter=_inner)
+    scrub: Any = execution._with_image_scrub(run_config, {"supports_images": False})
+    image = {"type": "input_image", "image_url": "data:image/png;base64,aGk="}
+    output = {"type": "function_call_output", "call_id": "c1", "output": [image]}
+    data = CallModelData(
+        model_data=ModelInputData(input=[cast("Any", output)], instructions="sys"),
+        agent=MagicMock(),
+        context=None,
+    )
+
+    result = await scrub.call_model_input_filter(data)
+    assert result is seen[0]
+    assert result.input[0]["output"] == [
+        {"type": "input_text", "text": execution._TEXT_ONLY_IMAGE_TEXT}
+    ]
+    assert data.model_data.input[0]["output"] == [image]

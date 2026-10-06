@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 import pytest
 from agents import ModelSettings
+from agents.tool_context import ToolContext
 from openai import RateLimitError
 
 import strix.tools.mcp as mcp_pkg
@@ -24,6 +25,7 @@ from strix.core import runner
 from strix.core.agents import AgentCoordinator
 from strix.core.inputs import make_model_settings
 from strix.runtime import session_manager
+from strix.tools.load_skill.tool import load_skill
 from strix.tools.mcp import BearerAuth, McpConnectionConfig, McpConnectionRequest
 
 
@@ -294,6 +296,20 @@ def test_text_only_prompt_drops_screenshot_guidance() -> None:
     assert "view_image" not in prompt
     assert "text-only model and cannot view images" in prompt
     assert "<!--" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_text_only_load_skill_drops_screenshot_guidance() -> None:
+    ctx = ToolContext(
+        context={"supports_images": False},
+        tool_name="load_skill",
+        tool_call_id="call-1",
+        tool_arguments="{}",
+    )
+
+    out = await load_skill.on_invoke_tool(ctx, '{"skills": ["agent_browser"]}')
+    assert "view_image" not in out
+    assert "text-only model" in out
 
 
 def test_scope_is_sent_as_its_own_system_message_on_cache_point_routes() -> None:
