@@ -109,6 +109,7 @@ def _patch_fast_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
 async def _run_once(
     monkeypatch: pytest.MonkeyPatch,
     streams: list[_FakeStream],
+    session: Any = None,
 ) -> Any:
     _patch_fast_backoff(monkeypatch)
     calls = {"n": 0}
@@ -131,7 +132,7 @@ async def _run_once(
         run_config=cast("RunConfig", object()),
         context={},
         max_turns=5,
-        session=None,
+        session=session,
         interactive=False,
         event_sink=None,
         hooks=None,
@@ -172,3 +173,55 @@ async def test_run_cycle_does_not_retry_permanent_error(
     streams = [_FakeStream(exc=bad_request), _FakeStream()]
     with pytest.raises(BadRequestError):
         await _run_once(monkeypatch, streams)
+
+
+async def _run_with_image_session(
+    monkeypatch: pytest.MonkeyPatch, streams: list[_FakeStream]
+) -> tuple[Any, int, int]:
+    strips = {"n": 0}
+
+    async def _fake_strip(_session: Any) -> bool:
+        strips["n"] += 1
+        return True
+
+    async def _no_compact(*_args: Any, **_kwargs: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(execution, "strip_all_images_from_session", _fake_strip)
+    monkeypatch.setattr(execution, "_compact_session", _no_compact)
+    result, attempts, _coordinator = await _run_once(monkeypatch, streams, session=object())
+    return result, attempts, strips["n"]
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_strips_images_on_image_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rejection = APIStatusError(
+        "No endpoints found that support image input",
+        response=httpx.Response(status_code=404, request=_request()),
+        body=None,
+    )
+    streams = [_FakeStream(exc=rejection), _FakeStream()]
+    result, attempts, strips = await _run_with_image_session(monkeypatch, streams)
+
+    assert result is streams[1]
+    assert attempts == 2
+    assert strips == 1
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_does_not_strip_images_on_unrelated_client_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bad_request = BadRequestError(
+        "Upstream error from Relace: Generation stopped with an incomplete tool call",
+        response=httpx.Response(400, request=_request()),
+        body=None,
+    )
+    streams = [_FakeStream(exc=bad_request), _FakeStream()]
+    result, attempts, strips = await _run_with_image_session(monkeypatch, streams)
+
+    assert result is streams[1]
+    assert attempts == 2
+    assert strips == 0

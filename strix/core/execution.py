@@ -156,6 +156,10 @@ def _model_error_status_code(exc: BaseException) -> int | None:
     return code if isinstance(code, int) else None
 
 
+def _is_image_rejection(exc: BaseException) -> bool:
+    return _model_error_status_code(exc) in _INPUT_REJECTION_CODES and "image" in str(exc).lower()
+
+
 def _is_transient_model_error(exc: BaseException) -> bool:
     if codex.is_content_guardrail_error(exc):
         return False
@@ -831,11 +835,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             await coordinator.trigger_budget_stop()
             raise
         except Exception as exc:
-            if (
-                image_strips < 3
-                and session is not None
-                and getattr(exc, "status_code", None) in _INPUT_REJECTION_CODES
-            ):
+            if image_strips < 3 and session is not None and _is_image_rejection(exc):
                 try:
                     stripped = await strip_all_images_from_session(session)
                 except Exception:
