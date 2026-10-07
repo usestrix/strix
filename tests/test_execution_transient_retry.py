@@ -189,6 +189,7 @@ async def test_run_cycle_does_not_retry_permanent_error(
         (400, "my-model is not a multimodal model", True),
         (400, "This model doesn't support the image field for user messages.", True),
         (422, "messages[3]: unknown variant `image_url`, expected `text`", True),
+        (400, "'Image URLs in user messages' functionality not supported.", True),
         (
             400,
             "OpenRouterException: Message: This model's maximum context length is 1048576 "
