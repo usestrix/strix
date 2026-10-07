@@ -96,8 +96,12 @@ async def test_blocked_provider_failure_text_carries_request_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     coordinator = AgentCoordinator()
+    # 4xx errors are retried, so the block repeats until retries run out.
+    streams = [
+        _FakeStream(exc=_blocked_error()) for _ in range(execution._MAX_TRANSIENT_MODEL_RETRIES + 1)
+    ]
     with pytest.raises(PermissionDeniedError):
-        await _run(monkeypatch, [_FakeStream(exc=_blocked_error())], coordinator)
+        await _run(monkeypatch, streams, coordinator)
     assert coordinator.statuses["root"] == "failed"
     error = coordinator.errors["root"]
     assert "Output blocked by policy" in error
