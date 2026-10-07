@@ -668,10 +668,13 @@ def resolve_api_type(model_name: str, settings: Settings) -> ApiType:
 
     An explicit ``STRIX_API_TYPE`` wins. Otherwise the model decides: Responses
     when LiteLLM's catalog lists ``/v1/responses`` for it, chat completions for
-    everything else.
+    everything else. Models routed through LiteLLM (non-OpenAI providers) always
+    use chat completions because the Responses endpoint is OpenAI-specific.
     """
     if settings.llm.api_type is not None:
         return settings.llm.api_type
+    if routes_through_litellm(model_name):
+        return "chat_completions"
     if _RESPONSES_ENDPOINT in _catalog_supported_endpoints(model_name):
         return "responses"
     return "chat_completions"
