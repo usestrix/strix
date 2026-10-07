@@ -66,8 +66,7 @@ _IMAGE_REJECTION = re.compile(
     r"|is not a multimodal model|at most 0 image\(s\)"  # vLLM
     r"|does not support image input"  # LiteLLM's Fireworks check
     r"|doesn't support the image field"  # Bedrock Converse
-    r"|unknown variant `image_url`"  # DeepSeek, e.g. via Vercel AI Gateway
-    r"|'[^']*image[^']*' functionality not supported",  # Vercel AI Gateway (AI SDK), unverified
+    r"|unknown variant `image_url`",  # DeepSeek, e.g. via Vercel AI Gateway
     re.IGNORECASE,
 )
 _MAX_COMPACTIONS_PER_CYCLE = 2
