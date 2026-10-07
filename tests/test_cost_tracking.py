@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import threading
 import uuid
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -12,11 +15,14 @@ import litellm
 import pytest
 from litellm.types.utils import LlmProviders
 from litellm.utils import ProviderConfigManager
+from openai import AsyncOpenAI, OpenAI
 
 from strix.config.models import (
     _configure_litellm_compatibility,
     _install_openrouter_stream_cost_capture,
+    _register_litellm_cost_callback,
 )
+from strix.core.hooks import BudgetExceededError, ReportUsageHooks
 from strix.llm import request_log
 from strix.report.state import (
     ReportState,
@@ -68,6 +74,172 @@ def test_cost_callback_reads_usage_cost_from_mapping_response() -> None:
         litellm_cost_callback({}, response)
 
     report_state.record_observed_llm_cost.assert_called_once_with(0.125)
+
+
+@pytest.mark.parametrize(
+    "completion_key", ["complete_streaming_response", "async_complete_streaming_response"]
+)
+def test_stream_cost_is_recorded_only_after_completion(completion_key: str) -> None:
+    report_state = MagicMock()
+    response = SimpleNamespace(
+        _hidden_params={"additional_headers": {"llm_provider-x-litellm-response-cost": "1.25"}}
+    )
+    with patch("strix.report.state.get_global_report_state", return_value=report_state):
+        for _ in range(3):
+            litellm_cost_callback({"stream": True, "response_cost": None}, response)
+        report_state.record_observed_llm_cost.assert_not_called()
+        litellm_cost_callback({"stream": True, completion_key: response}, response)
+
+    report_state.record_observed_llm_cost.assert_called_once_with(1.25)
+
+
+def _proxy_cost_response(request: httpx.Request) -> httpx.Response:
+    stream = bool(json.loads(request.content).get("stream"))
+    assert request.url.host == "proxy.invalid"
+    metadata = {
+        "id": "chatcmpl-proxy-cost",
+        "created": 1,
+        "model": "strix-private-cost-fixture",
+    }
+    usage = {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110}
+    headers = {"x-litellm-response-cost": "1.25"}
+    if stream:
+        chunks = [
+            {**metadata, "choices": [{"index": 0, "delta": {"content": text}}]}
+            for text in ("Hello", " world")
+        ]
+        chunks.append(
+            {
+                **metadata,
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            }
+        )
+        chunks.append({**metadata, "choices": [], "usage": usage})
+        body = "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks)
+        headers["content-type"] = "text/event-stream"
+        return httpx.Response(200, headers=headers, content=body + "data: [DONE]\n\n")
+    return httpx.Response(
+        200,
+        headers=headers,
+        json={
+            **metadata,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Hello world"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": usage,
+        },
+    )
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_proxy_cost_header_is_counted_once_per_request(
+    monkeypatch: pytest.MonkeyPatch, stream: bool
+) -> None:
+    """Exercise real LiteLLM callbacks against an in-memory proxy response."""
+    ledger = LLMUsageLedger()
+    completed = threading.Event()
+    report_state = MagicMock()
+    report_state.record_observed_llm_cost.side_effect = ledger.record_observed_cost
+    monkeypatch.setattr("strix.report.state.get_global_report_state", lambda: report_state)
+
+    def on_success(kwargs: Any, response: Any, *times: Any) -> None:
+        litellm_cost_callback(kwargs, response, *times)
+        if not stream or kwargs.get("complete_streaming_response") is not None:
+            completed.set()
+
+    monkeypatch.setattr(litellm, "success_callback", [on_success])
+
+    with OpenAI(
+        api_key="fixture",
+        base_url="https://proxy.invalid/v1",
+        http_client=httpx.Client(transport=httpx.MockTransport(_proxy_cost_response)),
+    ) as client:
+        result = litellm.completion(
+            model="litellm_proxy/strix-private-cost-fixture",
+            messages=[{"role": "user", "content": "Hello"}],
+            client=client,
+            stream=stream,
+        )
+        if stream:
+            list(result)
+        assert completed.wait(5), "LiteLLM did not dispatch its final callback"
+
+    assert ledger.total_cost == pytest.approx(1.25)
+    report_state.record_observed_llm_cost.assert_called_once_with(1.25)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_async_proxy_cost_header_is_counted_once_per_request(
+    monkeypatch: pytest.MonkeyPatch, stream: bool
+) -> None:
+    """Verify production callback registration against real async LiteLLM calls."""
+    ledger = LLMUsageLedger()
+    completed = asyncio.Event()
+    completion_markers: list[bool] = []
+    report_state = MagicMock()
+    report_state.record_observed_llm_cost.side_effect = ledger.record_observed_cost
+    monkeypatch.setattr("strix.report.state.get_global_report_state", lambda: report_state)
+    monkeypatch.setattr(litellm, "success_callback", [])
+    monkeypatch.setattr(litellm, "_async_success_callback", [])
+    _register_litellm_cost_callback()
+
+    async def on_success(kwargs: Any, _response: Any, *_times: Any) -> None:
+        completion_markers.append(kwargs.get("async_complete_streaming_response") is not None)
+        completed.set()
+
+    litellm._async_success_callback.append(on_success)
+    async with AsyncOpenAI(
+        api_key="fixture",
+        base_url="https://proxy.invalid/v1",
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(_proxy_cost_response)),
+    ) as client:
+        result = await litellm.acompletion(
+            model="litellm_proxy/strix-private-cost-fixture",
+            messages=[{"role": "user", "content": "Hello"}],
+            client=client,
+            stream=stream,
+        )
+        if stream:
+            async for _chunk in result:
+                pass
+        await asyncio.wait_for(completed.wait(), timeout=5)
+
+    assert completion_markers == [stream]
+    assert ledger.total_cost == pytest.approx(1.25)
+    report_state.record_observed_llm_cost.assert_called_once_with(1.25)
+
+
+@pytest.mark.asyncio
+async def test_stream_chunks_do_not_exhaust_budget_before_completed_requests() -> None:
+    ledger = LLMUsageLedger()
+    report_state = MagicMock()
+    report_state.record_observed_llm_cost.side_effect = ledger.record_observed_cost
+    report_state.get_total_llm_cost.side_effect = lambda: ledger.total_cost
+    hooks = ReportUsageHooks(model="litellm_proxy/private-alias", max_budget_usd=2.0)
+    context = MagicMock()
+    context.context = {"agent_id": "root", "parent_id": None}
+    response = SimpleNamespace(
+        _hidden_params={"additional_headers": {"llm_provider-x-litellm-response-cost": "1.25"}}
+    )
+
+    with (
+        patch("strix.report.state.get_global_report_state", return_value=report_state),
+        patch("strix.core.hooks.get_global_report_state", return_value=report_state),
+    ):
+        for _ in range(3):
+            litellm_cost_callback({"stream": True}, response)
+        litellm_cost_callback({"stream": True, "complete_streaming_response": response}, response)
+        await hooks.on_llm_end(context, MagicMock(), MagicMock())
+        assert ledger.total_cost == pytest.approx(1.25)
+
+        litellm_cost_callback({"stream": True, "complete_streaming_response": response}, response)
+        with pytest.raises(BudgetExceededError, match=r"spent \$2\.5000"):
+            await hooks.on_llm_end(context, MagicMock(), MagicMock())
 
 
 def test_cost_callback_reads_byok_upstream_inference_cost() -> None:
