@@ -77,6 +77,11 @@ def test_register_agent_tools_rejects_duplicate_names() -> None:
         factory.register_agent_tools(_tool("same_name"))
 
 
+def test_register_agent_tools_rejects_mcp_tool_names() -> None:
+    with pytest.raises(ValueError, match="call_mcp"):
+        factory.register_agent_tools(_tool("call_mcp"))
+
+
 def test_per_call_extra_tools_reject_duplicate_registered_names() -> None:
     factory.register_agent_tools(_tool("same_name"))
 

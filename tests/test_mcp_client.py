@@ -890,8 +890,9 @@ async def test_call_mcp_flags_an_errored_result_failed_for_the_tui() -> None:
 def test_agent_carries_exactly_the_generic_mcp_tools_regardless_of_connections() -> None:
     """No matter how many MCP connections a run makes, an agent's tool list gains
     exactly the generic MCP tools and never a per-connection provider tool."""
-    root = factory.build_strix_agent(is_root=True)
-    child = factory.build_strix_agent(is_root=False)
+    context = {"mcp_available": True}
+    root = factory.build_strix_agent(is_root=True, system_prompt_context=context)
+    child = factory.build_strix_agent(is_root=False, system_prompt_context=context)
 
     root_names = [t.name for t in root.tools]
     child_names = [t.name for t in child.tools]
@@ -919,7 +920,9 @@ def test_agent_carries_exactly_the_generic_mcp_tools_regardless_of_connections()
     # The tool list does not grow with connection count: it is the same set of
     # names whether or not any connection exists, because connections never
     # contribute tools.
-    assert root_names == [t.name for t in factory.build_strix_agent(is_root=True).tools]
+    assert root_names == [
+        t.name for t in factory.build_strix_agent(is_root=True, system_prompt_context=context).tools
+    ]
 
 
 # --- prompt guidance replaces the old per-connection inventory ---------------

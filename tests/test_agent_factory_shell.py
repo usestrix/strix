@@ -115,3 +115,39 @@ def test_function_tools_are_result_bounded() -> None:
     by_name = {t.name: t for t in agent.tools}
 
     assert getattr(by_name["think"], "_strix_bounded", False) is True
+
+
+_MCP_TOOL_NAMES = {
+    "list_mcps",
+    "search_mcp_tools",
+    "get_mcp_tool_schema",
+    "describe_mcp",
+    "call_mcp",
+}
+
+
+def _tool_names(*, is_root: bool, **kwargs: Any) -> set[str]:
+    return {t.name for t in factory.build_strix_agent(is_root=is_root, **kwargs).tools}
+
+
+@pytest.mark.parametrize("is_root", [True, False])
+@pytest.mark.parametrize(
+    "system_prompt_context",
+    [None, {}, {"mcp_available": False}],
+)
+def test_mcp_tools_absent_without_mcp_configured(
+    is_root: bool, system_prompt_context: dict[str, Any] | None
+) -> None:
+    names = _tool_names(is_root=is_root, system_prompt_context=system_prompt_context)
+    assert _MCP_TOOL_NAMES.isdisjoint(names)
+
+
+@pytest.mark.parametrize("is_root", [True, False])
+def test_mcp_tools_present_when_mcp_is_configured(is_root: bool) -> None:
+    names = _tool_names(is_root=is_root, system_prompt_context={"mcp_available": True})
+    assert names >= _MCP_TOOL_NAMES
+
+
+def test_mcp_tools_do_not_leak_into_a_later_agent_without_mcp() -> None:
+    _tool_names(is_root=True, system_prompt_context={"mcp_available": True})
+    assert _MCP_TOOL_NAMES.isdisjoint(_tool_names(is_root=True))

@@ -601,16 +601,19 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     list_sitemap,
     view_sitemap_entry,
     scope_rules,
-    list_mcps,
-    search_mcp_tools,
-    get_mcp_tool_schema,
-    describe_mcp,
-    call_mcp,
     view_agent_graph,
     send_message_to_agent,
     wait_for_agents,
     create_agent,
     stop_agent,
+)
+
+_MCP_TOOLS: tuple[Tool, ...] = (
+    list_mcps,
+    search_mcp_tools,
+    get_mcp_tool_schema,
+    describe_mcp,
+    call_mcp,
 )
 
 
@@ -644,7 +647,9 @@ def register_agent_tools(*tools: Tool) -> None:
         if tool not in _EXTRA_TOOLS and tool not in new_tools:
             new_tools.append(tool)
 
-    _ensure_unique_tool_names([*_BASE_TOOLS, *_EXTRA_TOOLS, *new_tools, finish_scan, agent_finish])
+    _ensure_unique_tool_names(
+        [*_BASE_TOOLS, *_MCP_TOOLS, *_EXTRA_TOOLS, *new_tools, finish_scan, agent_finish]
+    )
 
     for tool in new_tools:
         _EXTRA_TOOLS.append(tool)
@@ -696,14 +701,18 @@ def build_strix_agent(
             system_prompt_context=system_prompt_context,
         )
 
+    base_tools: list[Tool] = list(_BASE_TOOLS)
+    if system_prompt_context and system_prompt_context.get("mcp_available"):
+        base_tools.extend(_MCP_TOOLS)
+
     agent_tools = [*_EXTRA_TOOLS, *(extra_tools or [])]
     if interactive:
         # Yielding to the user is only meaningful when one is attached.
         agent_tools.append(wait_for_user)
     if is_root:
-        tools: list[Tool] = [*_BASE_TOOLS, *agent_tools, finish_scan]
+        tools: list[Tool] = [*base_tools, *agent_tools, finish_scan]
     else:
-        tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
+        tools = [*base_tools, *agent_tools, agent_finish]
     _ensure_unique_tool_names(tools)
     tools = [
         _with_bounded_result(_with_strictness(_with_coerced_arguments(tool), strict_tool_schemas))
