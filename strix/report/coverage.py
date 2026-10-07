@@ -55,7 +55,7 @@ OUTCOME_LABELS: dict[str, str] = {
 }
 
 #: Statuses that mean the agent stopped early rather than finishing its task.
-_INCOMPLETE_AGENT_STATUSES = frozenset({"crashed", "stopped", "running", "waiting"})
+_INCOMPLETE_AGENT_STATUSES = frozenset({"crashed", "failed", "stopped", "running", "waiting"})
 
 #: Run statuses that mean the scan itself did not run to completion.
 _INCOMPLETE_RUN_STATUSES = frozenset({"failed", "interrupted", "stopped", "running"})
@@ -224,7 +224,8 @@ def _skill_phrasings(skill: str) -> list[list[str]]:
 def _entry_is_about(entry: dict[str, Any], phrasings: list[list[str]]) -> bool:
     """True when a ledger row plausibly concerns any phrasing of a risk class."""
     haystack = _normalized(f"{entry.get('risk_area', '')} {entry.get('surface', '')}")
-    return any(all(term in haystack for term in terms) for terms in phrasings)
+    haystack_words = set(haystack.split())
+    return any(all(term in haystack_words for term in terms) for terms in phrasings)
 
 
 def skill_coverage_gaps(
