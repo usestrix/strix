@@ -410,8 +410,7 @@ def test_log_line_names_upstream_recorded_during_attempt(
         )
     finally:
         request_log._http_reply.reset(token)
-    assert event.details is not None
-    assert event.details["upstream_provider"] == "Together"
+    assert event.upstream_provider == "Together"
     with caplog.at_level(logging.DEBUG, logger="strix.llm.request_log"):
         request_log._log_line_sink(event)
     line = caplog.records[-1].getMessage()

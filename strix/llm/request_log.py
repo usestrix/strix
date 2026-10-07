@@ -109,6 +109,9 @@ class LlmRequestEvent:
     # Streamed calls only.
     time_to_first_token_ms: int | None = None
     finish_reason: str | None = None
+    # The provider a gateway (OpenRouter) routed the attempt to, and its error type.
+    upstream_provider: str | None = None
+    upstream_error_type: str | None = None
     # Every response header the provider sent, name-normalized, values capped.
     response_headers: dict[str, str] | None = None
     # Free-form: request parameters, full usage object, SDK hidden params,
@@ -175,15 +178,6 @@ def record_upstream_provider(provider: object, error_type: object = None) -> Non
         reply.upstream_provider = provider
     if isinstance(error_type, str) and error_type:
         reply.upstream_error_type = error_type
-
-
-def _upstream_details(reply: HttpReply | None) -> list[tuple[str, object]]:
-    if reply is None:
-        return []
-    return [
-        ("upstream_provider", reply.upstream_provider),
-        ("upstream_error_type", reply.upstream_error_type),
-    ]
 
 
 async def record_http_reply(response: Response) -> None:
@@ -704,6 +698,7 @@ def event_from_litellm(
             ttft_ms = max(0, int((first_at - started).total_seconds() * 1000))
 
     context = current_call_context()
+    reply = _http_reply.get() or HttpReply()
     base = LlmRequestEvent(
         call_id=call_id,
         route="litellm",
@@ -726,6 +721,8 @@ def event_from_litellm(
         request_bytes=json_size(_litellm_request_body(kwargs)),
         time_to_first_token_ms=ttft_ms,
         response_headers=headers_from_response(reply_headers),
+        upstream_provider=reply.upstream_provider,
+        upstream_error_type=reply.upstream_error_type,
     )
     if outcome == "success":
         return _litellm_success(base, kwargs, response, hidden, slo)
@@ -794,7 +791,6 @@ def _litellm_success(
             ("request", _litellm_request_details(kwargs)),
             ("response", _litellm_response_details(response)),
             ("litellm", _litellm_hidden_details(hidden, slo)),
-            *_upstream_details(_http_reply.get()),
         ),
     )
 
@@ -844,7 +840,6 @@ def _litellm_failure(
             ("request", _litellm_request_details(kwargs)),
             ("error", error or None),
             ("litellm", _litellm_hidden_details(hidden, slo)),
-            *_upstream_details(_http_reply.get()),
         ),
     )
 
@@ -918,7 +913,6 @@ def _observe_sdk_shared_http_client() -> None:
 
 
 def _log_line_sink(event: LlmRequestEvent) -> None:
-    details = event.details or {}
     level = logging.DEBUG if event.outcome == "success" else logging.WARNING
     logger.log(
         level,
@@ -928,8 +922,8 @@ def _log_line_sink(event: LlmRequestEvent) -> None:
         "in=%s out=%s cached=%s cost=%s agent=%s attempt=%d%s",
         event.route,
         event.provider or "-",
-        details.get("upstream_provider") or "-",
-        details.get("upstream_error_type") or "-",
+        event.upstream_provider or "-",
+        event.upstream_error_type or "-",
         event.model,
         event.api_host or "-",
         event.outcome,
@@ -1077,6 +1071,8 @@ class RequestLoggingModel(Model):
             time_to_first_token_ms=ttft_ms,
             finish_reason=finish_reason,
             response_headers=headers_from_response(reply.headers),
+            upstream_provider=reply.upstream_provider,
+            upstream_error_type=reply.upstream_error_type,
         )
         if exc is None:
             usage = _openai_usage(response) if response is not None else {}
@@ -1097,7 +1093,6 @@ class RequestLoggingModel(Model):
                 details=merge_details(
                     ("request", request.details),
                     ("response", _openai_response_details(response, raw_response)),
-                    *_upstream_details(reply),
                 ),
             )
         status, request_id = _openai_error_fields(exc)
@@ -1117,7 +1112,6 @@ class RequestLoggingModel(Model):
             details=merge_details(
                 ("request", request.details),
                 ("error", _exception_details(exc)),
-                *_upstream_details(reply),
             ),
         )
 
