@@ -9,9 +9,11 @@ from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
+from agents import RunConfig
 from agents.exceptions import MaxTurnsExceeded
 from agents.items import MessageOutputItem
 from agents.memory import SQLiteSession
+from agents.run_config import CallModelData, ModelInputData
 from agents.tool_context import ToolContext
 from openai.types.responses import ResponseOutputMessage, ResponseOutputRefusal, ResponseOutputText
 
@@ -22,6 +24,7 @@ from strix.core.execution import (
     notify_parent_on_terminal,
 )
 from strix.core.sessions import seed_initial_input
+from strix.llm.compaction import CompactionNeededError
 from strix.tools.agents_graph.tools import agent_finish, stop_agent
 from strix.tools.finish.tool import finish_scan
 
@@ -1531,3 +1534,146 @@ async def test_autonomous_nudge_does_not_offer_the_user() -> None:
     )
 
     assert "wait_for_user" not in items[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_compaction_check_stops_run_after_first_call_when_over_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execution, "needs_compaction", lambda *_args: True)
+    guard: Any = execution._with_compaction_check(RunConfig(model="m")).call_model_input_filter
+    data = CallModelData(
+        model_data=ModelInputData(input=[{"role": "user", "content": "hi"}], instructions="sys"),
+        agent=MagicMock(tools=[]),
+        context=None,
+    )
+
+    assert await guard(data) is data.model_data
+    with pytest.raises(CompactionNeededError):
+        await guard(data)
+
+
+@pytest.mark.asyncio
+async def test_compaction_check_chains_an_existing_input_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[Any] = []
+    monkeypatch.setattr(execution, "needs_compaction", lambda *args: seen.append(args[3]))
+    filtered = ModelInputData(input=[{"role": "user", "content": "scrubbed"}], instructions="sys")
+    run_config = RunConfig(model="m", call_model_input_filter=lambda _data: filtered)
+    check: Any = execution._with_compaction_check(run_config).call_model_input_filter
+    data = CallModelData(
+        model_data=ModelInputData(input=[], instructions="sys"),
+        agent=MagicMock(tools=[]),
+        context=None,
+    )
+
+    assert await check(data) is filtered
+    assert await check(data) is filtered
+    assert seen == [filtered.input]
+
+
+class _BudgetStream:
+    def __init__(self, exc: BaseException | None) -> None:
+        self.run_loop_exception = exc
+        self.new_items: list[Any] = []
+
+    async def stream_events(self) -> Any:
+        for event in _NO_STREAM_EVENTS:
+            yield event
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_compacts_and_resumes_on_every_budget_stop(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stops = execution._MAX_COMPACTIONS_PER_CYCLE + 1
+    streams = [_BudgetStream(CompactionNeededError("m")) for _ in range(stops)]
+    streams.append(_BudgetStream(None))
+    runs: list[dict[str, Any]] = []
+
+    def _run_streamed(*_args: Any, **kwargs: Any) -> _BudgetStream:
+        runs.append(kwargs)
+        return streams[len(runs) - 1]
+
+    forced: list[bool] = []
+
+    async def _compact(*_args: Any, force: bool) -> bool:
+        forced.append(force)
+        return True
+
+    monkeypatch.setattr("strix.core.execution.Runner.run_streamed", _run_streamed)
+    monkeypatch.setattr(execution, "_compact_session", _compact)
+    monkeypatch.setattr(execution, "needs_compaction", lambda *_args: False)
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    session = SQLiteSession("root", tmp_path / "agents.db")
+
+    result = await execution._run_cycle(
+        MagicMock(),
+        coordinator,
+        "root",
+        input_data="task",
+        run_config=RunConfig(model="m"),
+        context={},
+        max_turns=5,
+        session=session,
+        interactive=True,
+        event_sink=None,
+        hooks=None,
+    )
+
+    assert cast("Any", result) is streams[-1]
+    assert len(runs) == stops + 1
+    assert forced.count(True) == stops
+    assert all(run["input"] == [] for run in runs[1:])
+    assert all(run["run_config"].call_model_input_filter is not None for run in runs)
+    session.close()
+
+
+@pytest.mark.parametrize(
+    ("compacted", "still_over"),
+    [(False, False), (True, True)],
+    ids=["compaction_failed", "still_over_budget"],
+)
+@pytest.mark.asyncio
+async def test_run_cycle_reruns_unchecked_when_compaction_cannot_fit(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch, compacted: bool, still_over: bool
+) -> None:
+    streams = [_BudgetStream(CompactionNeededError("m")), _BudgetStream(None)]
+    runs: list[dict[str, Any]] = []
+
+    def _run_streamed(*_args: Any, **kwargs: Any) -> _BudgetStream:
+        runs.append(kwargs)
+        return streams[len(runs) - 1]
+
+    async def _compact(*_args: Any, **_kwargs: Any) -> bool:
+        return compacted
+
+    monkeypatch.setattr("strix.core.execution.Runner.run_streamed", _run_streamed)
+    monkeypatch.setattr(execution, "_compact_session", _compact)
+    monkeypatch.setattr(execution, "needs_compaction", lambda *_args: still_over)
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    session = SQLiteSession("root", tmp_path / "agents.db")
+
+    result = await execution._run_cycle(
+        MagicMock(),
+        coordinator,
+        "root",
+        input_data="task",
+        run_config=RunConfig(model="m"),
+        context={},
+        max_turns=5,
+        session=session,
+        interactive=True,
+        event_sink=None,
+        hooks=None,
+    )
+
+    assert cast("Any", result) is streams[-1]
+    assert len(runs) == 2
+    assert runs[0]["run_config"].call_model_input_filter is not None
+    assert runs[1]["run_config"].call_model_input_filter is None
+    assert runs[1]["input"] == []
+    session.close()

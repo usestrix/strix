@@ -138,7 +138,9 @@ def test_select_split_handles_parallel_calls(monkeypatch: pytest.MonkeyPatch) ->
     assert not _has_orphan_tool_output(items[split:])
 
 
-def _patch_budget(monkeypatch: pytest.MonkeyPatch, *, keep_tokens: int, window: int) -> None:
+def _patch_budget(
+    monkeypatch: pytest.MonkeyPatch, *, keep_tokens: int, window: int
+) -> ContextSettings:
     monkeypatch.setattr(compaction, "count_tokens", lambda _m, t: len(t))
     monkeypatch.setattr(compaction, "context_window", lambda _m: window)
     monkeypatch.setattr(compaction, "output_limit", lambda _m: 0)
@@ -152,6 +154,7 @@ def _patch_budget(monkeypatch: pytest.MonkeyPatch, *, keep_tokens: int, window: 
         llm=SimpleNamespace(api_key=None, api_base=None, timeout=1, extra_headers=None),
     )
     monkeypatch.setattr(compaction, "load_settings", lambda: settings)
+    return context
 
 
 def _model_response(text: str) -> Any:
@@ -178,6 +181,20 @@ def _patch_summary(
             return FakeModel()
 
     monkeypatch.setattr(compaction, "StrixProvider", FakeProvider)
+
+
+def test_needs_compaction_counts_full_tool_outputs(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_budget(monkeypatch, keep_tokens=50, window=10_000)
+    items = [_call("c1"), _output("c1", "x" * 20_000)]
+
+    assert compaction.needs_compaction("m", "", "", items) is True
+    assert compaction.needs_compaction("m", "", "", _turns(2)) is False
+
+
+def test_needs_compaction_respects_auto_compact_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_budget(monkeypatch, keep_tokens=50, window=10_000).auto_compact = False
+
+    assert compaction.needs_compaction("m", "", "", [_output("c1", "x" * 20_000)]) is False
 
 
 @pytest.mark.asyncio

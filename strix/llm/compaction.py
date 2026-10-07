@@ -164,22 +164,22 @@ def _content_text(content: Any) -> str:
     return ""
 
 
-def _truncate(text: str, limit: int) -> str:
-    return text if len(text) <= limit else f"{text[:limit]}\n[truncated]"
+def _truncate(text: str, limit: int | None) -> str:
+    return text if limit is None or len(text) <= limit else f"{text[:limit]}\n[truncated]"
 
 
-def _serialize_item(item: Any) -> str:
+def _serialize_item(item: Any, max_chars: int | None = _TOOL_OUTPUT_MAX_CHARS) -> str:
     if not isinstance(item, dict):
         return str(item)
     item_type = item.get("type")
     role = item.get("role")
     if item_type == "function_call":
-        args = _truncate(str(item.get("arguments", "")), _TOOL_OUTPUT_MAX_CHARS)
+        args = _truncate(str(item.get("arguments", "")), max_chars)
         return f"[tool_call {item.get('name', '?')}] {args}"
     if item_type == "function_call_output":
         output = item.get("output")
         text = output if isinstance(output, str) else _content_text(output)
-        return f"[tool_result] {_truncate(text, _TOOL_OUTPUT_MAX_CHARS)}"
+        return f"[tool_result] {_truncate(text, max_chars)}"
     if item_type == "reasoning":
         return ""
     if role or item_type == "message":
@@ -187,8 +187,30 @@ def _serialize_item(item: Any) -> str:
     return ""
 
 
-def _serialize_items(items: list[Any]) -> str:
-    return "\n".join(s for s in (_serialize_item(item) for item in items) if s)
+def _serialize_items(items: list[Any], max_chars: int | None = _TOOL_OUTPUT_MAX_CHARS) -> str:
+    return "\n".join(s for s in (_serialize_item(item, max_chars) for item in items) if s)
+
+
+class CompactionNeededError(Exception):
+    """The next model request would overrun the model's usable context window."""
+
+
+def _context_budget(model: str) -> int:
+    context = load_settings().context
+    reserve = max(context.compact_buffer_tokens, output_limit(model))
+    return max(context.keep_tokens, context_window(model) - reserve)
+
+
+def _request_tokens(model: str, instructions: str, tools_text: str, items: list[Any]) -> int:
+    text = "\n".join((instructions, tools_text, _serialize_items(items, max_chars=None)))
+    return count_tokens(model, text)
+
+
+def needs_compaction(model: str, instructions: str, tools_text: str, items: list[Any]) -> bool:
+    """Whether a request carrying ``items`` would overrun ``model``'s context budget."""
+    if not load_settings().context.auto_compact:
+        return False
+    return _request_tokens(model, instructions, tools_text, items) > _context_budget(model)
 
 
 def _is_tool_call(item: Any) -> bool:
@@ -369,11 +391,8 @@ async def maybe_compact(
     if len(items) < _MIN_ITEMS_TO_COMPACT:
         return False
 
-    window = context_window(model)
-    reserve = max(context.compact_buffer_tokens, output_limit(model))
-    budget = max(context.keep_tokens, window - reserve)
-    used = count_tokens(model, "\n".join((instructions, tools_text, _serialize_items(items))))
-    if not force and used <= budget:
+    used = _request_tokens(model, instructions, tools_text, items)
+    if not force and used <= _context_budget(model):
         return False
 
     split = _select_split(model, items, context.keep_tokens)
