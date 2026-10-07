@@ -156,7 +156,14 @@ async def _salvage_stream_to_session(
     stream: Any,
     agent_id: str,
 ) -> None:
-    """Persist a crashed run's full history so a revived agent loses no context."""
+    """Persist a crashed run's history so a revived agent loses no context.
+
+    ``stream.to_input_list()`` reconstructs the conversation from this run cycle
+    as ``original_input + new_items``. After ``seed_initial_input``, the session
+    (pre_run_items) already contains the initial input on the first cycle, so
+    blindly concatenating duplicates it. We detect the overlap and append only
+    the delta.
+    """
     if stream is None:
         return
     try:
@@ -164,8 +171,12 @@ async def _salvage_stream_to_session(
     except Exception:
         logger.exception("could not build salvage history for %s", agent_id)
         return
-    desired = list(pre_run_items) + replay
-    if len(desired) <= len(pre_run_items):
+    pre_len = len(pre_run_items)
+    if pre_len > 0 and len(replay) >= pre_len and replay[-pre_len:] == pre_run_items:
+        desired = replay
+    else:
+        desired = list(pre_run_items) + replay
+    if len(desired) <= pre_len:
         return
     try:
         await replace_session_items(session, desired)
