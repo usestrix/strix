@@ -184,9 +184,7 @@ def _is_transient_model_error(exc: BaseException) -> bool:
         return True
     code = _model_error_status_code(exc)
     if code is not None:
-        import litellm
-
-        return 400 <= code < 500 or bool(litellm._should_retry(code))
+        return code >= 400
     return isinstance(exc, APIError)
 
 
