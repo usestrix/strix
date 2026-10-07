@@ -1110,7 +1110,7 @@ class RequestLoggingModel(Model):
             outcome="error",
             status_code=status,
             provider_request_id=request_id or base.provider_request_id,
-            error_type=type(exc).__name__,
+            error_type=_cancel_reason(exc) or type(exc).__name__,
             error_message=_abandonment_message(exc) or clean_error_message(exc),
             response_bytes=_exception_body_size(exc, status),
             response_headers=headers_from_response(error_headers) or base.response_headers,
@@ -1347,9 +1347,23 @@ def _is_abandonment(exc: BaseException | None) -> bool:
     return isinstance(exc, asyncio.CancelledError | GeneratorExit)
 
 
+# Prefixes the reason a stream timeout gives when it cancels an attempt.
+CANCEL_REASON_PREFIX = "strix:"
+
+
+def _cancel_reason(exc: BaseException) -> str | None:
+    """The stream timeout that cancelled the attempt, e.g. ``stream_idle_timeout``."""
+    if isinstance(exc, asyncio.CancelledError) and exc.args:
+        message = str(exc.args[0])
+        if message.startswith(CANCEL_REASON_PREFIX):
+            return message.removeprefix(CANCEL_REASON_PREFIX)
+    return None
+
+
 def _abandonment_message(exc: BaseException) -> str | None:
     if isinstance(exc, asyncio.CancelledError):
-        return "attempt cancelled before the reply was consumed (stream idle timeout or shutdown)"
+        reason = f": {exc.args[0]}" if exc.args else ""
+        return f"attempt cancelled before the reply was consumed{reason}"
     if isinstance(exc, GeneratorExit):
         return "stream closed by the caller before it finished"
     return None
