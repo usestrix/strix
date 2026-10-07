@@ -602,7 +602,7 @@ async def run_strix_scan(
         )
         if not interactive and result is not None:
             final = getattr(result, "final_output", None)
-            # Lifecycle tools mark the root completed. 
+            # Lifecycle tools mark the root completed.
             async with coordinator._lock:
                 root_completed = coordinator.statuses.get(root_id) == "completed"
             if not root_completed:
