@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -10,7 +11,7 @@ import pytest
 from agents.tool import CustomTool, FunctionTool
 
 from strix.agents import factory
-from strix.config import load_settings
+from strix.config import load_settings, models
 
 
 def _capturing_exec_tool(captured: dict[str, str]) -> FunctionTool:
@@ -117,13 +118,16 @@ def test_function_tools_are_result_bounded() -> None:
     assert getattr(by_name["think"], "_strix_bounded", False) is True
 
 
-@pytest.mark.parametrize(("supports_images", "has_view_image"), [(True, True), (False, False)])
-def test_view_image_is_left_out_for_text_only_models(
-    supports_images: bool, has_view_image: bool
+def test_view_image_is_left_out_once_images_are_not_allowed(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agent = factory.build_strix_agent(is_root=True, supports_images=supports_images)
-    filesystem = agent.capabilities[0]
+    monkeypatch.setattr(models, "_IMAGES_REJECTED", threading.Event())
+    filesystem = factory.build_strix_agent(is_root=True).capabilities[0]
     filesystem.bind(cast("Any", object()))
-
     view_image = next(tool for tool in filesystem.tools() if tool.name == "view_image")
-    assert cast("FunctionTool", view_image).is_enabled is has_view_image
+    is_enabled = cast("Any", cast("FunctionTool", view_image).is_enabled)
+
+    assert is_enabled(SimpleNamespace(context={"supports_images": True}), None) is True
+    assert is_enabled(SimpleNamespace(context={"supports_images": False}), None) is False
+    models.mark_images_rejected()
+    assert is_enabled(SimpleNamespace(context={"supports_images": True}), None) is False

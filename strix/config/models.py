@@ -7,6 +7,7 @@ import contextlib
 import inspect
 import logging
 import os
+import threading
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -909,6 +910,22 @@ def model_supports_images(model_name: str) -> bool:
     """Return whether the model accepts image input. Assume yes until proven otherwise."""
     entry = _catalog_entry(model_name)
     return entry is None or bool(entry.get("supports_vision"))
+
+
+# Set once the model rejects an image; one process is one run, so this covers every agent.
+_IMAGES_REJECTED = threading.Event()
+
+
+def mark_images_rejected() -> None:
+    if not _IMAGES_REJECTED.is_set():
+        logger.warning("The model rejected image input; sending no images for the rest of the run")
+        _IMAGES_REJECTED.set()
+
+
+def images_allowed(context: object) -> bool:
+    """Whether a request may carry images: the model should take them and hasn't refused one."""
+    supported = context.get("supports_images", True) if isinstance(context, dict) else True
+    return bool(supported) and not _IMAGES_REJECTED.is_set()
 
 
 def _bare_openai_name(model_name: str) -> str:

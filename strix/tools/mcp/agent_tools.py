@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from agents import RunContextWrapper, function_tool
 
+from strix.config.models import images_allowed
 from strix.tools.mcp.client import _errored_tool_output
 from strix.tools.mcp.naming import namespaced_tool_name
 from strix.tools.mcp.registry import MCP_REGISTRY_CONTEXT_KEY, McpRegistry
@@ -288,11 +289,10 @@ async def call_mcp(
             "Call search_mcp_tools, then get_mcp_tool_schema."
         )
     session = await entry.ensure_connected()
-    context = ctx.context if isinstance(ctx.context, dict) else {}
     return await session.dispatch(
         tool,
         arguments or {},
         label=namespaced_tool_name(connection, tool),
         result_transform=entry.result_transform,
-        supports_images=context.get("supports_images", True),
+        supports_images=images_allowed(ctx.context),
     )

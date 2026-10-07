@@ -23,6 +23,7 @@ from openai import (
 )
 
 from strix.config import codex
+from strix.config.models import images_allowed, mark_images_rejected
 from strix.core.hooks import (
     BudgetExceededError,
     BudgetPausedError,
@@ -139,7 +140,7 @@ _TEXT_ONLY_IMAGE_TEXT = "[error: this model cannot view images; use `snapshot -i
 
 
 def _with_image_scrub(run_config: RunConfig, context: dict[str, Any]) -> RunConfig:
-    if context.get("supports_images", True):
+    if images_allowed(context):
         return run_config
     # Chain any filter already set; it sees the scrubbed input.
     inner = run_config.call_model_input_filter
@@ -848,7 +849,10 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             await coordinator.trigger_budget_stop()
             raise
         except Exception as exc:
-            if image_strips < 3 and session is not None and _is_image_rejection(exc):
+            image_rejected = _is_image_rejection(exc)
+            if image_rejected:
+                mark_images_rejected()
+            if image_strips < 3 and session is not None and image_rejected:
                 try:
                     stripped = await strip_all_images_from_session(session)
                 except Exception:

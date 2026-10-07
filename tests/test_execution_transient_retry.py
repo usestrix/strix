@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, cast
+import threading
+from typing import Any
 
 import httpx
 import pytest
@@ -15,7 +16,7 @@ from openai import (
     RateLimitError,
 )
 
-from strix.config import codex
+from strix.config import codex, models
 from strix.core import execution
 from strix.core.agents import AgentCoordinator
 
@@ -129,7 +130,7 @@ async def _run_once(
         coordinator,
         "root",
         input_data="task",
-        run_config=cast("RunConfig", object()),
+        run_config=RunConfig(),
         context={},
         max_turns=5,
         session=session,
@@ -232,6 +233,7 @@ async def _run_with_image_session(
 async def test_run_cycle_strips_images_on_image_rejection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(models, "_IMAGES_REJECTED", threading.Event())
     rejection = APIStatusError(
         "No endpoints found that support image input",
         response=httpx.Response(status_code=404, request=_request()),
@@ -243,3 +245,5 @@ async def test_run_cycle_strips_images_on_image_rejection(
     assert result is streams[1]
     assert attempts == 2
     assert strips == 1
+    # Every later request in the run, from any agent, has its images scrubbed.
+    assert execution._with_image_scrub(RunConfig(), {}).call_model_input_filter is not None
