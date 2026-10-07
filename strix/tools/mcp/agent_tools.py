@@ -24,6 +24,7 @@ automatically.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -61,7 +62,7 @@ def _format_tool(tool: MCPTool) -> str:
 
 @function_tool(timeout=60)
 async def list_mcps(ctx: RunContextWrapper) -> dict[str, Any]:
-    """List the MCP connections available this run, so you can discover them.
+    """List available MCP connections, loading each connection's catalog on first use.
 
     Read-only. Returns one entry per connection with its ``id`` (the exact name
     you pass to the other MCP tools), ``name``, ``description``, and
@@ -73,6 +74,18 @@ async def list_mcps(ctx: RunContextWrapper) -> dict[str, Any]:
     registry = _registry_from_ctx(ctx)
     if registry is None or not registry:
         return {"connections": []}
+    pending = [
+        entry
+        for name in registry.names()
+        if (entry := registry.get(name)) is not None
+        and entry.state != "catalog_ready"
+        and (entry.session is None or not entry.session.is_dead)
+    ]
+    if pending:
+        await asyncio.gather(
+            *(entry.ensure_catalog() for entry in pending),
+            return_exceptions=True,
+        )
     dead_by_name = {status.name: status.dead for status in registry.statuses()}
     return {
         "connections": [

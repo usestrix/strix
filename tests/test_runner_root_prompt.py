@@ -6,6 +6,7 @@ flow through to the root agent's ``build_strix_agent`` call.
 
 from __future__ import annotations
 
+import importlib
 import os
 import types
 from typing import Any
@@ -27,6 +28,11 @@ from strix.core.inputs import make_model_settings
 from strix.runtime import session_manager
 from strix.tools.load_skill.tool import load_skill
 from strix.tools.mcp import BearerAuth, McpConnectionConfig, McpConnectionRequest
+from strix.tools.mcp import client as mcp_client
+
+
+_test_mcp_client = importlib.import_module("tests.test_mcp_client")
+FakeMCPServer: Any = _test_mcp_client.FakeMCPServer
 
 
 def _make_rate_limit_error() -> RateLimitError:
@@ -84,6 +90,11 @@ def _patch_engine_scaffold(
     monkeypatch.setattr(runner, "build_root_task", lambda _scan_config: "task")
     monkeypatch.setattr(runner, "build_scope_context", lambda _scan_config: scope_context)
     monkeypatch.setattr(runner, "make_model_settings", lambda *_args, **_kwargs: ModelSettings())
+    monkeypatch.setattr(
+        mcp_client,
+        "_build_server",
+        lambda config: mcp_client.BuiltMcpServer(FakeMCPServer(config.name, []), None),
+    )
 
     captured: dict[str, Any] = {}
 
@@ -222,7 +233,12 @@ async def test_mcp_available_flag_set_when_a_connection_attaches(
     assert kwargs["system_prompt_context"]["mcp_available"] is True
     # The named inventory names each connected server for the prompt.
     assert kwargs["system_prompt_context"]["mcp_connections"] == [
-        {"name": "fs", "purpose": "local files", "tool_count": 0}
+        {
+            "name": "fs",
+            "purpose": "local files",
+            "tool_count": 0,
+            "state": "catalog_ready",
+        }
     ]
 
 

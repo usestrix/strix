@@ -68,6 +68,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_MCP_PROMPT_WARMUP_TIMEOUT_SECONDS = 30.0
+
 StreamEventSink = Callable[[str, Any], None]
 
 # Receives the run's MCP connection roster as a list of non-secret status dicts
@@ -90,6 +92,19 @@ def _mcp_roster_payload(registry: McpRegistry) -> list[dict[str, Any]]:
             "state": status.state,
         }
         for status in registry.statuses()
+    ]
+
+
+def _mcp_prompt_roster(registry: McpRegistry) -> list[dict[str, Any]]:
+    """The MCP roster rendered in agent prompts, with only verified counts."""
+    return [
+        {
+            "name": summary.name,
+            "purpose": summary.purpose,
+            "tool_count": summary.tool_count if summary.state == "catalog_ready" else None,
+            "state": summary.state,
+        }
+        for summary in registry.summaries()
     ]
 
 
@@ -438,19 +453,13 @@ async def run_strix_scan(
                 _record_mcp_connections(mcp_registry.names())
                 report(
                     f"MCP: configured {len(mcp_registry)} connection(s); "
-                    "warming them in the background"
+                    "connecting and listing tools"
                 )
                 scope_context["mcp_available"] = True
-                scope_context["mcp_connections"] = [
-                    {
-                        "name": summary.name,
-                        "purpose": summary.purpose,
-                        "tool_count": summary.tool_count,
-                    }
-                    for summary in mcp_registry.summaries()
-                ]
+                scope_context["mcp_connections"] = _mcp_prompt_roster(mcp_registry)
 
                 def _emit_mcp_status() -> None:
+                    scope_context["mcp_connections"] = _mcp_prompt_roster(mcp_registry)
                     roster = _mcp_roster_payload(mcp_registry)
                     _persist_mcp_status(roster)
                     if mcp_status_sink is not None:
@@ -461,7 +470,11 @@ async def run_strix_scan(
 
                 mcp_registry.set_status_sink(_emit_mcp_status)
                 _emit_mcp_status()
-                mcp_registry.start_warmup(max_concurrency=6)
+                warmup_task = mcp_registry.start_warmup(max_concurrency=6)
+                await asyncio.wait(
+                    {warmup_task},
+                    timeout=_MCP_PROMPT_WARMUP_TIMEOUT_SECONDS,
+                )
         except Exception:
             logger.exception("Failed to configure user MCP servers; continuing without them")
 
