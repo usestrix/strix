@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import inspect
 import logging
+import re
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
@@ -57,6 +58,16 @@ logger = logging.getLogger(__name__)
 StreamEventSink = Callable[[str, Any], None]
 
 _INPUT_REJECTION_CODES = frozenset({400, 404, 422})
+# Replies meaning "this model takes no images", not image errors in general: a
+# context overflow that counts "image/vision expansion" must not match.
+_IMAGE_REJECTION = re.compile(
+    r"no endpoints found that support image input"  # OpenRouter
+    r"|image_url is only supported by certain models"  # OpenAI
+    r"|is not a multimodal model|at most 0 image\(s\)"  # vLLM
+    r"|does not support image input"  # LiteLLM's Fireworks check
+    r"|doesn't support the image field",  # Bedrock Converse
+    re.IGNORECASE,
+)
 _MAX_COMPACTIONS_PER_CYCLE = 2
 
 
@@ -157,7 +168,9 @@ def _model_error_status_code(exc: BaseException) -> int | None:
 
 
 def _is_image_rejection(exc: BaseException) -> bool:
-    return _model_error_status_code(exc) in _INPUT_REJECTION_CODES and "image" in str(exc).lower()
+    return _model_error_status_code(exc) in _INPUT_REJECTION_CODES and bool(
+        _IMAGE_REJECTION.search(str(exc))
+    )
 
 
 def _is_transient_model_error(exc: BaseException) -> bool:
