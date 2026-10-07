@@ -716,6 +716,7 @@ def _configure_litellm_compatibility() -> None:
 
     _register_litellm_cost_callback()
     _install_openrouter_stream_cost_capture()
+    _install_ollama_tool_call_indexing()
 
 
 # Agent ids are 8 hex characters and can repeat across runs; the session id
@@ -787,6 +788,52 @@ def _install_openrouter_stream_cost_capture() -> None:
     # time, so overriding the attribute is enough for the subclass to take
     # effect. (type: ignore — mypy rejects reassigning a class attribute.)
     litellm.OpenrouterConfig = _StrixOpenrouterConfig  # type: ignore[misc]
+
+
+def _install_ollama_tool_call_indexing() -> None:
+    """Give each tool call in an Ollama chat stream its own index.
+
+    Ollama streams parallel tool calls one per chunk, and LiteLLM's Ollama
+    stream parser numbers calls only within a chunk, so every call reaches the
+    stream accumulator at index 0. They are then merged into one: the last
+    call's name over every call's arguments, concatenated
+    (``{"target": ...}{"cmd": ...}``), which no tool can parse and which
+    LiteLLM itself rejects when it sends that history back on the next turn.
+    Ollama sends each call whole, so each one gets the next index in the stream.
+    """
+    import litellm
+    from litellm.llms.ollama.chat.transformation import (
+        OllamaChatCompletionResponseIterator,
+        OllamaChatConfig,
+    )
+
+    class _StrixOllamaChatStreamIterator(OllamaChatCompletionResponseIterator):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self._tool_call_count = 0
+
+        def chunk_parser(self, chunk: dict[str, Any]) -> Any:
+            message = chunk.get("message")
+            tool_calls = message.get("tool_calls") if isinstance(message, dict) else None
+            if isinstance(tool_calls, list):
+                for tool_call in tool_calls:
+                    if isinstance(tool_call, dict):
+                        tool_call["index"] = self._tool_call_count
+                        self._tool_call_count += 1
+            return super().chunk_parser(chunk)
+
+    class _StrixOllamaChatConfig(OllamaChatConfig):
+        def get_model_response_iterator(
+            self, streaming_response: Any, sync_stream: bool, json_mode: bool | None = False
+        ) -> Any:
+            return _StrixOllamaChatStreamIterator(
+                streaming_response=streaming_response,
+                sync_stream=sync_stream,
+                json_mode=json_mode,
+            )
+
+    # Read at call time by LiteLLM's provider-config factory, as with OpenRouter.
+    litellm.OllamaChatConfig = _StrixOllamaChatConfig  # type: ignore[misc]
 
 
 OPENROUTER_ATTRIBUTION_HEADERS = {
