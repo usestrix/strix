@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sqlite3
 from contextlib import contextmanager
@@ -102,11 +103,11 @@ async def _rewrite_session(
     session: Session,
     transform: Callable[[list[Any]], tuple[list[Any], bool]],
 ) -> bool:
-    """Read-modify-write a session under its write lock, restoring on failure."""
+    """Rewrite atomically against SDK writes for SQLite; lock other backends."""
     async with session_write_lock(session):
+        if isinstance(session, SQLiteSession):
+            return await asyncio.to_thread(_rewrite_sqlite_session, session, transform)
         items = await session.get_items()
-        if not items:
-            return False
         rebuilt, changed = transform(list(items))
         if not changed:
             return False
@@ -123,6 +124,37 @@ async def _rewrite_session(
         return True
 
 
+def _rewrite_sqlite_session(
+    session: SQLiteSession,
+    transform: Callable[[list[Any]], tuple[list[Any], bool]],
+) -> bool:
+    # The SDK writes without our asyncio lock. The SQLite write transaction
+    # covers read/compare/replace, including writers on another session object.
+    # Table names come from the SDK's configured schema, never tool/message input.
+    with session._locked_connection() as connection:  # pyright: ignore[reportPrivateUsage]
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                f"SELECT message_data FROM {session.messages_table} "  # noqa: S608  # nosec B608
+                "WHERE session_id = ? ORDER BY id ASC",
+                (session.session_id,),
+            ).fetchall()
+            original = [json.loads(row[0]) for row in rows]
+            rebuilt, changed = transform(original)
+            if changed:
+                connection.execute(
+                    f"DELETE FROM {session.messages_table} WHERE session_id = ?",  # noqa: S608  # nosec B608
+                    (session.session_id,),
+                )
+                session._insert_items(connection, cast("list[TResponseInputItem]", rebuilt))  # pyright: ignore[reportPrivateUsage]
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        else:
+            return changed
+
+
 async def replace_session_items(
     session: Session,
     new_items: list[Any],
@@ -135,25 +167,49 @@ async def replace_session_items(
     longer has that many items (a concurrent writer changed it), so a slow
     compaction summary can't clobber newer turns.
     """
-    async with session_write_lock(session):
-        original = list(await session.get_items())
+
+    def _transform(original: list[Any]) -> tuple[list[Any], bool]:
         if expected_len is not None and len(original) != expected_len:
             logger.warning(
                 "skipping session rewrite: expected %d items, found %d",
                 expected_len,
                 len(original),
             )
-            return False
-        rebuilt = cast("list[TResponseInputItem]", new_items)
-        await session.clear_session()
-        try:
-            await session.add_items(rebuilt)
-        except Exception:
-            logger.exception("session rewrite failed; restoring original items")
-            await session.clear_session()
-            await session.add_items(original)
-            raise
-        return True
+            return original, False
+        return new_items, new_items != original
+
+    return await _rewrite_session(session, _transform)
+
+
+async def recover_session_items(session: Session, before: list[Any], replay: list[Any]) -> bool:
+    """Merge a full SDK replay once, retaining append-only incoming messages.
+
+    Occurrences are compared by position, never globally deduplicated. If a
+    concurrent compaction or divergent SDK write changed the prefix, refuse the
+    rewrite rather than guess which events to delete or execute again.
+    """
+
+    def _transform(current: list[Any]) -> tuple[list[Any], bool]:
+        if current[: len(before)] != before or replay[: len(before)] != before:
+            raise ValueError("session history diverged from the pre-run snapshot")
+        common = 0
+        for left, right in zip(current, replay, strict=False):
+            if left != right:
+                break
+            common += 1
+        if common == len(replay):
+            return current, False
+        tail = current[common:]
+        if any(
+            not isinstance(item, dict) or cast("dict[str, Any]", item).get("role") != "user"
+            for item in tail
+        ):
+            raise ValueError("session contains divergent generated items; recovery is ambiguous")
+        if any(item in replay[common:] for item in tail):
+            raise ValueError("incoming message ownership is ambiguous; history retained")
+        return replay + tail, True
+
+    return await _rewrite_session(session, _transform)
 
 
 async def strip_all_images_from_session(session: Session) -> bool:
