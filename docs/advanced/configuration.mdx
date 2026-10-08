@@ -42,6 +42,21 @@ Configure Strix using environment variables or a config file.
   failing with `LLM CONNECTION FAILED`. Scan requests use `LLM_TIMEOUT`.
 </ParamField>
 
+<ParamField path="LLM_MAX_CONCURRENT_REQUESTS" default="0" type="integer">
+  Maximum number of LLM requests in flight at once, across every agent in the
+  process. `0` leaves concurrency unlimited, which is the default. Set a
+  positive value when a provider rate-limits the account and parallel agents
+  would otherwise open too many requests together. The cap covers agent turns,
+  retries, context compaction, and finding deduplication.
+</ParamField>
+
+<ParamField path="LLM_REQUEST_DELAY" default="0" type="number">
+  Minimum seconds between the starts of successive LLM requests. `0` adds no
+  delay. A positive value spaces calls out after a concurrency slot is
+  acquired, so a waiting request cannot start inside another request's gap.
+  The delay is global, not per agent.
+</ParamField>
+
 <ParamField path="STRIX_LLM_MAX_RETRIES" default="5" type="integer">
   Maximum number of retries for LLM API calls on transient failures.
 </ParamField>
