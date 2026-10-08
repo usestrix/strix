@@ -79,6 +79,13 @@ Unauthenticated view (and, with `public_mode`, delete) of the lowest-key snapsho
 ### Prometheus / Alertmanager — exposure is the vuln (no auth by default)
 Prometheus and Alertmanager ship with **no authentication**; the docs explicitly say do not expose them. There is rarely a CVE — reachability itself is the finding, and the payoff is recon + credential leakage + pivoting (below).
 
+## Plugin and MCP Boundaries
+
+Resolve installed Grafana, plugin, and MCP server builds separately; check current upstream advisories and vendor backports before applying a listed attack path or recommending a release.
+
+- Plugin archives are extracted before signature verification. Test chained symlinks and containment before trusting a signature failure to prevent filesystem writes; archive installation is the required trigger ([extraction advisory](https://grafana.com/security/security-advisories/cve-2026-15815/)).
+- Inventory mcp-grafana separately from Grafana. Trace `grafana_api_request` and `X-Grafana-URL` into destination selection; preventing token forwarding alone does not prevent SSRF ([MCP advisory](https://grafana.com/security/security-advisories/cve-2026-19516/)).
+
 ## Pivoting: Observability → Deeper Compromise
 
 This is the core value. Chain each exposure into something that matters. Always articulate the pivot in the finding, not just the exposed endpoint.

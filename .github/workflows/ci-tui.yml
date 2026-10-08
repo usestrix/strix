@@ -1,0 +1,26 @@
+name: TUI
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: strix/interface/tui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00  # v6.0.0
+        with:
+          go-version-file: strix/interface/tui/go.mod
+          cache-dependency-path: strix/interface/tui/go.sum
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: CGO_ENABLED=0 go build -trimpath -o /dev/null ./cmd/strix-tui
+      - run: go test -race ./...

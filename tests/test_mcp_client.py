@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from agents.mcp import MCPServer, MCPServerStdio, MCPServerStreamableHttp
 from agents.tool_context import ToolContext
-from mcp.types import CallToolResult, TextContent
+from mcp.types import CallToolResult, ImageContent, TextContent
 from mcp.types import Tool as MCPTool
 from pydantic import ValidationError
 
@@ -882,6 +882,51 @@ async def test_call_mcp_flags_an_errored_result_failed_for_the_tui() -> None:
     # The agent content is unchanged; success:False rides alongside so the TUI
     # can tell an errored call from a done one.
     assert out == {"type": "text", "text": "boom:read_file", "success": False}
+
+
+@pytest.mark.asyncio
+async def test_call_mcp_replaces_images_for_a_text_only_model() -> None:
+    class _ImageServer(FakeMCPServer):
+        async def call_tool(
+            self,
+            tool_name: str,
+            arguments: dict[str, Any] | None,
+            meta: dict[str, Any] | None = None,
+        ) -> CallToolResult:
+            return CallToolResult(
+                content=[
+                    TextContent(type="text", text="shot"),
+                    ImageContent(type="image", data="aGk=", mimeType="image/png"),
+                ]
+            )
+
+    registry = McpRegistry()
+    registry.add(
+        name="fs", server=_ImageServer("fs", [_mcp_tool("shot")]), purpose=None, tool_count=1
+    )
+    ctx = _ctx(registry)
+    args = json.dumps({"connection": "fs", "tool": "shot"})
+
+    out = await call_mcp.on_invoke_tool(ctx, args)
+    assert out[1] == {"type": "image", "image_url": "data:image/png;base64,aGk="}
+
+    ctx.context["supports_images"] = False
+    out = await call_mcp.on_invoke_tool(ctx, args)
+    assert out == [
+        {"type": "text", "text": "shot"},
+        {"type": "text", "text": "[image/png image omitted: this model cannot view images]"},
+    ]
+
+    transformed: list[Any] = []
+    registry.add(
+        name="pro",
+        server=_ImageServer("pro", [_mcp_tool("shot")]),
+        purpose=None,
+        tool_count=1,
+        result_transform=lambda _label, result: transformed.append(result),
+    )
+    await call_mcp.on_invoke_tool(ctx, json.dumps({"connection": "pro", "tool": "shot"}))
+    assert [block["type"] for block in transformed[0]["content"]] == ["text", "text"]
 
 
 # --- generic MCP tools are the only MCP surface every agent gets -------------

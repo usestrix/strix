@@ -115,3 +115,15 @@ def test_function_tools_are_result_bounded() -> None:
     by_name = {t.name: t for t in agent.tools}
 
     assert getattr(by_name["think"], "_strix_bounded", False) is True
+
+
+@pytest.mark.parametrize(("supports_images", "has_view_image"), [(True, True), (False, False)])
+def test_view_image_is_left_out_for_text_only_models(
+    supports_images: bool, has_view_image: bool
+) -> None:
+    agent = factory.build_strix_agent(is_root=True, supports_images=supports_images)
+    filesystem = agent.capabilities[0]
+    filesystem.bind(cast("Any", object()))
+
+    view_image = next(tool for tool in filesystem.tools() if tool.name == "view_image")
+    assert cast("FunctionTool", view_image).is_enabled is has_view_image

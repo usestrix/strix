@@ -67,7 +67,7 @@ Then tell the user to add two repository secrets: `STRIX_LLM` (model id, for exa
 
 Notes:
 - In CI/headless runs Strix automatically scopes to the PR's changed files (`--scope-mode auto`). If diff resolution fails, keep `fetch-depth: 0` or set `--diff-base` to the PR's actual base branch — use `origin/${{ github.base_ref }}` in GitHub Actions rather than a hard-coded `origin/main`, since repos use different default branches.
-- Exit codes: `0` pass, `2` vulnerabilities found (fails the job), `1` setup error.
+- Exit codes: `0` pass, `2` vulnerabilities found (fails the job), `1` setup error. Add `--fail-on high` to fail only on high/critical findings; lower ones are still reported, so a passing job is not a finding-free report.
 - The runner needs Docker (default GitHub-hosted Ubuntu runners have it).
 - **Size the budget so the scan completes — do not let it fail open.** A `0` exit means "no validated vulnerabilities in what was analyzed"; if `--max-budget` is hit before the diff is fully covered, the scan wraps up early and can still exit `0`. The "Fail unless the scan completed" step above narrows the gap: `strix_runs/<run>/run.json` is `"stopped"` when the scan was cut off at the hard budget limit without a final report. It is not a complete guard — the agents get graduated wrap-up warnings before that limit, and a run that wraps up on a warning still calls `finish_scan` and records `"completed"` with partial coverage. So keep that step in any pipeline that gates merges **and** give the scan real headroom (compare `run.json`'s `llm_usage.cost` against `--max-budget`; if it ran right up to the cap, raise it). For a `quick` diff-scoped PR scan `--max-budget 10` is usually ample, raise it for large diffs.
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import unicodedata
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -45,6 +46,8 @@ from strix.utils.api_spec import (
 if TYPE_CHECKING:
     import argparse
 
+    from agents.models.interface import Model
+
 logger = logging.getLogger(__name__)
 
 HOST_GATEWAY_HOSTNAME = "host.docker.internal"
@@ -58,43 +61,112 @@ class ModelConnectionError(RuntimeError):
         self.model_name = model_name
 
 
+def _first_non_ascii(value: str) -> tuple[int, str] | None:
+    for position, char in enumerate(value):
+        if ord(char) > 0x7F:
+            return position, char
+    return None
+
+
+def _header_candidates(
+    prefix: str, model: str | None, api_key: str | None, extra_headers: dict[str, str] | None
+) -> list[tuple[str, str]]:
+    candidates: list[tuple[str, str]] = []
+    if api_key and not codex.subscription_model(model):
+        candidates.append((f"{prefix}LLM_API_KEY", api_key))
+    for header, value in (extra_headers or {}).items():
+        candidates.append((f"{prefix}LLM_EXTRA_HEADERS header name {header!r}", header))
+        candidates.append((f"{prefix}LLM_EXTRA_HEADERS value for {header!r}", value))
+    return candidates
+
+
+def check_header_safe_credentials(settings: Settings) -> None:
+    llm = settings.llm
+    dedupe = settings.dedupe
+    candidates = _header_candidates("", llm.model, llm.api_key, llm.extra_headers)
+    if dedupe.model:
+        candidates += _header_candidates(
+            "DEDUPE_", dedupe.model, (dedupe.api_key or "").strip(), dedupe.extra_headers
+        )
+    for setting, value in candidates:
+        found = _first_non_ascii(value)
+        if found is None:
+            continue
+        position, char = found
+        raise ValueError(
+            f"{setting} contains a character that cannot be sent in an HTTP header: "
+            f"U+{ord(char):04X} ({unicodedata.name(char, 'unnamed character')}) "
+            f"at position {position + 1} of {len(value)}. Re-enter the value without it."
+        )
+
+
 async def preflight_model_connection(
     model_name: str,
     *,
     settings: Settings | None = None,
 ) -> None:
     """Verify the configured model route before starting a scan."""
-    from agents.models.interface import ModelTracing
-
     from strix.config.models import StrixProvider, configure_sdk_model_defaults
-    from strix.core.inputs import make_model_settings
 
     resolved_settings = load_settings() if settings is None else settings
+    check_header_safe_credentials(resolved_settings)
     configure_sdk_model_defaults(resolved_settings)
     model = StrixProvider().get_model(model_name)
+    await preflight_request(
+        model,
+        model_name=model_name,
+        extra_headers=resolved_settings.llm.extra_headers,
+        timeout=resolved_settings.llm.preflight_timeout,
+        api_base_setting="LLM_API_BASE",
+    )
+
+
+async def preflight_request(
+    model: Model,
+    *,
+    model_name: str,
+    extra_headers: dict[str, str] | None,
+    timeout: int,
+    api_base_setting: str,
+) -> None:
+    """Send one tiny request to ``model`` and fail if it does not answer in ``timeout`` seconds.
+
+    ``api_base_setting`` names the environment variable that points at this
+    model's endpoint, so the timeout message sends the user to the right one.
+    """
+    from agents.models.interface import ModelTracing
+
+    from strix.core.inputs import make_model_settings
+
     request_settings = make_model_settings(
         None,
         model_name=model_name,
-        request_timeout=resolved_settings.llm.timeout,
+        request_timeout=timeout,
         prompt_cache=False,
-        extra_headers=resolved_settings.llm.extra_headers,
+        extra_headers=extra_headers,
         has_tools=False,
     )
-    await asyncio.wait_for(
-        model.get_response(
-            system_instructions="You are a helpful assistant.",
-            input="Reply with just 'OK'.",
-            model_settings=request_settings,
-            tools=[],
-            output_schema=None,
-            handoffs=[],
-            tracing=ModelTracing.DISABLED,
-            previous_response_id=None,
-            conversation_id=None,
-            prompt=None,
-        ),
-        timeout=resolved_settings.llm.timeout,
-    )
+    try:
+        await asyncio.wait_for(
+            model.get_response(
+                system_instructions="You are a helpful assistant.",
+                input="Reply with just 'OK'.",
+                model_settings=request_settings,
+                tools=[],
+                output_schema=None,
+                handoffs=[],
+                tracing=ModelTracing.DISABLED,
+                previous_response_id=None,
+                conversation_id=None,
+                prompt=None,
+            ),
+            timeout=timeout,
+        )
+    except TimeoutError:
+        raise TimeoutError(
+            f"{model_name} did not answer within {timeout}s (LLM_PREFLIGHT_TIMEOUT). "
+            f"Check {api_base_setting} and that the endpoint is reachable."
+        ) from None
 
 
 def build_targets_info(args: argparse.Namespace) -> None:

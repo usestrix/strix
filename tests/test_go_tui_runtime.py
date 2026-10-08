@@ -197,7 +197,7 @@ async def _send_message(connection: socket.socket, message: dict[str, Any]) -> N
 
 
 @pytest.mark.asyncio
-async def test_runtime_does_not_initialize_or_scan_before_ready(
+async def test_runtime_prepares_state_before_launch_and_scans_only_after_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_args = args()
@@ -231,9 +231,9 @@ async def test_runtime_does_not_initialize_or_scan_before_ready(
     monkeypatch.setattr(go_tui, "launch_tui_process", launch)
     monkeypatch.setattr(go_tui, "wait_process", wait_process)
     monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
-    monkeypatch.setattr(go_tui, "persist_current", lambda: None)
-    monkeypatch.setattr(go_tui, "prepare_run", lambda _args: None)
-    monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: None)
+    monkeypatch.setattr(go_tui, "persist_current", lambda: calls.append("persist"))
+    monkeypatch.setattr(go_tui, "prepare_run", lambda _args: calls.append("prepare"))
+    monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: calls.append("telemetry"))
     monkeypatch.setattr(runtime, "init_run_state", init_state)
     monkeypatch.setattr(runtime, "start_scan", start_scan)
 
@@ -241,7 +241,7 @@ async def test_runtime_does_not_initialize_or_scan_before_ready(
     try:
         hello = await _receive_message(child)
         assert hello["type"] == "hello"
-        assert calls == []
+        assert calls == ["state"]
         await _send_message(
             child,
             {
@@ -258,7 +258,7 @@ async def test_runtime_does_not_initialize_or_scan_before_ready(
             },
         )
         await asyncio.wait_for(run_task, timeout=2)
-        assert calls == ["preflight", "state", "scan"]
+        assert calls == ["state", "scan"]
     finally:
         child.close()
         if not run_task.done():
@@ -355,7 +355,7 @@ async def test_setup_preflights_model_before_starting(
     await runtime.ensure_model_verified()
     await runtime.start_from_setup()
 
-    # The same steps, in the same order, as a direct launch's prepare_and_start.
+    # The same steps, in the same order, as main() takes before a direct launch.
     assert calls == ["preflight", "persist", "targets", "prepare", "telemetry", "state", "scan"]
     assert runtime.args.scan_mode == "quick"
     assert runtime.args.instruction == ""
@@ -925,6 +925,28 @@ async def test_agent_state_sync_uses_latest_graph_snapshot_shape() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tool_output_carries_the_status_it_parked_the_agent_in() -> None:
+    runtime = GoTuiRuntime(args())
+    await runtime.coordinator.register("root", "Strix", parent_id=None)
+    await runtime._sync_agent_state()
+    notified: list[str] = []
+    runtime.controller._on_change = lambda: notified.append(
+        runtime.live_view.agents["root"]["status"]
+    )
+
+    await runtime.coordinator.park_waiting("root", wait_kind="agents")
+    output = SimpleNamespace(
+        type="tool_call_output_item",
+        raw_item={"call_id": "call-1", "type": "function_call_output"},
+        output=json.dumps({"success": True, "wait_outcome": "waiting"}),
+    )
+    runtime.capture_event("root", SimpleNamespace(type="run_item_stream_event", item=output))
+    await asyncio.gather(*runtime._output_syncs)
+
+    assert notified == ["waiting"]
+
+
+@pytest.mark.asyncio
 async def test_agent_state_sync_projects_completed_report() -> None:
     runtime = GoTuiRuntime(args())
     runtime.report_state = cast("Any", SimpleNamespace(run_record={"status": "completed"}))
@@ -987,28 +1009,7 @@ def _direct_launch_args() -> argparse.Namespace:
 
 
 @pytest.mark.asyncio
-async def test_prepare_and_start_reports_ordinary_connection_failures(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime = GoTuiRuntime(_direct_launch_args())
-    started: list[str] = []
-
-    async def preflight(_model: str) -> None:
-        raise TimeoutError("connection timed out")
-
-    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
-    monkeypatch.setattr(runtime, "start_scan", lambda: started.append("scan"))
-
-    await runtime.prepare_and_start()
-
-    assert started == []
-    assert runtime.controller.setup_mode is False
-    assert runtime.controller.scan_state == "failed"
-    assert "connection timed out" in (runtime.controller.error or "")
-
-
-@pytest.mark.asyncio
-async def test_prepare_and_start_runs_the_scan_after_preparation(
+async def test_direct_launch_starts_the_prepared_scan_without_a_model_round_trip(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = GoTuiRuntime(_direct_launch_args())
@@ -1024,9 +1025,10 @@ async def test_prepare_and_start_runs_the_scan_after_preparation(
     monkeypatch.setattr(runtime, "init_run_state", lambda: order.append("state"))
     monkeypatch.setattr(runtime, "start_scan", lambda: order.append("scan"))
 
-    await runtime.prepare_and_start()
+    assert runtime._start_preparation() is None
 
-    assert order == ["preflight", "persist", "prepare", "telemetry", "state", "scan"]
+    assert order == ["scan"]
+    assert runtime.controller.setup_mode is False
     assert runtime.controller.scan_state == "running"
 
 

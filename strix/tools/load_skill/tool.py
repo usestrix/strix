@@ -24,12 +24,12 @@ async def load_skill(ctx: RunContextWrapper, skills: list[str]) -> str:
             Max 5. Names match the bare files under
             ``strix/skills/<category>/<name>.md``.
     """
-    del ctx
     requested = list(skills or [])
     err = validate_requested_skills(requested)
     if err:
         return f"load_skill: {err}"
-    contents = load_skills(requested)
+    context = ctx.context if isinstance(ctx.context, dict) else {}
+    contents = load_skills(requested, supports_images=context.get("supports_images", True))
     if not contents:
         return "load_skill: no content loaded for requested skills."
     sections = [f"## Skill: {name}\n\n{body}" for name, body in contents.items()]

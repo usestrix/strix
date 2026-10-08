@@ -162,12 +162,8 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m.updateSetupMouse(msg)
 	}
 	showSidebar, _, chatWidth, chatHeight := m.layout()
-	viewerHeight := m.viewerHeight()
-	_, vulnHeight, mcpHeight, agentHeight := m.sidebarHeights()
 	x, y := msg.X, msg.Y
-	if m.updateMainScrollbarMouse(
-		msg, showSidebar, chatWidth, chatHeight, viewerHeight, agentHeight, vulnHeight, mcpHeight,
-	) {
+	if m.updateMainScrollbarMouse(msg, showSidebar, chatWidth, chatHeight) {
 		return m, nil
 	}
 	if m.selection.dragging {
@@ -198,24 +194,8 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	switch msg.Button {
 	case tea.MouseButtonWheelUp:
 		if showSidebar && x >= chatWidth+1 {
-			switch {
-			case y < viewerHeight:
-				return m, nil
-			case y < viewerHeight+agentHeight:
-				m.focus = focusAgents
-				m.input.Blur()
-				m.agentOffset = max(0, m.agentOffset-3)
-				m.keepAgentSelectionInWindow()
-				m.refreshViewport()
-			case vulnHeight > 0 && y < viewerHeight+agentHeight+vulnHeight:
-				m.focus = focusVulnerabilities
-				m.input.Blur()
-				m.vulnOffset = max(0, m.vulnOffset-3)
-				m.keepVulnerabilitySelectionInWindow()
-			case mcpHeight > 0 && y < viewerHeight+agentHeight+vulnHeight+mcpHeight:
-				m.focus = focusMcp
-				m.input.Blur()
-				m.mcpOffset = m.clampMcpOffset(m.mcpOffset - 3)
+			if rect, ok := m.panelAt(y); ok && rect.height > 1 {
+				m.scrollPanel(rect.panel, -3)
 			}
 			return m, nil
 		}
@@ -226,26 +206,8 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.MouseButtonWheelDown:
 		if showSidebar && x >= chatWidth+1 {
-			switch {
-			case y < viewerHeight:
-				return m, nil
-			case y < viewerHeight+agentHeight:
-				m.focus = focusAgents
-				m.input.Blur()
-				rows := m.agentPageSize()
-				m.agentOffset = min(max(0, len(agentTreeEntries(m.snapshot.Agents, m.collapsedAgents))-rows), m.agentOffset+3)
-				m.keepAgentSelectionInWindow()
-				m.refreshViewport()
-			case vulnHeight > 0 && y < viewerHeight+agentHeight+vulnHeight:
-				m.focus = focusVulnerabilities
-				m.input.Blur()
-				totalRows, _ := m.vulnerabilityScrollRows()
-				m.vulnOffset = min(max(0, totalRows-m.vulnerabilityPageSize()), m.vulnOffset+3)
-				m.keepVulnerabilitySelectionInWindow()
-			case mcpHeight > 0 && y < viewerHeight+agentHeight+vulnHeight+mcpHeight:
-				m.focus = focusMcp
-				m.input.Blur()
-				m.mcpOffset = m.clampMcpOffset(m.mcpOffset + 3)
+			if rect, ok := m.panelAt(y); ok && rect.height > 1 {
+				m.scrollPanel(rect.panel, 3)
 			}
 			return m, nil
 		}
@@ -288,21 +250,32 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if !showSidebar || x < chatWidth+1 {
+	if x < chatWidth+1 {
 		return m, nil
 	}
-	// Sidebar: viewer, agents, vulnerabilities, then stats.
-	switch {
-	case y < viewerHeight:
+	if m.toggleButtonHit(x, y) {
+		m.selection.active = false
+		m.toggleSidebar()
+		return m, nil
+	}
+	if !showSidebar {
+		return m, nil
+	}
+	if y < m.viewerHeight() {
 		return m, send(m.client, "viewer.open", map[string]any{})
-	case y < viewerHeight+agentHeight:
+	}
+	rect, ok := m.panelAt(y)
+	if !ok || m.clickPanel(rect, x, y) {
+		return m, nil
+	}
+	localY := y - rect.top
+	switch rect.panel {
+	case panelAgents:
 		m.focus = focusAgents
 		m.input.Blur()
-		// Content starts after the top border (1) and vertical padding (1).
 		entries := agentTreeEntries(m.snapshot.Agents, m.collapsedAgents)
-		start := windowStart(m.agentOffset, len(entries), max(1, agentHeight-4))
-		localY := y - viewerHeight
-		if row := start + localY - 2; localY >= 2 && localY < agentHeight-2 && row < len(entries) {
+		start := windowStart(m.agentOffset, len(entries), m.agentPageSize())
+		if row := start + localY - 2; localY >= 2 && localY < rect.height-1 && row < len(entries) {
 			m.selectedAgent = entries[row].index
 			agentID := m.snapshot.Agents[m.selectedAgent].ID
 			if hasAgentChildren(agentID, m.snapshot.Agents) {
@@ -311,24 +284,22 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			}
 			m.refreshViewport()
 		}
-	case vulnHeight > 0 && y < viewerHeight+agentHeight+vulnHeight:
+	case panelFindings:
 		m.focus = focusVulnerabilities
 		m.input.Blur()
-		// Content starts after the top border (1); clicking a row opens its detail.
-		row := y - viewerHeight - agentHeight - 1
-		if idx := m.vulnerabilityIndexAtRow(row); row >= 0 && row < vulnHeight-2 && idx >= 0 {
+		row := localY - 2
+		if idx := m.vulnerabilityIndexAtRow(row); row >= 0 && row < rect.height-3 && idx >= 0 {
 			m.selectedVuln = idx
 			m.openModal(modalVulnerability)
 		}
+	case panelMcp:
+		m.focus = focusMcp
+		m.input.Blur()
 	}
 	return m, nil
 }
 
-func (m *Model) updateMainScrollbarMouse(
-	msg tea.MouseMsg,
-	showSidebar bool,
-	chatWidth, chatHeight, viewerHeight, agentHeight, vulnHeight, mcpHeight int,
-) bool {
+func (m *Model) updateMainScrollbarMouse(msg tea.MouseMsg, showSidebar bool, chatWidth, chatHeight int) bool {
 	if msg.Action == tea.MouseActionRelease {
 		if m.draggingScrollbar == scrollbarNone {
 			return false
@@ -337,18 +308,18 @@ func (m *Model) updateMainScrollbarMouse(
 		return true
 	}
 	if msg.Action == tea.MouseActionMotion && m.draggingScrollbar != scrollbarNone {
-		m.scrollFromMouse(m.draggingScrollbar, msg.Y, chatHeight, viewerHeight, agentHeight, vulnHeight)
+		m.scrollFromMouse(m.draggingScrollbar, msg.Y, chatHeight)
 		return true
 	}
 	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
 		return false
 	}
-	target := m.scrollbarAt(msg, showSidebar, chatWidth, chatHeight, viewerHeight, agentHeight, vulnHeight, mcpHeight)
+	target := m.scrollbarAt(msg, showSidebar, chatWidth, chatHeight)
 	if target == scrollbarNone {
 		return false
 	}
 	m.draggingScrollbar = target
-	m.scrollFromMouse(target, msg.Y, chatHeight, viewerHeight, agentHeight, vulnHeight)
+	m.scrollFromMouse(target, msg.Y, chatHeight)
 	return true
 }
 
@@ -361,32 +332,28 @@ func nearColumn(x, column int) bool {
 	return x >= column-scrollbarGrab && x <= column+scrollbarGrab
 }
 
-// scrollbarAt reports which scrollbar, if any, the pointer is over.
-func (m Model) scrollbarAt(
-	msg tea.MouseMsg,
-	showSidebar bool,
-	chatWidth, chatHeight, viewerHeight, agentHeight, vulnHeight, mcpHeight int,
-) scrollbarTarget {
-	mcpTop := viewerHeight + agentHeight + vulnHeight
-	switch {
-	case nearColumn(msg.X, chatWidth-2) && msg.Y >= 1 && msg.Y < chatHeight-1 &&
-		m.viewport.TotalLineCount() > m.viewport.VisibleLineCount():
+func (m Model) scrollbarAt(msg tea.MouseMsg, showSidebar bool, chatWidth, chatHeight int) scrollbarTarget {
+	if nearColumn(msg.X, chatWidth-2) && msg.Y >= 1 && msg.Y < chatHeight-1 &&
+		m.viewport.TotalLineCount() > m.viewport.VisibleLineCount() {
 		return scrollbarTrace
-	case showSidebar && nearColumn(msg.X, m.width-3) && msg.Y >= viewerHeight+2 &&
-		msg.Y < viewerHeight+agentHeight-2 &&
-		len(agentTreeEntries(m.snapshot.Agents, m.collapsedAgents)) > m.agentPageSize():
-		return scrollbarAgents
-	case showSidebar && vulnHeight > 0 && nearColumn(msg.X, m.width-3) &&
-		msg.Y >= viewerHeight+agentHeight+1 &&
-		msg.Y < viewerHeight+agentHeight+vulnHeight-1:
-		totalRows, _ := m.vulnerabilityScrollRows()
-		if totalRows > m.vulnerabilityPageSize() {
+	}
+	if !showSidebar || !nearColumn(msg.X, m.width-3) {
+		return scrollbarNone
+	}
+	rect, ok := m.panelAt(msg.Y)
+	if !ok || rect.height <= 1 || msg.Y < rect.top+2 || msg.Y >= rect.top+rect.height-1 {
+		return scrollbarNone
+	}
+	switch rect.panel {
+	case panelAgents:
+		if len(agentTreeEntries(m.snapshot.Agents, m.collapsedAgents)) > m.agentPageSize() {
+			return scrollbarAgents
+		}
+	case panelFindings:
+		if totalRows, _ := m.vulnerabilityScrollRows(); totalRows > m.vulnerabilityPageSize() {
 			return scrollbarFindings
 		}
-	// The roster scrolls below a fixed header, so its bar starts two rows into
-	// the panel (border then header) rather than one.
-	case showSidebar && mcpHeight > 0 && nearColumn(msg.X, m.width-3) &&
-		msg.Y >= mcpTop+2 && msg.Y < mcpTop+mcpHeight-1:
+	case panelMcp:
 		if len(m.snapshot.Connections) > m.mcpPageSize() {
 			return scrollbarMcp
 		}
@@ -394,10 +361,7 @@ func (m Model) scrollbarAt(
 	return scrollbarNone
 }
 
-func (m *Model) scrollFromMouse(
-	target scrollbarTarget,
-	y, chatHeight, viewerHeight, agentHeight, vulnHeight int,
-) {
+func (m *Model) scrollFromMouse(target scrollbarTarget, y, chatHeight int) {
 	switch target {
 	case scrollbarTrace:
 		height := max(1, chatHeight-2)
@@ -411,7 +375,7 @@ func (m *Model) scrollFromMouse(
 		total := len(agentTreeEntries(m.snapshot.Agents, m.collapsedAgents))
 		m.focus = focusAgents
 		m.input.Blur()
-		m.agentOffset = scrollbarOffset(y-viewerHeight-2, height, total, height)
+		m.agentOffset = scrollbarOffset(y-m.panelTop(panelAgents)-2, height, total, height)
 		m.keepAgentSelectionInWindow()
 		m.refreshViewport()
 	case scrollbarFindings:
@@ -420,15 +384,14 @@ func (m *Model) scrollFromMouse(
 		m.focus = focusVulnerabilities
 		m.input.Blur()
 		// The offset is a row, so dragging moves the list continuously.
-		m.vulnOffset = scrollbarOffset(y-viewerHeight-agentHeight-1, height, totalRows, height)
+		m.vulnOffset = scrollbarOffset(y-m.panelTop(panelFindings)-2, height, totalRows, height)
 		m.keepVulnerabilitySelectionInWindow()
 	case scrollbarMcp:
 		height := m.mcpPageSize()
 		total := len(m.snapshot.Connections)
 		m.focus = focusMcp
 		m.input.Blur()
-		// The bar starts two rows into the panel (border then the fixed header).
-		m.mcpOffset = scrollbarOffset(y-viewerHeight-agentHeight-vulnHeight-2, height, total, height)
+		m.mcpOffset = scrollbarOffset(y-m.panelTop(panelMcp)-2, height, total, height)
 	}
 }
 
@@ -579,13 +542,11 @@ func labelHitAt(panel, label string, left, top, x, y int) bool {
 
 func (m *Model) cycleFocus(delta int) {
 	available := []focusMode{focusInput, focusChat}
-	if m.width >= 120 {
-		available = append(available, focusAgents)
-		if len(m.snapshot.Vulnerabilities) > 0 {
-			available = append(available, focusVulnerabilities)
-		}
-		if len(m.snapshot.Connections) > 0 {
-			available = append(available, focusMcp)
+	if showSidebar, _, _, _ := m.layout(); showSidebar {
+		for _, rect := range m.sidebarPanels() {
+			if focus, ok := panelFocus(rect.panel); ok && rect.height > 1 {
+				available = append(available, focus)
+			}
 		}
 	}
 	idx := 0

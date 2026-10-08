@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
+import re
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from functools import cache
 from typing import TYPE_CHECKING, Any, cast
 
-from agents import RunConfig, Runner
+from agents import ItemHelpers, MessageOutputItem, RunConfig, Runner
 from agents.exceptions import AgentsException, MaxTurnsExceeded, UserError
 from agents.sandbox.errors import ExecTransportError
 from openai import (
@@ -30,6 +33,7 @@ from strix.core.sessions import (
     enforce_image_budget,
     open_agent_session,
     replace_session_items,
+    scrub_images_from_items,
     seed_initial_input,
     strip_all_images_from_session,
 )
@@ -44,6 +48,7 @@ if TYPE_CHECKING:
     from agents.lifecycle import RunHooks
     from agents.memory import Session, SQLiteSession
     from agents.result import RunResultBase
+    from agents.run_config import CallModelData, ModelInputData
 
     from strix.core.agents import AgentCoordinator, Status
 
@@ -53,6 +58,18 @@ logger = logging.getLogger(__name__)
 StreamEventSink = Callable[[str, Any], None]
 
 _INPUT_REJECTION_CODES = frozenset({400, 404, 422})
+# Replies meaning "this model takes no images", not image errors in general: a
+# context overflow that counts "image/vision expansion" must not match.
+_IMAGE_REJECTION = re.compile(
+    r"no endpoints found that support image input"  # OpenRouter
+    r"|image_url is only supported by certain models"  # OpenAI
+    r"|is not a multimodal model|at most 0 image\(s\)"  # vLLM
+    r"|does not support image input"  # LiteLLM's Fireworks check
+    r"|doesn't support the image field"  # Bedrock Converse
+    r"|unknown variant `image_url`"  # DeepSeek, e.g. via Vercel AI Gateway
+    r"|'[^']*image[^']*' functionality not supported",  # Vercel AI Gateway (AI SDK), unverified
+    re.IGNORECASE,
+)
 _MAX_COMPACTIONS_PER_CYCLE = 2
 
 
@@ -120,6 +137,28 @@ async def _compact_session(
     )
 
 
+_TEXT_ONLY_IMAGE_TEXT = "[error: this model cannot view images; use `snapshot -i` instead]"
+
+
+def _with_image_scrub(run_config: RunConfig, context: dict[str, Any]) -> RunConfig:
+    if context.get("supports_images", True):
+        return run_config
+    # Chain any filter already set; it sees the scrubbed input.
+    inner = run_config.call_model_input_filter
+
+    async def _scrub(data: CallModelData[Any]) -> ModelInputData:
+        model_data = replace(
+            data.model_data,
+            input=scrub_images_from_items(data.model_data.input, text=_TEXT_ONLY_IMAGE_TEXT),
+        )
+        if inner is None:
+            return model_data
+        result = inner(replace(data, model_data=model_data))
+        return await result if inspect.isawaitable(result) else result
+
+    return replace(run_config, call_model_input_filter=_scrub)
+
+
 _MAX_TRANSIENT_MODEL_RETRIES = 5
 _TRANSIENT_MODEL_RETRY_BASE_DELAY_S = 2.0
 _TRANSIENT_MODEL_RETRY_MAX_DELAY_S = 90.0
@@ -128,6 +167,12 @@ _TRANSIENT_MODEL_RETRY_MAX_DELAY_S = 90.0
 def _model_error_status_code(exc: BaseException) -> int | None:
     code = getattr(exc, "status_code", None)
     return code if isinstance(code, int) else None
+
+
+def _is_image_rejection(exc: BaseException) -> bool:
+    return _model_error_status_code(exc) in _INPUT_REJECTION_CODES and bool(
+        _IMAGE_REJECTION.search(str(exc))
+    )
 
 
 def _is_transient_model_error(exc: BaseException) -> bool:
@@ -139,9 +184,7 @@ def _is_transient_model_error(exc: BaseException) -> bool:
         return True
     code = _model_error_status_code(exc)
     if code is not None:
-        import litellm
-
-        return bool(litellm._should_retry(code))
+        return code >= 400 and code not in (401, 402, 403, 404)
     return isinstance(exc, APIError)
 
 
@@ -505,13 +548,18 @@ async def _run_until_lifecycle(
     """Drive an agent until an explicit lifecycle tool settles its status.
 
     A turn that ends without ``finish_scan``, ``agent_finish``,
-    ``respond_to_user``, or ``wait_for_agents`` leaves the agent ``running``:
+    ``wait_for_user``, or ``wait_for_agents`` leaves the agent ``running``:
     plain text never terminates a run and never yields to the user. Such a turn
-    is nudged back into a tool call, bounded by a recovery limit.
+    is nudged back into a tool call, bounded by a recovery limit. The same
+    budget covers a ``wait_for_user`` call made before anything was said to the
+    user since their last message: plain text is the only channel to them, so
+    that park would hand them a silent turn, and the agent is sent back to
+    write its reply instead.
     """
     result: RunResultBase | None = None
     input_data: Any = initial_input
     recovery_limit = _INTERACTIVE_TOOL_RECOVERY_LIMIT if interactive else max(1, max_turns)
+    said_to_user = False
 
     while True:
         if coordinator.budget_stopped:
@@ -522,50 +570,72 @@ async def _run_until_lifecycle(
             await coordinator.set_status(agent_id, "stopped")
             raise SubagentBudgetReservedError("scan reached the sub-agent budget reserve")
 
-        if interactive:
-            result = await _run_cycle_parked(
-                agent,
-                coordinator,
-                agent_id,
-                input_data=input_data,
-                run_config=run_config,
-                context=context,
-                max_turns=max_turns,
-                session=session,
-                event_sink=event_sink,
-                hooks=hooks,
-            )
-        else:
-            result = await _run_cycle(
-                agent,
-                coordinator,
-                agent_id,
-                input_data=input_data,
-                run_config=run_config,
-                context=context,
-                max_turns=max_turns,
-                session=session,
-                interactive=False,
-                event_sink=event_sink,
-                hooks=hooks,
-            )
+        try:
+            if interactive:
+                result = await _run_cycle_parked(
+                    agent,
+                    coordinator,
+                    agent_id,
+                    input_data=input_data,
+                    run_config=run_config,
+                    context=context,
+                    max_turns=max_turns,
+                    session=session,
+                    event_sink=event_sink,
+                    hooks=hooks,
+                )
+            else:
+                result = await _run_cycle(
+                    agent,
+                    coordinator,
+                    agent_id,
+                    input_data=input_data,
+                    run_config=run_config,
+                    context=context,
+                    max_turns=max_turns,
+                    session=session,
+                    interactive=False,
+                    event_sink=event_sink,
+                    hooks=hooks,
+                )
+        except BudgetPausedError as exc:
+            if coordinator.budget_policy != "pause":
+                raise
+            # The agent parked right before an LLM call; everything up to that
+            # point is already in its session. Once resumed, the same call goes
+            # out with nothing added to the conversation.
+            await coordinator.wait_for_budget_resume(agent_id, parked_epoch=exc.resume_epoch)
+            if (
+                not coordinator.budget_stopped
+                and await _agent_status(coordinator, agent_id) != "running"
+            ):
+                # Stopped while parked (operator stop or a parent's stop_agent).
+                await coordinator.reset_recovery(agent_id)
+                return result
+            if session is not None:
+                input_data = []
+            continue
 
+        said_to_user = said_to_user or _said_to_user(result)
+        # Atomic: only an agent still parked on the user is put back to work, so
+        # a stop that lands in between is never overwritten.
+        silent_yield = (
+            interactive and not said_to_user and await coordinator.resume_silent_user_wait(agent_id)
+        )
         status = await _agent_status(coordinator, agent_id)
-        if status != "running":
+        if status != "running" and not silent_yield:
             await coordinator.reset_recovery(agent_id)
             return result
 
         recoveries = await coordinator.record_recovery(agent_id)
-        logger.warning(
-            "agent %s ended a turn without a lifecycle tool call (interactive=%s); "
-            "forcing tool continuation (%d/%d): %s",
+        _log_recovery(
             agent_id,
-            interactive,
+            result,
             recoveries,
             recovery_limit,
-            _final_output_preview(result),
+            interactive=interactive,
+            silent_yield=silent_yield,
         )
-
         if recoveries >= recovery_limit:
             return await _exhausted_recovery(coordinator, agent_id, result, interactive=interactive)
 
@@ -575,6 +645,7 @@ async def _run_until_lifecycle(
             attempt=recoveries,
             limit=recovery_limit,
             interactive=interactive,
+            silent_yield=silent_yield,
         )
 
 
@@ -719,7 +790,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             stream = Runner.run_streamed(
                 agent,
                 input=input_data,
-                run_config=run_config,
+                run_config=_with_image_scrub(run_config, context),
                 context=context,
                 max_turns=max_turns,
                 session=session,
@@ -759,7 +830,10 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 await coordinator.detach_stream(agent_id, stream)
         except BudgetPausedError as exc:
             logger.info("agent %s paused at the scan budget limit: %s", agent_id, exc)
-            await coordinator.pause_for_budget(agent_id)
+            if coordinator.budget_policy == "pause":
+                await coordinator.park_for_budget(agent_id)
+            else:
+                await coordinator.pause_for_budget(agent_id)
             raise
         except SubagentBudgetReservedError as exc:
             logger.info("sub-agent %s stopped at the budget reserve: %s", agent_id, exc)
@@ -774,11 +848,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             await coordinator.trigger_budget_stop()
             raise
         except Exception as exc:
-            if (
-                image_strips < 3
-                and session is not None
-                and getattr(exc, "status_code", None) in _INPUT_REJECTION_CODES
-            ):
+            if image_strips < 3 and session is not None and _is_image_rejection(exc):
                 try:
                     stripped = await strip_all_images_from_session(session)
                 except Exception:
@@ -863,6 +933,43 @@ async def _agent_status(coordinator: AgentCoordinator, agent_id: str) -> Status 
         return coordinator.statuses.get(agent_id)
 
 
+def _log_recovery(
+    agent_id: str,
+    result: RunResultBase | None,
+    attempt: int,
+    limit: int,
+    *,
+    interactive: bool,
+    silent_yield: bool,
+) -> None:
+    if silent_yield:
+        logger.warning(
+            "agent %s called wait_for_user without saying anything to the user; "
+            "sending it back to reply (%d/%d)",
+            agent_id,
+            attempt,
+            limit,
+        )
+        return
+    logger.warning(
+        "agent %s ended a turn without a lifecycle tool call (interactive=%s); "
+        "forcing tool continuation (%d/%d): %s",
+        agent_id,
+        interactive,
+        attempt,
+        limit,
+        _final_output_preview(result),
+    )
+
+
+def _said_to_user(result: RunResultBase | None) -> bool:
+    """Whether the run produced any assistant text, the only channel to the user."""
+    for item in getattr(result, "new_items", ()) or ():
+        if isinstance(item, MessageOutputItem) and ItemHelpers.text_message_output(item).strip():
+            return True
+    return False
+
+
 def _final_output_preview(result: RunResultBase | None) -> str:
     final_output = getattr(result, "final_output", None)
     if final_output is None:
@@ -880,15 +987,23 @@ async def _append_tool_required_message(
     attempt: int,
     limit: int,
     interactive: bool,
+    silent_yield: bool = False,
 ) -> list[dict[str, str]]:
     finish_tool = "finish_scan" if context.get("parent_id") is None else "agent_finish"
-    if interactive:
+    if silent_yield:
+        message = (
+            "You called wait_for_user without having written anything to the user since "
+            "their last message, so they would be handed a silent turn. Plain text is the "
+            "only channel to the user: write your reply as plain text now, then call "
+            f"wait_for_user. This is recovery attempt {attempt}/{limit}."
+        )
+    elif interactive:
         message = (
             "Your previous message ended a turn without a tool call. Plain text never ends "
             "execution and never hands control to the user: it is shown to the user, and the "
             "run continues. Continue immediately and call exactly one tool. "
-            "If you have something to tell the user and nothing to do until they reply, "
-            "call respond_to_user — with no message if you have already said it. "
+            "If you have nothing to do until the user replies, call wait_for_user; your "
+            "text already reached them, so do not repeat it. "
             "If you are blocked waiting for another agent, call wait_for_agents. "
             f"If the whole engagement is complete, call {finish_tool}. "
             "Otherwise use the appropriate execution or planning tool. "

@@ -129,16 +129,6 @@ async def test_large_target_list_reports_truncated_snapshot_count() -> None:
     assert len(snapshot["targets"]) == 16
 
 
-def test_state_populates_model_warning_for_non_frontier_model() -> None:
-    os.environ["STRIX_LLM"] = "openai/gpt-3.5-turbo"
-    loader._cached = None
-
-    warning = TuiController(args()).snapshot()["model_warning"]
-
-    assert "openai/gpt-3.5-turbo" in warning
-    assert "not a recommended frontier model" in warning
-
-
 def test_setup_restores_prepared_cli_targets() -> None:
     setup_args = args()
     setup_args.targets_info = [

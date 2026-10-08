@@ -106,7 +106,7 @@ class _Gateway(BaseHTTPRequestHandler):
     def log_message(self, *args: Any) -> None:
         pass
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length) or b"{}")
         messages = body.get("messages", [])

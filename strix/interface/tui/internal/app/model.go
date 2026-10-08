@@ -90,6 +90,7 @@ type Model struct {
 	client                 *Client
 	width, height          int
 	snapshot               protocol.Snapshot
+	windowTitle            string
 	input                  textarea.Model
 	viewport               viewport.Model
 	viewportContent        string
@@ -100,6 +101,9 @@ type Model struct {
 	filtered               []string
 	cursor                 int
 	collapsedAgents        map[string]bool
+	collapsedPanels        map[sidebarPanel]bool
+	zoomedPanel            sidebarPanel
+	sidebarHidden          bool
 	expandedEvents         map[string]bool
 	blockCache             map[string]renderedBlock
 	eventSpans             []eventSpan
@@ -278,7 +282,7 @@ func New(client *Client) Model {
 	input.Focus()
 	return Model{
 		client: client, input: input, viewport: viewport.New(80, 20), vulnViewport: viewport.New(80, 20),
-		collapsedAgents: map[string]bool{}, expandedEvents: map[string]bool{}, blockCache: map[string]renderedBlock{}, showSplash: true, splashStarted: time.Now(), followOutput: true,
+		collapsedAgents: map[string]bool{}, collapsedPanels: map[sidebarPanel]bool{}, zoomedPanel: panelNone, expandedEvents: map[string]bool{}, blockCache: map[string]renderedBlock{}, showSplash: true, splashStarted: time.Now(), followOutput: true,
 		collectionRevisions: map[string]int{}, collectionAssemblies: map[string]*collectionAssembly{}, resyncRequested: map[string]bool{}, resyncRequests: map[string]string{},
 		seenMessages: map[string]bool{},
 	}

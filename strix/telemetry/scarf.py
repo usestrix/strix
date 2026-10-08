@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import urllib.parse
 from typing import TYPE_CHECKING, Any
@@ -120,6 +121,7 @@ def end(report_state: ReportState, exit_reason: str = "completed") -> None:
             }
     except (TypeError, ValueError, AttributeError):
         pass
+    providers = report_state.get_process_llm_providers()
 
     report_state.scarf_scan_ended_sent = _send(
         "scan_ended",
@@ -132,6 +134,8 @@ def end(report_state: ReportState, exit_reason: str = "completed") -> None:
             "vulnerabilities_total": len(report_state.vulnerability_reports),
             **{f"vulnerabilities_{k}": v for k, v in vulnerabilities_counts.items()},
             **llm_props,
+            # Query params are flat, so the per-provider tally travels as JSON.
+            **({"llm_providers": json.dumps(providers)} if providers else {}),
             "skills": ",".join(get_loaded_skill_names()),
         },
     )

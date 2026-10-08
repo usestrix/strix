@@ -288,9 +288,11 @@ async def call_mcp(
             "Call search_mcp_tools, then get_mcp_tool_schema."
         )
     session = await entry.ensure_connected()
+    context = ctx.context if isinstance(ctx.context, dict) else {}
     return await session.dispatch(
         tool,
         arguments or {},
         label=namespaced_tool_name(connection, tool),
         result_transform=entry.result_transform,
+        supports_images=context.get("supports_images", True),
     )

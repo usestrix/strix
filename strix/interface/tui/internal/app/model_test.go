@@ -370,17 +370,6 @@ func TestStartedSnapshotTransitionsToLiveView(t *testing.T) {
 	}
 }
 
-func TestSplashModelWarningRendersTheBackendSentenceOnce(t *testing.T) {
-	warning := "openai/glm-5.3 is not a recommended frontier model. Pentest quality could be degraded."
-	got := ansi.Strip(splashModelWarning("openai/glm-5.3", warning))
-	if got != "⚠ "+warning {
-		t.Fatalf("splash warning = %q, want %q", got, "⚠ "+warning)
-	}
-	if got := ansi.Strip(splashModelWarning("other/model", warning)); got != "⚠ "+warning {
-		t.Fatalf("splash warning with unrelated model = %q", got)
-	}
-}
-
 func TestSetupStartScreenFitsNarrowTerminal(t *testing.T) {
 	model := New(nil)
 	model.width, model.height = 40, 18
@@ -901,6 +890,14 @@ func TestRunningViewerShowsCompleteWrappedURL(t *testing.T) {
 	if want := strings.Count(model.viewerView(model.viewerContentWidth()), "\n") + 3; model.viewerHeight() != want {
 		t.Fatalf("viewer height = %d, want %d", model.viewerHeight(), want)
 	}
+
+	raw := model.viewerView(18)
+	if got, want := strings.Count(raw, ansi.SetHyperlink(url)), len(urlLines); got != want {
+		t.Fatalf("every wrapped line should link to the full URL: got %d links for %d lines in %q", got, want, raw)
+	}
+	if got := strings.Count(raw, ansi.ResetHyperlink()); got != len(urlLines) {
+		t.Fatalf("hyperlinks not closed: %d resets for %d lines", got, len(urlLines))
+	}
 }
 
 func TestVerticalScrollbarThumbTracksScrollOffset(t *testing.T) {
@@ -959,6 +956,17 @@ func TestFillBackgroundRestoresBaseForegroundAfterReset(t *testing.T) {
 	}
 	if got, want := strings.Count(filled, "\x1b[0m"+baseStyle), 2; got != want {
 		t.Fatalf("base colors restored after %d resets, want %d: %q", got, want, filled)
+	}
+}
+
+func TestFillBackgroundRestoresBaseColorsAfterBareReset(t *testing.T) {
+	view := "\x1b[38;2;115;115;115mModel\x1b[m   padding\x1b[0m"
+	filled := fillBackground(view)
+	if !strings.Contains(filled, "\x1b[m"+baseFrameColors+"   padding") {
+		t.Fatalf("base colors not restored after bare reset: %q", filled)
+	}
+	if strings.Contains(filled, "\x1b[m   ") {
+		t.Fatalf("cells after a bare reset show the terminal background: %q", filled)
 	}
 }
 
