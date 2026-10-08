@@ -184,7 +184,7 @@ def _is_transient_model_error(exc: BaseException) -> bool:
         return True
     code = _model_error_status_code(exc)
     if code is not None:
-        return code >= 400
+        return code >= 400 and code not in (401, 402, 403)
     return isinstance(exc, APIError)
 
 

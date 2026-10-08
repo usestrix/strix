@@ -84,8 +84,9 @@ def test_client_errors_are_transient() -> None:
         "bad", response=httpx.Response(400, request=_request()), body=None
     )
     assert execution._is_transient_model_error(bad_request) is True
-    for status in (401, 402, 403, 404):
-        assert execution._is_transient_model_error(_status_error(status)) is True
+    assert execution._is_transient_model_error(_status_error(404)) is True
+    for status in (401, 402, 403):
+        assert execution._is_transient_model_error(_status_error(status)) is False
     assert execution._is_transient_model_error(ValueError("nope")) is False
 
 
