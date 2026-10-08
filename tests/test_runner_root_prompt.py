@@ -201,6 +201,52 @@ async def test_root_prompt_options_default_to_none(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("targets", "expected"),
+    [
+        pytest.param(
+            [{"type": "repository", "details": {"cloned_repo_path": "/work/clones/repo"}}],
+            True,
+            id="cloned-repository",
+        ),
+        pytest.param(
+            [
+                {"type": "web_application", "details": {}},
+                {"type": "repository", "details": {"cloned_repo_path": "/work/clones/repo"}},
+            ],
+            True,
+            id="repository-beside-a-domain",
+        ),
+        pytest.param(
+            [{"type": "local_code", "details": {"target_path": "/src/app"}}],
+            True,
+            id="local-directory",
+        ),
+        pytest.param([{"type": "web_application", "details": {}}], False, id="web-only"),
+    ],
+)
+async def test_root_agent_is_whitebox_when_source_is_in_the_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    targets: list[dict[str, Any]],
+    *,
+    expected: bool,
+) -> None:
+    """A cloned repository is source-aware like a local directory, so the root agent gets
+    the source-aware skills; the runner used to look at ``local_code`` targets only."""
+    captured = _patch_engine_scaffold(monkeypatch, tmp_path, {"scope": "built-in"})
+
+    await runner.run_strix_scan(
+        scan_config={"targets": targets, "scan_mode": "deep"},
+        scan_id="scan-whitebox",
+        image="img",
+        coordinator=AgentCoordinator(),
+    )
+
+    assert captured["kwargs"]["is_whitebox"] is expected
+
+
+@pytest.mark.asyncio
 async def test_mcp_available_flag_set_when_a_connection_attaches(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,

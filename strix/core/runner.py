@@ -45,6 +45,7 @@ from strix.core.inputs import (
 )
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.sessions import open_agent_session
+from strix.core.targets import is_whitebox_scan
 from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
 from strix.telemetry import set_scan_phase
@@ -384,7 +385,7 @@ async def run_strix_scan(
     try:
         targets = scan_config.get("targets") or []
         scan_mode = str(scan_config.get("scan_mode") or "deep")
-        is_whitebox = any(t.get("type") == "local_code" for t in targets)
+        is_whitebox = is_whitebox_scan(targets)
         diff_scope = scan_config.get("diff_scope")
         is_diff_scoped = bool(isinstance(diff_scope, dict) and diff_scope.get("active"))
         skills = list(scan_config.get("skills") or [])
