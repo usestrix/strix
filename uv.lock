@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -2386,13 +2386,15 @@ wheels = [
 
 [[package]]
 name = "strix-agent"
-version = "1.6.2"
+version = "1.7.0"
 source = { editable = "." }
 dependencies = [
+    { name = "boto3" },
     { name = "caido-sdk-client" },
     { name = "cryptography" },
     { name = "cvss" },
     { name = "docker" },
+    { name = "google-auth" },
     { name = "litellm" },
     { name = "markdown-it-py" },
     { name = "openai" },
@@ -2404,14 +2406,6 @@ dependencies = [
     { name = "reportlab" },
     { name = "requests" },
     { name = "rich" },
-]
-
-[package.optional-dependencies]
-bedrock = [
-    { name = "boto3" },
-]
-vertex = [
-    { name = "google-auth" },
 ]
 
 [package.dev-dependencies]
@@ -2429,12 +2423,12 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.28.0" },
+    { name = "boto3", specifier = ">=1.28.0" },
     { name = "caido-sdk-client", specifier = ">=0.2.0" },
     { name = "cryptography", specifier = ">=48.0.1,<49" },
     { name = "cvss", specifier = ">=3.2" },
     { name = "docker", specifier = ">=7.1.0" },
-    { name = "google-auth", marker = "extra == 'vertex'", specifier = ">=2.0.0" },
+    { name = "google-auth", specifier = ">=2.0.0" },
     { name = "litellm", specifier = ">=1.101.0" },
     { name = "markdown-it-py", specifier = ">=3.0.0" },
     { name = "openai", specifier = ">=2.45.0,<3" },
@@ -2447,7 +2441,6 @@ requires-dist = [
     { name = "requests", specifier = ">=2.32.0" },
     { name = "rich" },
 ]
-provides-extras = ["vertex", "bedrock"]
 
 [package.metadata.requires-dev]
 dev = [

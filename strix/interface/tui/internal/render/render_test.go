@@ -136,7 +136,12 @@ func TestToolDispatchCoversKnownTools(t *testing.T) {
 			[]string{"report read", "not found"},
 		},
 		{
-			"respond_to_user",
+			"wait_for_user",
+			tool("wait_for_user", map[string]any{}, nil, "completed"),
+			[]string{"waiting for your reply"},
+		},
+		{
+			"respond_to_user (recorded runs)",
 			tool("respond_to_user", map[string]any{"message": "Here is the answer"}, nil, "completed"),
 			[]string{"Here is the answer", "waiting for your reply"},
 		},
@@ -319,5 +324,41 @@ func TestCollapseToolOnlyOutputHeavyTools(t *testing.T) {
 	}
 	if out, expandable := CollapseTool(full, "respond_to_user", false); expandable || out != full {
 		t.Fatal("respond_to_user must never collapse")
+	}
+	if out, expandable := CollapseTool(full, "wait_for_user", false); expandable || out != full {
+		t.Fatal("wait_for_user must never collapse")
+	}
+}
+
+func TestReportSectionsRenderMarkdown(t *testing.T) {
+	body := "**Systemic themes:** zero auth on `/share`\n\n# Recommendations\n1. Merge the **ejs 3.1.10** fix"
+	cases := map[string]string{
+		"finish_scan":                 renderFinishScan(map[string]any{"executive_summary": body}),
+		"create_vulnerability_report": renderVulnerabilityReport(map[string]any{"title": "x", "description": body}, nil),
+		"create_dependency_report":    renderDependencyReport(map[string]any{"title": "x", "description": body}, nil),
+	}
+	for name, out := range cases {
+		plain := ansi.Strip(out)
+		for _, raw := range []string{"**", "`", "# Recommendations"} {
+			if strings.Contains(plain, raw) {
+				t.Fatalf("%s left raw markdown %q in %q", name, raw, plain)
+			}
+		}
+		for _, want := range []string{"Systemic themes:", "/share", "Recommendations", "1. Merge the ejs 3.1.10 fix"} {
+			if !strings.Contains(plain, want) {
+				t.Fatalf("%s lost %q in %q", name, want, plain)
+			}
+		}
+	}
+}
+
+func TestReportSectionsKeepBlankLinesInFencedCode(t *testing.T) {
+	body := "Intro.\n\n\n\nRequest:\n```http\nGET /share HTTP/1.1\nHost: target\n\n\nbody\n```\n\n\n\nAfter."
+	plain := ansi.Strip(renderVulnerabilityReport(map[string]any{"title": "x", "technical_analysis": body}, nil))
+	if !strings.Contains(plain, "Host: target\n\n\nbody") {
+		t.Fatalf("fenced code lost its blank lines in %q", plain)
+	}
+	if strings.Contains(plain, "Intro.\n\n\n") || strings.Contains(plain, "\n\n\nAfter.") {
+		t.Fatalf("blank-line runs outside fenced code were not collapsed in %q", plain)
 	}
 }

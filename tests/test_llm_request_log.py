@@ -394,7 +394,28 @@ def test_log_line_sink_formats_without_content(caplog: pytest.LogCaptureFixture)
     assert "request_id=req_line01" in line
     assert "status=400" in line
     assert "provider=anthropic" in line
+    assert "upstream=- upstream_error=-" in line
     assert "SECRET PROMPT" not in line
+
+
+def test_log_line_names_upstream_recorded_during_attempt(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    exc = _anthropic_error(400, ANTHROPIC_BLOCK_BODY, {})
+    token = request_log._http_reply.set(request_log.HttpReply())
+    try:
+        request_log.record_upstream_provider("Together", "provider_unavailable")
+        event = request_log.event_from_litellm(
+            _anthropic_kwargs(exc), None, None, None, outcome="error"
+        )
+    finally:
+        request_log._http_reply.reset(token)
+    assert event.details is not None
+    assert event.details["upstream_provider"] == "Together"
+    with caplog.at_level(logging.DEBUG, logger="strix.llm.request_log"):
+        request_log._log_line_sink(event)
+    line = caplog.records[-1].getMessage()
+    assert "upstream=Together upstream_error=provider_unavailable" in line
 
 
 # --------------------------------------------------------------------------- #

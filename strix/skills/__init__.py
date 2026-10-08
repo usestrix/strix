@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TypeGuard
 
 import yaml
+from jinja2 import Environment, StrictUndefined
 
 from strix.utils.resource_paths import get_strix_resource_path
 
@@ -13,6 +14,14 @@ from strix.utils.resource_paths import get_strix_resource_path
 logger = logging.getLogger(__name__)
 
 _FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(?P<body>.*?)\n---\s*\n", re.DOTALL)
+# Only skills with `template: jinja` in their frontmatter are rendered; the rest hold
+# literal `{{ }}` payloads.
+_SKILL_TEMPLATES = Environment(
+    autoescape=False,  # noqa: S701  # nosec B701 - prompts, not HTML
+    undefined=StrictUndefined,
+    trim_blocks=True,
+    lstrip_blocks=True,
+)
 
 _INTERNAL_SKILL_CATEGORIES: frozenset[str] = frozenset({"scan_modes", "coordination", "analysis"})
 _ROOT_SKILL_CATEGORY = "root"
@@ -261,7 +270,7 @@ def _candidate_skill_files(skill_name: str) -> list[Path]:
     return _bare_skill_files(skill_name)
 
 
-def load_skills(skill_names: list[str]) -> dict[str, str]:
+def load_skills(skill_names: list[str], *, supports_images: bool = True) -> dict[str, str]:
     """Load skill markdown bodies (frontmatter stripped) by name.
 
     Skill files live at ``strix/skills/<category>/<name>.md`` (or any
@@ -291,7 +300,11 @@ def load_skills(skill_names: list[str]) -> dict[str, str]:
             continue
 
         var_name = skill_name.split("/")[-1]
-        _, skill_body = _parse_skill_content(content, file_path)
+        metadata, skill_body = _parse_skill_content(content, file_path)
+        if metadata.get("template") == "jinja":
+            skill_body = _SKILL_TEMPLATES.from_string(skill_body).render(
+                supports_images=supports_images
+            )
         skill_content[var_name] = skill_body
         logger.debug("Loaded skill: %s -> %s", skill_name, var_name)
         _track_skill_loaded(var_name, file_path)

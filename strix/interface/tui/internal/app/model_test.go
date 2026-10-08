@@ -370,17 +370,6 @@ func TestStartedSnapshotTransitionsToLiveView(t *testing.T) {
 	}
 }
 
-func TestSplashModelWarningRendersTheBackendSentenceOnce(t *testing.T) {
-	warning := "openai/glm-5.3 is not a recommended frontier model. Pentest quality could be degraded."
-	got := ansi.Strip(splashModelWarning("openai/glm-5.3", warning))
-	if got != "⚠ "+warning {
-		t.Fatalf("splash warning = %q, want %q", got, "⚠ "+warning)
-	}
-	if got := ansi.Strip(splashModelWarning("other/model", warning)); got != "⚠ "+warning {
-		t.Fatalf("splash warning with unrelated model = %q", got)
-	}
-}
-
 func TestSetupStartScreenFitsNarrowTerminal(t *testing.T) {
 	model := New(nil)
 	model.width, model.height = 40, 18
@@ -901,6 +890,14 @@ func TestRunningViewerShowsCompleteWrappedURL(t *testing.T) {
 	if want := strings.Count(model.viewerView(model.viewerContentWidth()), "\n") + 3; model.viewerHeight() != want {
 		t.Fatalf("viewer height = %d, want %d", model.viewerHeight(), want)
 	}
+
+	raw := model.viewerView(18)
+	if got, want := strings.Count(raw, ansi.SetHyperlink(url)), len(urlLines); got != want {
+		t.Fatalf("every wrapped line should link to the full URL: got %d links for %d lines in %q", got, want, raw)
+	}
+	if got := strings.Count(raw, ansi.ResetHyperlink()); got != len(urlLines) {
+		t.Fatalf("hyperlinks not closed: %d resets for %d lines", got, len(urlLines))
+	}
 }
 
 func TestVerticalScrollbarThumbTracksScrollOffset(t *testing.T) {
@@ -959,6 +956,17 @@ func TestFillBackgroundRestoresBaseForegroundAfterReset(t *testing.T) {
 	}
 	if got, want := strings.Count(filled, "\x1b[0m"+baseStyle), 2; got != want {
 		t.Fatalf("base colors restored after %d resets, want %d: %q", got, want, filled)
+	}
+}
+
+func TestFillBackgroundRestoresBaseColorsAfterBareReset(t *testing.T) {
+	view := "\x1b[38;2;115;115;115mModel\x1b[m   padding\x1b[0m"
+	filled := fillBackground(view)
+	if !strings.Contains(filled, "\x1b[m"+baseFrameColors+"   padding") {
+		t.Fatalf("base colors not restored after bare reset: %q", filled)
+	}
+	if strings.Contains(filled, "\x1b[m   ") {
+		t.Fatalf("cells after a bare reset show the terminal background: %q", filled)
 	}
 }
 
@@ -1437,5 +1445,33 @@ func TestNarrowTerminalKeepsTheFrameIntact(t *testing.T) {
 				t.Fatalf("at width %d row %d is %d columns", width, i, got)
 			}
 		}
+	}
+}
+
+func TestCtrlZSuspendsFromEveryScreen(t *testing.T) {
+	for name, prepare := range map[string]func(*Model){
+		"splash": func(m *Model) { m.showSplash = true },
+		"modal":  func(m *Model) { m.showSplash = false; m.openModal(modalHelp) },
+		"main":   func(m *Model) { m.showSplash = false },
+	} {
+		model := New(nil)
+		prepare(&model)
+		_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlZ})
+		if cmd == nil {
+			t.Fatalf("%s: ctrl+z returned no command", name)
+		}
+		if _, ok := cmd().(tea.SuspendMsg); !ok {
+			t.Fatalf("%s: ctrl+z did not suspend", name)
+		}
+	}
+}
+
+func TestResumeReenablesMouse(t *testing.T) {
+	_, cmd := New(nil).Update(tea.ResumeMsg{})
+	if cmd == nil {
+		t.Fatal("resume returned no command")
+	}
+	if msg := cmd(); msg != tea.EnableMouseCellMotion() {
+		t.Fatalf("resume did not re-enable mouse tracking: %#v", msg)
 	}
 }

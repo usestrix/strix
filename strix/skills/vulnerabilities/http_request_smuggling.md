@@ -97,6 +97,12 @@ transfer-encoding: chunked
 SMUGGLED
 ```
 
+### CL.0, 0.CL, and Double Desync
+
+In CL.0, the front end honors `Content-Length` while the back end ignores the body; in 0.CL the front end ignores it while the back end expects it. The latter commonly deadlocks until an early-response gadget responds without consuming the body and keeps the connection open. Test redirects and early errors for that specific connection behavior. A subsequent controlled request can expose the boundary shift; two successive desyncs can convert 0.CL into CL.0. A lone timeout or 400 does not establish that chain.
+
+Include `Expect: 100-continue` handling and interim/final response sequencing in differential tests. Calculate offsets from what the back end receives, including proxy-added headers. Use controlled follow-up requests to establish which bytes are consumed and which response belongs to each request ([HTTP/1.1 must die](https://portswigger.net/research/http1-must-die), [0.CL walkthrough](https://portswigger.net/blog/http-1-1-must-die-conquering-the-0-cl-challenge)).
+
 ## Key Vulnerabilities
 
 ### Front-End Security Control Bypass

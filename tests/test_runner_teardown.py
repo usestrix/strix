@@ -91,3 +91,31 @@ async def test_a_live_child_is_settled_before_sessions_close(
     task = child_task["t"]
     assert task.done(), "the child task was left running past scan teardown"
     assert task.cancelled(), "the child was not cancelled cleanly on a finish"
+
+
+@pytest.mark.parametrize(("root_status", "logged"), [("completed", False), ("stopped", True)])
+@pytest.mark.asyncio
+async def test_missing_finish_is_logged_only_when_root_did_not_complete(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    caplog: pytest.LogCaptureFixture,
+    root_status: str,
+    logged: bool,
+) -> None:
+    _wire_runner(monkeypatch, tmp_path)
+    coordinator = AgentCoordinator()
+
+    async def _root_ends_with_text(**kwargs: Any) -> Any:
+        await coordinator.set_status(kwargs["agent_id"], root_status)
+        return types.SimpleNamespace(final_output="The review is complete.")
+
+    monkeypatch.setattr(runner, "run_agent_loop", _root_ends_with_text)
+
+    await runner.run_strix_scan(
+        scan_config={"targets": [], "scan_mode": "deep"},
+        scan_id="scan-test",
+        image="img",
+        coordinator=coordinator,
+    )
+
+    assert ("ended without calling finish_scan" in caplog.text) is logged

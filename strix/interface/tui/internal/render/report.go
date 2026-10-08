@@ -89,7 +89,7 @@ func renderReport(args map[string]any, result any, heading, pending string) stri
 
 	section := func(label, value string) {
 		if value != "" {
-			b.WriteString("\n\n" + Bold(Field).Render(label) + "\n" + value)
+			b.WriteString("\n\n" + Bold(Field).Render(label) + "\n" + renderAssistantMarkdown(value))
 		}
 	}
 	if confidence := StringValue(args["confidence"]); confidence != "" {

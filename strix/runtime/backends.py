@@ -27,9 +27,10 @@ async def _docker_backend(
     """Bring up a session backed by the local Docker daemon.
 
     Uses :class:`StrixDockerSandboxClient` to inject NET_ADMIN /
-    NET_RAW caps + ``host.docker.internal`` host-gateway. Imports
-    ``docker`` lazily so deployments that target a non-Docker
-    backend don't need the docker-py library installed.
+    NET_RAW caps + ``host.docker.internal`` host-gateway, on the same
+    endpoint the startup check resolved (``DOCKER_HOST``, docker context,
+    default socket). Imports ``docker`` lazily so deployments that target
+    a non-Docker backend don't need the docker-py library installed.
 
     ``session.start()`` is what materializes the manifest into the running
     container — the SDK's ``client.create()`` only builds the inner session
@@ -37,12 +38,12 @@ async def _docker_backend(
     Strix manages session lifetime explicitly via ``client.delete()`` so we
     trigger ``start()`` ourselves.
     """
-    import docker
     from agents.sandbox.sandboxes.docker import DockerSandboxClientOptions
 
     from strix.runtime.docker_client import StrixDockerSandboxClient
+    from strix.runtime.docker_connection import connect_docker
 
-    client = StrixDockerSandboxClient(docker.from_env())
+    client = StrixDockerSandboxClient(connect_docker())
     client.strix_bind_mounts = bind_mounts or []
     options = DockerSandboxClientOptions(image=image, exposed_ports=exposed_ports)
     session = await client.create(options=options, manifest=manifest)

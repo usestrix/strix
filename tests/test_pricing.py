@@ -13,7 +13,13 @@ def test_resolves_common_bare_model_names() -> None:
     resolve_litellm_model.cache_clear()
     assert resolve_litellm_model("deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
     assert resolve_litellm_model("openai/deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
-    assert resolve_litellm_model("grok-4.5") == "xai/grok-4.5"
+    # LiteLLM prices grok-4.5 identically under xai/, perplexity/xai/ and
+    # openrouter/x-ai/, so the resolver may return any of them; the contract
+    # is a provider-qualified name LiteLLM can price.
+    grok = resolve_litellm_model("grok-4.5")
+    assert grok is not None
+    assert grok.endswith("/grok-4.5")
+    assert grok in litellm.model_cost
     # MiniMax-M3 is sold by several LiteLLM providers at different prices, so
     # the resolver must not guess from its bare name. A provider-qualified
     # model remains deterministic.

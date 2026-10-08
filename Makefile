@@ -1,4 +1,4 @@
-.PHONY: help install dev-install format lint type-check security check-all clean pre-commit setup-dev dev viewer wheel tui-build tui-test tui-lint
+.PHONY: help install dev-install format lint format-check lint-check type-check security check-all clean pre-commit setup-dev dev viewer wheel tui-build tui-test tui-lint
 
 TUI_BINARY := build/sidecar/strix-tui$(if $(filter Windows_NT,$(OS)),.exe)
 
@@ -10,7 +10,9 @@ help:
 	@echo ""
 	@echo "Code Quality:"
 	@echo "  format        - Format code with ruff"
-	@echo "  lint          - Lint code with ruff"
+	@echo "  lint          - Lint code with ruff and apply fixes"
+	@echo "  format-check  - Check formatting without modifying files"
+	@echo "  lint-check    - Check lint without modifying files"
 	@echo "  type-check    - Run type checking with mypy and pyright"
 	@echo "  security      - Run security checks with bandit"
 	@echo "  check-all     - Run all code quality checks"
@@ -45,6 +47,12 @@ lint:
 	uv run ruff check . --fix
 	@echo "✅ Linting complete!"
 
+format-check:
+	uv run ruff format --check .
+
+lint-check:
+	uv run ruff check .
+
 type-check:
 	@echo "🔍 Type checking with mypy..."
 	uv run mypy strix/
@@ -57,7 +65,7 @@ security:
 	uv run bandit -r strix/ -c pyproject.toml
 	@echo "✅ Security checks complete!"
 
-check-all: format lint type-check security
+check-all: format-check lint-check type-check security
 	@echo "✅ All code quality checks passed!"
 
 pre-commit:

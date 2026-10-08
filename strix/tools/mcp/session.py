@@ -365,6 +365,7 @@ class SupervisedMcpSession:
         *,
         label: str,
         result_transform: ResultTransform | None = None,
+        supports_images: bool = True,
     ) -> Any:
         """Run one tool call with bounded retries for transient session failures.
 
@@ -382,6 +383,7 @@ class SupervisedMcpSession:
                 arguments,
                 label=label,
                 result_transform=result_transform,
+                supports_images=supports_images,
             )
 
         outcome = await self._run_job(job, phase="call")

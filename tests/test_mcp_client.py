@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from agents.mcp import MCPServer, MCPServerStdio, MCPServerStreamableHttp
 from agents.tool_context import ToolContext
-from mcp.types import CallToolResult, TextContent
+from mcp.types import CallToolResult, ImageContent, TextContent
 from mcp.types import Tool as MCPTool
 from pydantic import ValidationError
 
@@ -43,6 +43,7 @@ from strix.tools.mcp import (
     resolve_mcp_call,
     search_mcp_tools,
 )
+from strix.tools.mcp import agent_tools as mcp_agent_tools
 from strix.tools.mcp import client as mcp_client
 from strix.tools.mcp import registry as mcp_registry_mod
 from strix.tools.mcp import session as mcp_session_mod
@@ -421,8 +422,18 @@ def test_registry_summaries() -> None:
 @pytest.mark.asyncio
 async def test_list_mcps_returns_connections_with_ids_and_descriptions() -> None:
     registry = McpRegistry()
-    registry.add(name="fs", server=FakeMCPServer("fs", []), purpose="local files", tool_count=2)
-    registry.add(name="db", server=FakeMCPServer("db", []), purpose=None, tool_count=1)
+    registry.add(
+        name="fs",
+        server=FakeMCPServer("fs", [_mcp_tool("read_file"), _mcp_tool("write_file")]),
+        purpose="local files",
+        tool_count=2,
+    )
+    registry.add(
+        name="db",
+        server=FakeMCPServer("db", [_mcp_tool("query")]),
+        purpose=None,
+        tool_count=1,
+    )
 
     out = await list_mcps.on_invoke_tool(_ctx(registry), "{}")
 
@@ -437,7 +448,7 @@ async def test_list_mcps_returns_connections_with_ids_and_descriptions() -> None
                 "description": "local files",
                 "tool_count": 2,
                 "dead": False,
-                "state": "connected",
+                "state": "catalog_ready",
             },
             {
                 "id": "db",
@@ -445,10 +456,143 @@ async def test_list_mcps_returns_connections_with_ids_and_descriptions() -> None
                 "description": None,
                 "tool_count": 1,
                 "dead": False,
-                "state": "connected",
+                "state": "catalog_ready",
             },
         ]
     }
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_list_mcps_loads_catalog_for_unwarmed_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = FakeMCPServer("fs", [_mcp_tool("read_file"), _mcp_tool("write_file")])
+    monkeypatch.setattr(
+        mcp_client,
+        "_build_server",
+        lambda _config: _built_server(server),
+    )
+    registry = McpRegistry()
+    entry = registry.register(McpConnectionRequest(config=_config("fs", None)))
+
+    out = await list_mcps.on_invoke_tool(_ctx(registry), "{}")
+
+    assert entry.state == "catalog_ready"
+    assert entry.tool_count == 2
+    assert out["connections"][0]["tool_count"] == 2
+    assert out["connections"][0]["state"] == "catalog_ready"
+    await registry.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("slow_stage", ["connect", "catalog"])
+@pytest.mark.parametrize("warmup", [False, True])
+async def test_list_mcps_returns_healthy_connections_while_slow_catalog_keeps_loading(
+    monkeypatch: pytest.MonkeyPatch,
+    slow_stage: str,
+    warmup: bool,
+) -> None:
+    release = asyncio.Event()
+    started = asyncio.Event()
+    catalog_calls = 0
+
+    class _SlowServer(FakeMCPServer):
+        async def connect(self) -> None:
+            if slow_stage == "connect":
+                started.set()
+                await release.wait()
+
+        async def list_tools(self, run_context: Any = None, agent: Any = None) -> list[MCPTool]:
+            nonlocal catalog_calls
+            catalog_calls += 1
+            if slow_stage == "catalog":
+                started.set()
+                await release.wait()
+            return await super().list_tools(run_context, agent)
+
+    servers = {
+        "healthy": FakeMCPServer("healthy", [_mcp_tool("read_file")]),
+        "slow": _SlowServer("slow", [_mcp_tool("query")]),
+    }
+    monkeypatch.setattr(
+        mcp_client, "_build_server", lambda config: _built_server(servers[config.name])
+    )
+    monkeypatch.setattr(mcp_agent_tools, "_MCP_DISCOVERY_WAIT_SECONDS", 0.01)
+    registry = McpRegistry()
+    for name in servers:
+        registry.register(McpConnectionRequest(config=_config(name, None)))
+    if warmup:
+        registry.start_warmup()
+    entry = registry.get("slow")
+    assert entry is not None
+    try:
+        out = await asyncio.wait_for(list_mcps.on_invoke_tool(_ctx(registry), "{}"), timeout=1)
+        assert started.is_set()
+        assert out["connections"][0]["tool_count"] == 1
+        assert out["connections"][0]["state"] == "catalog_ready"
+        assert out["connections"][1]["tool_count"] is None
+        assert out["connections"][1]["state"] in {"connecting", "catalog_loading"}
+        assert entry._catalog_task is not None
+        assert not entry._catalog_task.done()
+
+        repeated = await asyncio.wait_for(list_mcps.on_invoke_tool(_ctx(registry), "{}"), timeout=1)
+        assert repeated == out
+        release.set()
+        await asyncio.wait_for(entry.ensure_catalog(), timeout=1)
+        finished = await list_mcps.on_invoke_tool(_ctx(registry), "{}")
+        assert finished["connections"][1]["tool_count"] == 1
+        assert finished["connections"][1]["state"] == "catalog_ready"
+        assert catalog_calls == 1
+    finally:
+        release.set()
+        await registry.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_after_deadline", [False, True])
+async def test_list_mcps_retains_and_cleans_up_background_catalog_tasks(
+    monkeypatch: pytest.MonkeyPatch,
+    fail_after_deadline: bool,
+) -> None:
+    release = asyncio.Event()
+    finished = asyncio.Event()
+    loop_errors: list[dict[str, Any]] = []
+
+    async def load_catalog() -> list[MCPTool]:
+        await release.wait()
+        raise RuntimeError("catalog unavailable")
+
+    registry = McpRegistry()
+    entry = registry.add(
+        name="blocked", server=FakeMCPServer("blocked", []), purpose=None, tool_count=0
+    )
+    assert entry.session is not None
+    monkeypatch.setattr(entry.session, "list_tools", load_catalog)
+    monkeypatch.setattr(mcp_agent_tools, "_MCP_DISCOVERY_WAIT_SECONDS", 0.01)
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: loop_errors.append(context))
+    try:
+        out = await asyncio.wait_for(list_mcps.on_invoke_tool(_ctx(registry), "{}"), timeout=1)
+        assert out["connections"][0]["tool_count"] is None
+        assert entry._catalog_task is not None
+        assert not entry._catalog_task.done()
+        if fail_after_deadline:
+            entry._catalog_task.add_done_callback(lambda _task: finished.set())
+            release.set()
+            await asyncio.wait_for(finished.wait(), timeout=1)
+            assert entry.state == "connected"
+            # Drop the finished task without awaiting it; its error must already be consumed.
+            entry._catalog_task = None
+        else:
+            task = entry._catalog_task
+            await registry.close()
+            assert task.cancelled()
+        assert loop_errors == []
+    finally:
+        await registry.close()
+        loop.set_exception_handler(previous_handler)
 
 
 @pytest.mark.asyncio
@@ -733,7 +877,37 @@ async def test_registry_warmup_bounds_parallel_connections(
     release.set()
     await warmup
 
-    assert [summary.state for summary in registry.summaries()] == ["connected"] * 4
+    assert [summary.state for summary in registry.summaries()] == ["catalog_ready"] * 4
+    assert [summary.tool_count for summary in registry.summaries()] == [1] * 4
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_registry_warmup_swallows_catalog_listing_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FailingListServer(FakeMCPServer):
+        async def list_tools(
+            self,
+            run_context: Any = None,
+            agent: Any = None,
+        ) -> list[MCPTool]:
+            raise RuntimeError("catalog unavailable")
+
+    monkeypatch.setattr(
+        mcp_client,
+        "_build_server",
+        lambda _config: _built_server(_FailingListServer("db", [])),
+    )
+    registry = McpRegistry()
+    entry = registry.register(McpConnectionRequest(config=_config("db", None)))
+
+    warmup = registry.start_warmup()
+    await warmup
+
+    assert warmup.done()
+    assert entry.state == "connected"
+    assert entry.tool_count == 0
     await registry.close()
 
 
@@ -884,6 +1058,51 @@ async def test_call_mcp_flags_an_errored_result_failed_for_the_tui() -> None:
     assert out == {"type": "text", "text": "boom:read_file", "success": False}
 
 
+@pytest.mark.asyncio
+async def test_call_mcp_replaces_images_for_a_text_only_model() -> None:
+    class _ImageServer(FakeMCPServer):
+        async def call_tool(
+            self,
+            tool_name: str,
+            arguments: dict[str, Any] | None,
+            meta: dict[str, Any] | None = None,
+        ) -> CallToolResult:
+            return CallToolResult(
+                content=[
+                    TextContent(type="text", text="shot"),
+                    ImageContent(type="image", data="aGk=", mimeType="image/png"),
+                ]
+            )
+
+    registry = McpRegistry()
+    registry.add(
+        name="fs", server=_ImageServer("fs", [_mcp_tool("shot")]), purpose=None, tool_count=1
+    )
+    ctx = _ctx(registry)
+    args = json.dumps({"connection": "fs", "tool": "shot"})
+
+    out = await call_mcp.on_invoke_tool(ctx, args)
+    assert out[1] == {"type": "image", "image_url": "data:image/png;base64,aGk="}
+
+    ctx.context["supports_images"] = False
+    out = await call_mcp.on_invoke_tool(ctx, args)
+    assert out == [
+        {"type": "text", "text": "shot"},
+        {"type": "text", "text": "[image/png image omitted: this model cannot view images]"},
+    ]
+
+    transformed: list[Any] = []
+    registry.add(
+        name="pro",
+        server=_ImageServer("pro", [_mcp_tool("shot")]),
+        purpose=None,
+        tool_count=1,
+        result_transform=lambda _label, result: transformed.append(result),
+    )
+    await call_mcp.on_invoke_tool(ctx, json.dumps({"connection": "pro", "tool": "shot"}))
+    assert [block["type"] for block in transformed[0]["content"]] == ["text", "text"]
+
+
 # --- generic MCP tools are the only MCP surface every agent gets -------------
 
 
@@ -965,6 +1184,53 @@ def test_prompt_renders_named_connection_inventory() -> None:
     assert "supabase" in prompt
     assert "13 tools" in prompt
     assert "read the app's schema" in prompt
+
+
+def test_prompt_omits_unloaded_tool_count() -> None:
+    prompt = render_system_prompt(
+        system_prompt_context={
+            "mcp_available": True,
+            "mcp_connections": [
+                {"name": "pending_conn", "purpose": None, "tool_count": None, "state": "connected"}
+            ],
+        }
+    )
+
+    connection_line = next(line for line in prompt.splitlines() if "pending_conn" in line)
+    assert "(0 tools)" not in connection_line
+    assert "tools)" not in connection_line
+
+
+def test_prompt_renders_loaded_tool_count() -> None:
+    prompt = render_system_prompt(
+        system_prompt_context={
+            "mcp_available": True,
+            "mcp_connections": [
+                {"name": "ready_conn", "purpose": None, "tool_count": 8, "state": "catalog_ready"}
+            ],
+        }
+    )
+
+    assert "ready_conn (8 tools)" in prompt
+
+
+def test_prompt_renders_unavailable_connection_without_tool_count() -> None:
+    prompt = render_system_prompt(
+        system_prompt_context={
+            "mcp_available": True,
+            "mcp_connections": [
+                {
+                    "name": "unavailable_conn",
+                    "purpose": None,
+                    "tool_count": None,
+                    "state": "unavailable",
+                }
+            ],
+        }
+    )
+
+    assert "unavailable_conn (unavailable right now)" in prompt
+    assert "unavailable_conn (0 tools)" not in prompt
 
 
 def test_prompt_inventory_is_gated_on_availability() -> None:

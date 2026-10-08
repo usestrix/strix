@@ -76,6 +76,8 @@ When output isn't reflected:
 
 ### Jinja2 / Mako (Python)
 
+**Jinja sandbox:** resolve the installed Jinja build and check current sandbox advisories before selecting indirect `str.format` or `|attr` gadgets. Establish template-source control and inspect custom filters; user data passed only as a variable is a different surface ([release notes](https://jinja.palletsprojects.com/en/stable/changes/)).
+
 The classic Python class walk — every object exposes its method-resolution-order, which leads to `object`, which exposes every subclass loaded in the interpreter, which includes things like `subprocess.Popen`:
 
 ```jinja
@@ -137,7 +139,7 @@ Twig sandbox bypasses are version-specific. The canonical historical gadget (Twi
 {{_self.env.registerUndefinedFilterCallback("system")}}{{_self.env.getFilter("id")}}
 ```
 
-This was patched — in Twig 2.x / 3.x `_self` returns the template name as a string and no longer exposes `.env`. Modern bypasses depend on which extensions are loaded and the active sandbox policy; consult Twig's published security advisories for the current state and probe with the version-specific gadgets (filter/function abuse, reflection on `_context` in some configs).
+In Twig 2.x / 3.x, `_self` returns the template name as a string and does not expose `.env`. Bypasses depend on which extensions are loaded and the active sandbox policy; consult Twig's published security advisories and probe with the version-specific gadgets (filter/function abuse, reflection on `_context` in some configs).
 
 Smarty `{php}...{/php}` was the historical RCE primitive; deprecated in Smarty 3 and removed in 4. On modern Smarty, the surface is static-method invocation and template-object reflection — `{$smarty.template_object->smarty->...}` walks back to the Smarty engine, and direct static calls on whitelisted classes (e.g. `{Smarty_Internal_Write_File::writeFile(...)}` on misconfigured installs) reach the filesystem. Probe both before assuming Smarty is hardened.
 

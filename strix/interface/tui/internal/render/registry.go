@@ -94,6 +94,8 @@ func Tool(data map[string]any) string {
 		return renderListReports(result)
 	case "get_report":
 		return renderGetReport(result)
+	case "wait_for_user":
+		return renderWaitForUser()
 	case "respond_to_user":
 		return renderRespondToUser(args)
 	case "finish_scan":

@@ -57,6 +57,11 @@ Map endpoints, authentication classes, and permission classes per route.
 
 ## Key Vulnerabilities
 
+### Request and Spatial Input Handling
+
+- Under ASGI, compare underscore/hyphen forms of proxy-injected identity headers through `ASGIRequest` normalization into `request.META`. Resolve the installed branch, vendor backports, and support status from package metadata and current Django release/advisory information ([header-collision advisory](https://www.djangoproject.com/weblog/2026/apr/07/security-releases/)).
+- For GeoDjango, trace attacker-controlled spatial lookup strings/dictionaries into `GDALRaster`: driver behavior can turn them into server-side requests or file writes. Include custom filter APIs and admin changelist filtering; direct model-field assignment is a separate input path ([spatial lookup advisory](https://www.djangoproject.com/weblog/2026/aug/04/security-releases/)).
+
 ### Authentication & Authorization
 
 **Permission Class Gaps**
@@ -207,7 +212,7 @@ Static analysis is the fastest way to reach the sinks above in white-box scope. 
 - **pip-audit** (PyPA) — dependency CVE scanner for known-vuln Django/DRF/simplejwt versions: `pipx install pip-audit && pip-audit -r requirements.txt`
 - **ast-grep** (preinstalled) — quick structural grep for risky calls without a full SAST run: `ast-grep run -p 'mark_safe($X)' -l python`
 
-For the `SECRET_KEY` → signed-cookie/reset-token forgery path noted under Session Issues, Django's own `django.core.signing` is the "tool": with a leaked key you can mint valid `signing.dumps()` values (session cookies, password-reset tokens, and `PickleSerializer`-backed session RCE).
+For the `SECRET_KEY` → signed-cookie forgery path noted under Session Issues, Django's own `django.core.signing` is the "tool": with a leaked key you can mint valid `signing.dumps()` values using the consumer's serializer and signing salt. Inspect `SESSION_SERIALIZER` and the installed implementation: the session-RCE path requires a reachable pickle-backed serializer; JSON sessions do not provide it. Password-reset tokens instead use `PasswordResetTokenGenerator`, with user state and timestamp in the digest, rather than the generic `signing.dumps()` format ([Django 5.0 removals](https://docs.djangoproject.com/en/5.0/releases/5.0/#features-removed-in-5-0), [token implementation](https://github.com/django/django/blob/stable/5.2.x/django/contrib/auth/tokens.py)).
 
 ## Summary
 

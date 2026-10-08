@@ -1,4 +1,4 @@
-"""``respond_to_user`` — deliver a reply and hand control back to the user."""
+"""``wait_for_user`` — hand control back to the user and wait for their reply."""
 
 from __future__ import annotations
 
@@ -15,23 +15,23 @@ def _ctx(ctx: RunContextWrapper) -> dict[str, Any]:
 
 
 @function_tool
-async def respond_to_user(ctx: RunContextWrapper, message: str = "") -> str:
-    """Answer the user and hand control back to them.
+async def wait_for_user(ctx: RunContextWrapper) -> str:
+    """Hand control to the user and wait for their reply.
 
-    This is the ONLY way to yield to the user. Delivering the message and
-    yielding are the same call on purpose: there is no way to answer and
-    then forget to stop, and no way to stop without having answered.
+    This is the ONLY way to yield to the user. It carries no text: everything
+    you write as plain text is already shown to the user, so write your reply
+    first, as plain text, then call this to stop and wait. Never restate in
+    any form what you have already written.
 
-    Call it when you have something for the user and nothing to do until
-    they reply — you answered their question, you need a decision or a
-    credential only they can give, or you finished a chunk of work and
-    want direction. You resume exactly where you left off when they
-    reply, with everything you have done so far intact.
+    Call it when you have nothing to do until the user replies — you answered
+    their question, you need a decision or a credential only they can give,
+    or you finished a chunk of work and want direction. You resume exactly
+    where you left off when they reply, with everything you have done so far
+    intact.
 
-    Do NOT call it to narrate progress or to think out loud. Plain text
-    is still shown to the user as you work, so say whatever you like
-    mid-task without stopping; ``respond_to_user`` is specifically the
-    act of *waiting* for them. Every call costs the user their attention.
+    Do NOT call it to narrate progress or to think out loud: plain text is
+    shown to the user as you work, so say whatever you like mid-task without
+    stopping. Every call costs the user their attention.
 
     Not for these:
 
@@ -39,16 +39,6 @@ async def respond_to_user(ctx: RunContextWrapper, message: str = "") -> str:
       use ``wait_for_agents``.
     - **Ending the engagement** — use ``finish_scan`` (root) or
       ``agent_finish`` (subagent). Those are terminal; this is a pause.
-
-    Args:
-        message: What to say to the user. Self-contained: they may not
-            have followed the tool calls that led here. Lead with the
-            answer or the decision you need, and if you are blocked, say
-            exactly what you need from them.
-
-            Omit it when you have just said your piece as plain text and
-            only need to wait: that text has already reached them, and
-            repeating it makes them read the same answer twice.
     """
     inner = _ctx(ctx)
     coordinator = coordinator_from_context(inner)
@@ -79,7 +69,7 @@ async def respond_to_user(ctx: RunContextWrapper, message: str = "") -> str:
         stopped = coordinator.statuses.get(me) == "stopped"
     if stopped:
         return json.dumps(
-            {"success": True, "wait_outcome": "stopped", "message": message},
+            {"success": True, "wait_outcome": "stopped"},
             ensure_ascii=False,
             default=str,
         )
@@ -94,8 +84,7 @@ async def respond_to_user(ctx: RunContextWrapper, message: str = "") -> str:
                 "success": True,
                 "wait_outcome": "message_arrived",
                 "pending_messages": pending,
-                "message": message,
-                "note": "Your reply was delivered; the user had already sent a new message.",
+                "note": "The user had already sent a new message; keep going.",
             },
             ensure_ascii=False,
             default=str,
@@ -106,8 +95,7 @@ async def respond_to_user(ctx: RunContextWrapper, message: str = "") -> str:
         {
             "success": True,
             "wait_outcome": "waiting",
-            "message": message,
-            "note": "Reply delivered; parked until the user responds.",
+            "note": "Parked until the user responds.",
         },
         ensure_ascii=False,
         default=str,

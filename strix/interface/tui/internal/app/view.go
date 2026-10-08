@@ -28,15 +28,16 @@ type renderedBlock struct {
 	version    int
 	width      int
 	expanded   bool
+	live       bool
 	wrapped    string
 	expandable bool
 	height     int
 }
 
-func (m *Model) renderEvent(event protocol.Event, width int) renderedBlock {
+func (m *Model) renderEvent(event protocol.Event, width int, live bool) renderedBlock {
 	expanded := m.expandedEvents[event.ID]
 	if cached, ok := m.blockCache[event.ID]; ok &&
-		cached.version == event.Version && cached.width == width && cached.expanded == expanded {
+		cached.version == event.Version && cached.width == width && cached.expanded == expanded && cached.live == live {
 		return cached
 	}
 	var block string
@@ -48,7 +49,10 @@ func (m *Model) renderEvent(event protocol.Event, width int) renderedBlock {
 		name := render.StringValue(event.Data["tool_name"])
 		block, expandable = render.CollapseTool(render.Tool(event.Data), name, expanded)
 	}
-	entry := renderedBlock{version: event.Version, width: width, expanded: expanded, expandable: expandable}
+	if !live {
+		block = render.StopSpinners(block)
+	}
+	entry := renderedBlock{version: event.Version, width: width, expanded: expanded, live: live, expandable: expandable}
 	if block != "" {
 		entry.wrapped = wrapBlock(block, width)
 		entry.height = strings.Count(entry.wrapped, "\n") + 1
@@ -96,6 +100,15 @@ func (m *Model) chatContent() string {
 	// to width-2 and indent every line by one cell.
 	contentWidth := max(1, m.viewport.Width-2)
 	render.SetImageWidth(contentWidth - 2)
+	// A parked agent is waiting on its latest tool call.
+	parkedOn := ""
+	if m.snapshot.Agents[m.selectedAgent].Status == "waiting" {
+		for _, event := range events {
+			if event.AgentID == agentID && event.Type == "tool" {
+				parkedOn = event.ID
+			}
+		}
+	}
 	var blocks []string
 	var spans []eventSpan
 	line := 0
@@ -103,7 +116,7 @@ func (m *Model) chatContent() string {
 		if event.AgentID != agentID {
 			continue
 		}
-		entry := m.renderEvent(event, contentWidth)
+		entry := m.renderEvent(event, contentWidth, event.ID == parkedOn)
 		if entry.wrapped == "" {
 			continue
 		}
@@ -162,6 +175,18 @@ func wrapBlock(value string, width int) string {
 		out = append(out, strings.Split(ansi.Wrap(line, width, " -"), "\n")...)
 	}
 	return strings.Join(out, "\n")
+}
+
+// hyperlinkBlock wraps a URL to the column width and marks every wrapped line
+// as an OSC 8 hyperlink to the whole URL. Terminals that linkify by text only
+// see the first line of a wrapped URL, which for the viewer meant opening it
+// with a truncated token.
+func hyperlinkBlock(url string, width int, style lipgloss.Style) string {
+	lines := strings.Split(wrapBlock(url, width), "\n")
+	for i, line := range lines {
+		lines[i] = ansi.SetHyperlink(url) + style.Render(line) + ansi.ResetHyperlink()
+	}
+	return strings.Join(lines, "\n")
 }
 
 // scrollbarThumb brightens the bar being dragged so the grab reads as taking
@@ -362,10 +387,11 @@ const (
 
 // fillBackground paints the whole frame black like Textual's Screen background.
 // Bubble Tea has no screen compositor, so any cell the view does not explicitly
-// color shows the terminal's default background. lipgloss emits a full reset
-// (\x1b[0m) at the end of every styled span, which clears both foreground and
-// background. Reasserting only black made uncolored and faint text inherit the
-// terminal profile's foreground; light profiles therefore rendered that text
+// color shows the terminal's default background. lipgloss emits a reset
+// (\x1b[0m, or the bare \x1b[m that x/ansi uses) at the end of every styled
+// span, which clears both foreground and background. Reasserting only black
+// made uncolored and faint text inherit the terminal profile's foreground;
+// light profiles therefore rendered that text
 // black-on-black. Reapply both base colors after each reset (and at the start).
 // Spans that set their own colors — inline code, selected rows, buttons — keep
 // them, because their color is emitted after the base style.
@@ -373,8 +399,13 @@ func fillBackground(view string) string {
 	if view == "" {
 		return view
 	}
-	return baseFrameColors + strings.ReplaceAll(view, "\x1b[0m", "\x1b[0m"+baseFrameColors)
+	return baseFrameColors + baseColorRestorer.Replace(view)
 }
+
+var baseColorRestorer = strings.NewReplacer(
+	"\x1b[0m", "\x1b[0m"+baseFrameColors,
+	"\x1b[m", "\x1b[m"+baseFrameColors,
+)
 
 func (m Model) splashView() string {
 	shine := "Starting Strix Agent"
@@ -410,25 +441,10 @@ func (m Model) splashView() string {
 	content := wordmark() + "\n\n" +
 		welcome + "\n" + version + "\n" + tagline + "\n\n" +
 		start.String() + "\n\n" + url
-	if warn := m.snapshot.ModelWarning; warn != "" {
-		content += "\n\n" + splashModelWarning(m.snapshot.Model, warn)
-	}
 	panel := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(green).Padding(1, 6).Align(lipgloss.Center).Render(content)
 	// #splash_screen background is solid black.
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, panel,
 		lipgloss.WithWhitespaceBackground(black))
-}
-
-// splashModelWarning renders the backend's full warning sentence, with the
-// model name highlighted when the sentence leads with it.
-func splashModelWarning(model, warning string) string {
-	yellow := lipgloss.Color("#eab308")
-	out := lipgloss.NewStyle().Bold(true).Foreground(yellow).Render("⚠ ")
-	if model != "" && strings.HasPrefix(warning, model) {
-		out += lipgloss.NewStyle().Bold(true).Foreground(render.Cyan).Render(model)
-		warning = strings.TrimPrefix(warning, model)
-	}
-	return out + lipgloss.NewStyle().Foreground(yellow).Render(warning)
 }
 
 // chatPaneKey identifies everything the bordered trace depends on.
@@ -437,6 +453,7 @@ type chatPaneKey struct {
 	width, height int
 	border        lipgloss.Color
 	selection     selectionState
+	spinnerFrame  int
 }
 
 // chatPane memoizes the bordered trace: slicing, scrollbar padding and border
@@ -450,12 +467,18 @@ var chatPane struct {
 }
 
 func (m Model) renderChatPane(width, height int, border lipgloss.Color) string {
-	key := chatPaneKey{offset: m.viewport.YOffset, width: width, height: height, border: border, selection: m.selection}
+	visible := visibleContent(m.viewportContent, m.viewport.YOffset, height)
+	// Only a trace with a spinner on screen changes with the tick.
+	spinnerFrame := 0
+	if strings.Contains(visible, render.SpinnerMarker) {
+		spinnerFrame = m.sweepFrame / 2
+	}
+	key := chatPaneKey{offset: m.viewport.YOffset, width: width, height: height, border: border, selection: m.selection, spinnerFrame: spinnerFrame}
 	if chatPane.out != "" && chatPane.key == key && chatPane.content == m.viewportContent {
 		return chatPane.out
 	}
 	trace := withVerticalScrollbar(
-		m.highlightSelection(visibleContent(m.viewportContent, m.viewport.YOffset, height), m.viewport.YOffset),
+		render.AnimateSpinners(m.highlightSelection(visible, m.viewport.YOffset), spinnerFrame),
 		width,
 		height,
 		m.viewport.TotalLineCount(),
@@ -499,6 +522,8 @@ func (m Model) mainView() string {
 	body := leftColumn
 	if showSidebar {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, leftColumn, " ", m.sidebarView(sidebarWidth, m.height))
+	} else if m.railVisible() {
+		body = lipgloss.JoinHorizontal(lipgloss.Top, leftColumn, " ", m.sidebarRail(m.height))
 	}
 	return lipgloss.NewStyle().Background(black).Foreground(textColor).Render(body)
 }
@@ -509,75 +534,108 @@ func (m Model) mainView() string {
 // and so never applied - honoring it made the outline vanish on the one panel
 // that had just become active.
 func (m Model) sidebarView(width, height int) string {
-	// Stats box height fits its content (auto, max 15); vulns panel max-height 12.
-	statsBody := m.statsView()
 	statsHeight, vulnHeight, mcpHeight, agentHeight := m.sidebarHeights()
-	agentBorder := dark
-	if m.focus == focusAgents {
-		agentBorder = green
-	}
-	// #agents_tree padding: 1 (all sides); interior lines = box - border - v.padding.
-	agentRows := max(1, agentHeight-4)
-	agentEntries := agentTreeEntries(m.snapshot.Agents, m.collapsedAgents)
-	agents := withVerticalScrollbar(
-		m.agentsView(max(1, width-5), agentRows),
-		width-4,
-		agentRows,
-		len(agentEntries),
-		agentRows,
-		m.agentOffset,
-		m.scrollbarThumb(scrollbarAgents),
-	)
-	parts := []string{
-		lipgloss.NewStyle().Width(width-2).Height(m.viewerHeight()-2).Border(lipgloss.RoundedBorder()).BorderForeground(dark).Padding(0, 1).Render(m.viewerView(width - 4)),
-		lipgloss.NewStyle().Width(width-2).Height(agentHeight-2).Border(lipgloss.RoundedBorder()).BorderForeground(agentBorder).Padding(1, 1).Render(agents),
-	}
-	if vulnHeight > 0 {
-		vulnBorder := dark
-		if m.focus == focusVulnerabilities {
-			vulnBorder = green
-		}
-		vulnRows := max(1, vulnHeight-2)
-		totalRows, offsetRows := m.vulnerabilityScrollRows()
-		findings := withVerticalScrollbar(
-			m.vulnerabilitiesView(m.vulnerabilityListWidth(), vulnRows),
+	parts := []string{lipgloss.NewStyle().
+		Width(width-2).
+		Height(m.viewerHeight()-2).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(dark).
+		Padding(0, 1).
+		Render(m.viewerBox(width - 4))}
+	agents := ""
+	if agentHeight > 1 {
+		agentRows := max(1, agentHeight-4)
+		agents = withVerticalScrollbar(
+			m.agentsView(max(1, width-5), agentRows),
 			width-4,
-			vulnRows,
-			totalRows,
-			vulnRows,
-			offsetRows,
-			m.scrollbarThumb(scrollbarFindings),
+			agentRows,
+			len(agentTreeEntries(m.snapshot.Agents, m.collapsedAgents)),
+			agentRows,
+			m.agentOffset,
+			m.scrollbarThumb(scrollbarAgents),
 		)
-		parts = append(parts, lipgloss.NewStyle().Width(width-2).Height(vulnRows).Border(lipgloss.RoundedBorder()).BorderForeground(vulnBorder).Padding(0, 1).Render(findings))
+	}
+	parts = append(parts, m.panelBox(panelAgents, agents, width, agentHeight, m.focus == focusAgents))
+	if vulnHeight > 0 {
+		findings := ""
+		if vulnHeight > 1 {
+			vulnRows := max(1, vulnHeight-4)
+			totalRows, offsetRows := m.vulnerabilityScrollRows()
+			findings = withVerticalScrollbar(
+				m.vulnerabilitiesView(m.vulnerabilityListWidth(), vulnRows),
+				width-4,
+				vulnRows,
+				totalRows,
+				vulnRows,
+				offsetRows,
+				m.scrollbarThumb(scrollbarFindings),
+			)
+		}
+		parts = append(parts, m.panelBox(panelFindings, findings, width, vulnHeight, m.focus == focusVulnerabilities))
 	}
 	if mcpHeight > 0 {
-		mcpBorder := dark
-		if m.focus == focusMcp {
-			mcpBorder = green
+		roster := ""
+		if mcpHeight > 1 {
+			roster = m.mcpConnectionsView(width-4, max(1, mcpHeight-4))
 		}
-		mcpRows := max(1, mcpHeight-2)
-		parts = append(parts, lipgloss.NewStyle().Width(width-2).Height(mcpRows).Border(lipgloss.RoundedBorder()).BorderForeground(mcpBorder).Padding(0, 1).Render(m.mcpConnectionsView(width-4, mcpRows)))
+		parts = append(parts, m.panelBox(panelMcp, roster, width, mcpHeight, m.focus == focusMcp))
 	}
-	parts = append(parts, lipgloss.NewStyle().Width(width-2).Height(statsHeight-2).Border(lipgloss.RoundedBorder()).BorderForeground(dark).Padding(0, 1).Render(statsBody))
-	return strings.Join(parts, "\n")
+	if gap := m.sidebarGap(); gap > 0 {
+		parts = append(parts, lipgloss.NewStyle().Width(width).Height(gap).Render(""))
+	}
+	stats := ""
+	if statsHeight > 1 {
+		stats = fixedPanelBody(lipgloss.NewStyle().Width(width-4).Render(m.statsView()), width-4, statsHeight-2)
+	}
+	parts = append(parts, m.panelBox(panelStats, stats, width, statsHeight, false))
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 func (m Model) sidebarHeights() (statsHeight, vulnHeight, mcpHeight, agentHeight int) {
 	// Measure the stats panel the way its box will render it: a long model name
 	// wraps inside the sidebar, and counting only its newlines would size the
 	// box short and push the whole frame past the bottom of the terminal.
-	statsRows := lipgloss.Height(lipgloss.NewStyle().Width(m.viewerContentWidth()).Render(m.statsView()))
-	statsHeight = min(15, statsRows+2)
+	statsRows := lipgloss.Height(lipgloss.NewStyle().Width(m.sidebarInnerWidth()).Render(m.statsView()))
+	statsHeight = m.panelHeight(panelStats, min(15, statsRows+2))
 	if len(m.snapshot.Vulnerabilities) > 0 {
-		vulnHeight = min(12, len(m.vulnerabilityRows(m.vulnerabilityListWidth()))+2)
+		vulnHeight = m.panelHeight(panelFindings, min(13, len(m.vulnerabilityRows(m.vulnerabilityListWidth()))+4))
 	}
-	// One header line + one line per connection + the box border (2). Capped so a
+	// Header line + one line per connection + the box border (2). Capped so a
 	// long roster cannot crowd out the agent tree; a roster past the cap scrolls
 	// inside the panel. Absent entirely when the run has no MCP connections.
 	if len(m.snapshot.Connections) > 0 {
-		mcpHeight = min(9, len(m.snapshot.Connections)+3)
+		mcpHeight = m.panelHeight(panelMcp, min(10, len(m.snapshot.Connections)+4))
 	}
-	agentHeight = max(3, m.height-m.viewerHeight()-statsHeight-vulnHeight-mcpHeight)
+	agentHeight = m.panelHeight(panelAgents, 5)
+	for _, p := range []struct {
+		h     *int
+		floor int
+	}{{&statsHeight, 4}, {&mcpHeight, 5}, {&vulnHeight, 5}} {
+		over := m.viewerHeight() + statsHeight + vulnHeight + mcpHeight + agentHeight - m.height
+		if over <= 0 {
+			break
+		}
+		if *p.h > p.floor {
+			*p.h -= min(over, *p.h-p.floor)
+		}
+	}
+	for _, h := range []*int{&mcpHeight, &vulnHeight, &statsHeight} {
+		if m.viewerHeight()+statsHeight+vulnHeight+mcpHeight+agentHeight <= m.height {
+			break
+		}
+		if *h > 1 {
+			*h = 1
+		}
+	}
+	spare := max(0, m.height-m.viewerHeight()-statsHeight-vulnHeight-mcpHeight-agentHeight)
+	switch {
+	case m.zoomedPanel == panelFindings && vulnHeight > 1:
+		vulnHeight += spare
+	case m.zoomedPanel == panelMcp && mcpHeight > 1:
+		mcpHeight += spare
+	case agentHeight > 1:
+		agentHeight += spare
+	}
 	return
 }
 
@@ -585,7 +643,7 @@ func (m Model) viewerHeight() int {
 	return strings.Count(m.viewerView(m.viewerContentWidth()), "\n") + 3
 }
 
-func (m Model) viewerContentWidth() int {
+func (m Model) sidebarInnerWidth() int {
 	_, sidebarWidth, _, _ := m.layout()
 	if sidebarWidth == 0 {
 		sidebarWidth = 24
@@ -593,13 +651,16 @@ func (m Model) viewerContentWidth() int {
 	return max(1, sidebarWidth-4)
 }
 
+func (m Model) viewerContentWidth() int {
+	return max(1, m.sidebarInnerWidth()-toggleButtonWidth-1)
+}
+
 func (m Model) viewerView(width int) string {
 	switch m.snapshot.ViewerStatus {
 	case "running":
 		status := lipgloss.NewStyle().Foreground(green).Render("● Viewer running")
 		if m.snapshot.ViewerURL != nil && strings.TrimSpace(*m.snapshot.ViewerURL) != "" {
-			url := wrapBlock(strings.TrimSpace(*m.snapshot.ViewerURL), width)
-			return status + "\n" + lipgloss.NewStyle().Foreground(dim).Render(url)
+			return status + "\n" + hyperlinkBlock(strings.TrimSpace(*m.snapshot.ViewerURL), width, lipgloss.NewStyle().Foreground(dim))
 		}
 		return status
 	case "unavailable":
@@ -646,29 +707,22 @@ func (m Model) statsView() string {
 	return b.String()
 }
 
-// mcpConnectionsView renders the sidebar MCP panel: a header carrying the total
-// connection count, then one row per connection with a status glyph and its tool
-// count (or "offline").
+// mcpConnectionsView renders the sidebar MCP roster: one row per connection with
+// a status glyph and its tool count (or "offline").
 //   - a solid green dot marks an attached, idle connection;
 //   - a green cycling quarter-circle (◐ ◓ ◑ ◒) marks a call running against it;
 //   - a red dot plus "offline" marks a connection whose live session has died.
 //
-// The header stays fixed while the roster below it scrolls: when there are more
-// connections than the panel can show, the visible window is chosen by
-// m.mcpOffset and withVerticalScrollbar draws a thumb in the reserved last
-// column, exactly as the agent tree and findings list scroll.
+// When there are more connections than the panel can show, the visible window
+// is chosen by m.mcpOffset and withVerticalScrollbar draws a thumb in the
+// reserved last column, exactly as the agent tree and findings list scroll.
 //
 // "In use" is derived from the connection-tagged tool-call events in the stream,
 // not carried on the connection roster, so a call in flight shows motion without
 // any extra backend signal. The quarter-circle rides the shared sweepFrame tick.
 func (m Model) mcpConnectionsView(width, rows int) string {
 	conns := m.snapshot.Connections
-	header := truncate(lipgloss.NewStyle().Foreground(dim).Render(
-		fmt.Sprintf("MCP Connections (%d)", len(conns))), width)
-	bodyRows := max(0, rows-1)
-	if bodyRows == 0 {
-		return header
-	}
+	bodyRows := max(1, rows)
 	inUse := m.mcpInUse()
 	frames := []rune{'◐', '◓', '◑', '◒'}
 	// Reserve the scrollbar column whether or not the bar is showing, so the
@@ -705,7 +759,7 @@ func (m Model) mcpConnectionsView(width, rows int) string {
 		m.mcpOffset,
 		m.scrollbarThumb(scrollbarMcp),
 	)
-	return header + "\n" + roster
+	return roster
 }
 
 // mcpPageSize is how many connection rows the roster shows at once, below its
