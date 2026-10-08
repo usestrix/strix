@@ -115,7 +115,8 @@ not just "upgrade <vulnerable pkg> to <fixed>".
 ### Usage / reachability analysis (required for every dependency CVE)
 
 For every CVE you are about to report, run a static usage analysis and record
-the result in the structured `reachability` + `reachability_evidence` fields.
+the result in the structured `reachability` + `reachability_evidence` fields,
+and report every usage site you find as a `code_locations` entry (see Reporting).
 The level is an **evidence ladder, never an exploitability verdict** — claim
 only what you proved, and cite the proof. It never changes severity (that is
 `advisory_cvss` alone); it exists so the reader can prioritize.
@@ -220,8 +221,18 @@ findings and rejects empty PoC fields):
   GHSA, look up the mapped CVE; if there is genuinely no CVE, do not report it
   with this tool.
 - There are no PoC fields — `create_dependency_report` does not take
-  `poc_description` / `poc_script_code` / `code_locations`. The proof lives in
-  `description` and `technical_analysis` (scanner output + advisory).
+  `poc_description` / `poc_script_code`. The proof lives in `description` and
+  `technical_analysis` (scanner output + advisory).
+- **You MUST report usage sites in `code_locations`.** Add one entry for each
+  import of the package and each call of an affected symbol that your usage
+  analysis found. Every `file:line` you cite in `reachability_evidence` must
+  also be a `code_locations` entry. Also add the line in `manifest_path` that
+  pins the vulnerable version. Each entry needs the repo-relative `file`, the
+  exact `start_line` / `end_line`, the verbatim `snippet` at those lines, and a
+  short `label` (e.g. "imports js-yaml", "calls yaml.load on CLI input"). Read
+  the real file to confirm the lines; never guess. When the package is
+  `not_imported`, the manifest line is the only entry. If an entry carries
+  `fix_before` / `fix_after`, also fill `fix_verification`.
 - **Always fill the structured dependency fields** (they power the dedicated
   dependency-report card; do not leave them only in free-text):
   - `package_name` — `PkgName` (required).
