@@ -294,7 +294,7 @@ def _extract_text(response: ModelResponse) -> str:
         parts.extend(
             chunk.text
             for chunk in item.content
-            if isinstance(chunk, ResponseOutputText) and chunk.text
+            if isinstance(chunk, ResponseOutputText) and chunk.type == "output_text" and chunk.text
         )
     return "".join(parts)
 
