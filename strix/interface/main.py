@@ -65,6 +65,7 @@ Additional commands:
   strix auth ...           Manage model-subscription sign-in
   strix view [RUN]         View a completed or running scan
   strix completions SHELL  Generate zsh, bash, or fish tab completion
+  strix mcp-server         Serve Strix's tools to an MCP client over stdio
 """
 
 
@@ -467,6 +468,14 @@ def main() -> None:
         from strix.interface.cloud import run_cloud
 
         sys.exit(run_cloud(sys.argv[2:]))
+
+    # `strix mcp-server` serves Strix's tools to an MCP client over stdio. The
+    # client supplies the model, so this path needs no LLM configuration and
+    # skips the scan argument parser entirely.
+    if len(sys.argv) > 1 and sys.argv[1] == "mcp-server":
+        from strix.interface.mcp_server import run_mcp_server
+
+        sys.exit(run_mcp_server(sys.argv[2:]))
 
     start_import_warmup()
 

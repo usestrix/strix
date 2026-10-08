@@ -338,6 +338,29 @@ Strix can connect to Model Context Protocol (MCP) servers you list and expose th
 
 Each server's tools are namespaced by `name`, for example `github_list_issues`. See the [MCP documentation](https://docs.strix.ai/integrations/mcp) for the full schema, tool filtering, and `stdio` servers.
 
+#### Run Strix as an MCP server: `strix mcp-server`
+
+The reverse of the above: expose Strix's own tools to an MCP client such as Claude Code, Cursor, or Zed. The client supplies the model and the orchestration loop, so this mode needs **no `STRIX_LLM` and no `LLM_API_KEY`** — if you already use Claude Code or another coding agent, Strix rides on that subscription. Strix contributes its sandbox container, the HTTP proxy, the skill packs, and the CVSS-scored reporting tools.
+
+Register it with Claude Code:
+
+```bash
+claude mcp add strix -- strix mcp-server
+```
+
+Or add it to any client's MCP config as a `stdio` server whose command is `strix mcp-server`. Then ask the client to test a target — it drives Strix's tools directly. Docker must be running; the sandbox container starts on the first tool call that needs it.
+
+To review a local repository's code, mount it with `--target-path`; it appears **read-only** in the sandbox at `/workspace/<name>` for the shell tools to read:
+
+```bash
+cd /path/to/your-repo
+claude mcp add strix -- strix mcp-server --target-path "$PWD"
+```
+
+Without `--target-path`, the sandbox has no source mounted — good for URL, live-web, and network targets. `--target-path` is repeatable to mount several repos.
+
+This path uses the client's agent loop rather than Strix's tuned agent graph. To run the native graph, use `strix --target ...` with a configured LLM as usual. Only test targets you are authorized to test.
+
 **Recommended models for best results:**
 
 - [Z.ai GLM-5.3 on OpenRouter](https://openrouter.ai/z-ai/glm-5.3) - `openrouter/z-ai/glm-5.3` (the default pick)
