@@ -33,15 +33,26 @@ def _do_finish(
             ),
         }
 
+    report_sections = (
+        ("Executive summary", executive_summary, "Business-level summary for leadership."),
+        ("Methodology", methodology, "Frameworks, scope, and approach."),
+        (
+            "Technical analysis",
+            technical_analysis,
+            "Consolidated findings + systemic themes.",
+        ),
+        (
+            "Recommendations",
+            recommendations,
+            "Prioritized, actionable remediation.",
+        ),
+    )
     errors: list[str] = []
-    if not executive_summary.strip():
-        errors.append("Executive summary cannot be empty")
-    if not methodology.strip():
-        errors.append("Methodology cannot be empty")
-    if not technical_analysis.strip():
-        errors.append("Technical analysis cannot be empty")
-    if not recommendations.strip():
-        errors.append("Recommendations cannot be empty")
+    for section_name, section_text, schema_description in report_sections:
+        if not section_text.strip():
+            errors.append(f"{section_name} cannot be empty")
+        elif " ".join(section_text.split()) == schema_description:
+            errors.append(f"{section_name} cannot be a schema description placeholder")
     if errors:
         return {"success": False, "error": "Validation failed", "errors": errors}
 
