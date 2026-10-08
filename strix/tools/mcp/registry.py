@@ -76,11 +76,6 @@ McpConnectionState = Literal[
 _RETRY_DELAY_SECONDS = 5.0
 
 
-def _consume_task_exception(task: asyncio.Task[Any]) -> None:
-    if not task.cancelled():
-        task.exception()
-
-
 @dataclasses.dataclass
 class McpConnectionEntry:
     """One configured MCP connection a scan may reach, keyed by ``name``.
@@ -221,8 +216,6 @@ class McpConnectionEntry:
                 self._load_catalog(),
                 name=f"mcp-catalog-{self.name}",
             )
-            # A discovery deadline can detach the waiter while this task keeps loading.
-            self._catalog_task.add_done_callback(_consume_task_exception)
         task = self._catalog_task
         try:
             return await asyncio.shield(task)

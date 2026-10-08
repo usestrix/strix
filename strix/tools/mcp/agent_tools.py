@@ -25,7 +25,6 @@ automatically.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -86,14 +85,15 @@ async def list_mcps(ctx: RunContextWrapper) -> dict[str, Any]:
         and (entry.session is None or not entry.session.is_dead)
     ]
     if pending:
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(
+        await asyncio.wait(
+            {
                 asyncio.gather(
                     *(entry.ensure_catalog() for entry in pending),
                     return_exceptions=True,
-                ),
-                timeout=_MCP_DISCOVERY_WAIT_SECONDS,
-            )
+                )
+            },
+            timeout=_MCP_DISCOVERY_WAIT_SECONDS,
+        )
     dead_by_name = {status.name: status.dead for status in registry.statuses()}
     return {
         "connections": [
