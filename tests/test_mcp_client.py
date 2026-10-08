@@ -43,6 +43,7 @@ from strix.tools.mcp import (
     resolve_mcp_call,
     search_mcp_tools,
 )
+from strix.tools.mcp import agent_tools as mcp_agent_tools
 from strix.tools.mcp import client as mcp_client
 from strix.tools.mcp import registry as mcp_registry_mod
 from strix.tools.mcp import session as mcp_session_mod
@@ -482,6 +483,116 @@ async def test_list_mcps_loads_catalog_for_unwarmed_connection(
     assert out["connections"][0]["tool_count"] == 2
     assert out["connections"][0]["state"] == "catalog_ready"
     await registry.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("slow_stage", ["connect", "catalog"])
+@pytest.mark.parametrize("warmup", [False, True])
+async def test_list_mcps_returns_healthy_connections_while_slow_catalog_keeps_loading(
+    monkeypatch: pytest.MonkeyPatch,
+    slow_stage: str,
+    warmup: bool,
+) -> None:
+    release = asyncio.Event()
+    started = asyncio.Event()
+    catalog_calls = 0
+
+    class _SlowServer(FakeMCPServer):
+        async def connect(self) -> None:
+            if slow_stage == "connect":
+                started.set()
+                await release.wait()
+
+        async def list_tools(self, run_context: Any = None, agent: Any = None) -> list[MCPTool]:
+            nonlocal catalog_calls
+            catalog_calls += 1
+            if slow_stage == "catalog":
+                started.set()
+                await release.wait()
+            return await super().list_tools(run_context, agent)
+
+    servers = {
+        "healthy": FakeMCPServer("healthy", [_mcp_tool("read_file")]),
+        "slow": _SlowServer("slow", [_mcp_tool("query")]),
+    }
+    monkeypatch.setattr(
+        mcp_client, "_build_server", lambda config: _built_server(servers[config.name])
+    )
+    monkeypatch.setattr(mcp_agent_tools, "_MCP_DISCOVERY_WAIT_SECONDS", 0.01)
+    registry = McpRegistry()
+    for name in servers:
+        registry.register(McpConnectionRequest(config=_config(name, None)))
+    if warmup:
+        registry.start_warmup()
+    entry = registry.get("slow")
+    assert entry is not None
+    try:
+        out = await asyncio.wait_for(list_mcps.on_invoke_tool(_ctx(registry), "{}"), timeout=1)
+        assert started.is_set()
+        assert out["connections"][0]["tool_count"] == 1
+        assert out["connections"][0]["state"] == "catalog_ready"
+        assert out["connections"][1]["tool_count"] is None
+        assert out["connections"][1]["state"] in {"connecting", "catalog_loading"}
+        assert entry._catalog_task is not None
+        assert not entry._catalog_task.done()
+
+        repeated = await asyncio.wait_for(list_mcps.on_invoke_tool(_ctx(registry), "{}"), timeout=1)
+        assert repeated == out
+        release.set()
+        await asyncio.wait_for(entry.ensure_catalog(), timeout=1)
+        finished = await list_mcps.on_invoke_tool(_ctx(registry), "{}")
+        assert finished["connections"][1]["tool_count"] == 1
+        assert finished["connections"][1]["state"] == "catalog_ready"
+        assert catalog_calls == 1
+    finally:
+        release.set()
+        await registry.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_after_deadline", [False, True])
+async def test_list_mcps_retains_and_cleans_up_background_catalog_tasks(
+    monkeypatch: pytest.MonkeyPatch,
+    fail_after_deadline: bool,
+) -> None:
+    release = asyncio.Event()
+    finished = asyncio.Event()
+    loop_errors: list[dict[str, Any]] = []
+
+    async def load_catalog() -> list[MCPTool]:
+        await release.wait()
+        raise RuntimeError("catalog unavailable")
+
+    registry = McpRegistry()
+    entry = registry.add(
+        name="blocked", server=FakeMCPServer("blocked", []), purpose=None, tool_count=0
+    )
+    assert entry.session is not None
+    monkeypatch.setattr(entry.session, "list_tools", load_catalog)
+    monkeypatch.setattr(mcp_agent_tools, "_MCP_DISCOVERY_WAIT_SECONDS", 0.01)
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: loop_errors.append(context))
+    try:
+        out = await asyncio.wait_for(list_mcps.on_invoke_tool(_ctx(registry), "{}"), timeout=1)
+        assert out["connections"][0]["tool_count"] is None
+        assert entry._catalog_task is not None
+        assert not entry._catalog_task.done()
+        if fail_after_deadline:
+            entry._catalog_task.add_done_callback(lambda _task: finished.set())
+            release.set()
+            await asyncio.wait_for(finished.wait(), timeout=1)
+            assert entry.state == "connected"
+            # Drop the finished task without awaiting it; its error must already be consumed.
+            entry._catalog_task = None
+        else:
+            task = entry._catalog_task
+            await registry.close()
+            assert task.cancelled()
+        assert loop_errors == []
+    finally:
+        await registry.close()
+        loop.set_exception_handler(previous_handler)
 
 
 @pytest.mark.asyncio

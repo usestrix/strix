@@ -25,6 +25,7 @@ automatically.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -47,6 +48,7 @@ def _registry_from_ctx(ctx: RunContextWrapper) -> McpRegistry | None:
 
 
 _NO_CONNECTIONS = "No MCP connections are configured for this run."
+_MCP_DISCOVERY_WAIT_SECONDS = 30.0
 
 
 def _unknown_connection(connection: str, registry: McpRegistry) -> str:
@@ -66,7 +68,9 @@ async def list_mcps(ctx: RunContextWrapper) -> dict[str, Any]:
 
     Read-only. Returns one entry per connection with its ``id`` (the exact name
     you pass to the other MCP tools), ``name``, ``description``, and
-    ``tool_count``. The response does not include tool schemas. Call
+    ``tool_count`` (null while the catalog is unknown). Waits at most 30 seconds
+    for catalogs; unfinished catalogs keep loading in the background.
+    The response does not include tool schemas. Call
     ``search_mcp_tools`` next. Then call ``get_mcp_tool_schema`` for one selected
     tool before you call ``call_mcp``. Returns an empty ``connections`` list when
     the run has no MCP connections.
@@ -82,10 +86,14 @@ async def list_mcps(ctx: RunContextWrapper) -> dict[str, Any]:
         and (entry.session is None or not entry.session.is_dead)
     ]
     if pending:
-        await asyncio.gather(
-            *(entry.ensure_catalog() for entry in pending),
-            return_exceptions=True,
-        )
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(
+                asyncio.gather(
+                    *(entry.ensure_catalog() for entry in pending),
+                    return_exceptions=True,
+                ),
+                timeout=_MCP_DISCOVERY_WAIT_SECONDS,
+            )
     dead_by_name = {status.name: status.dead for status in registry.statuses()}
     return {
         "connections": [
@@ -93,7 +101,7 @@ async def list_mcps(ctx: RunContextWrapper) -> dict[str, Any]:
                 "id": summary.name,
                 "name": summary.name,
                 "description": summary.purpose,
-                "tool_count": summary.tool_count,
+                "tool_count": summary.tool_count if summary.state == "catalog_ready" else None,
                 "dead": dead_by_name.get(summary.name, False),
                 "state": summary.state,
             }
