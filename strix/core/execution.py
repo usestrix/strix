@@ -302,7 +302,7 @@ async def _run_agent_loop(
         raise SubagentBudgetReservedError("scan reached the sub-agent budget reserve")
 
     if reserve_stopped and start_parked and interactive and context.get("parent_id") is None:
-        await coordinator.send(agent_id, _reserve_notice())
+        await coordinator.send(agent_id, _reserve_notice(coordinator.root_finish_tool))
 
     if not (start_parked and interactive):
         with contextlib.suppress(BudgetPausedError):
@@ -642,6 +642,7 @@ async def _run_until_lifecycle(
         input_data = await _append_tool_required_message(
             session=session,
             context=context,
+            root_finish_tool=coordinator.root_finish_tool,
             attempt=recoveries,
             limit=recovery_limit,
             interactive=interactive,
@@ -988,8 +989,9 @@ async def _append_tool_required_message(
     limit: int,
     interactive: bool,
     silent_yield: bool = False,
+    root_finish_tool: str = "finish_scan",
 ) -> list[dict[str, str]]:
-    finish_tool = "finish_scan" if context.get("parent_id") is None else "agent_finish"
+    finish_tool = root_finish_tool if context.get("parent_id") is None else "agent_finish"
     if silent_yield:
         message = (
             "You called wait_for_user without having written anything to the user since "
@@ -1107,7 +1109,7 @@ async def notify_parent_on_terminal(
     )
 
 
-def _reserve_notice() -> dict[str, Any]:
+def _reserve_notice(finish_tool: str) -> dict[str, Any]:
     return {
         "from": "system",
         "type": "budget_reserve_stop",
@@ -1117,7 +1119,7 @@ def _reserve_notice() -> dict[str, Any]:
             "sub-agent is being force-stopped as soon as its in-flight turn completes, and "
             "none will send a completion report. Their confirmed vulnerabilities are "
             "already filed as they were found. Do not wait on any sub-agents and do not "
-            "spawn new ones — wrap up now and call finish_scan."
+            f"spawn new ones — wrap up now and call {finish_tool}."
         ),
     }
 
@@ -1126,7 +1128,7 @@ async def _notify_root_on_budget_reserve(coordinator: AgentCoordinator) -> None:
     root = await coordinator.claim_reserve_notification()
     if root is None:
         return
-    await coordinator.send(root, _reserve_notice())
+    await coordinator.send(root, _reserve_notice(coordinator.root_finish_tool))
 
 
 async def _notify_parent_on_exit(

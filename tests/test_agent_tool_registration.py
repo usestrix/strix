@@ -59,6 +59,15 @@ def test_registered_tools_appear_before_lifecycle_tool() -> None:
     assert child_names[-2:] == ["extra", "agent_finish"]
 
 
+def test_root_ends_with_the_given_finish_tool() -> None:
+    root = factory.build_strix_agent(is_root=True, finish_tool=_tool("finish_pr_review"))
+
+    root_names = [t.name for t in root.tools]
+
+    assert root_names[-1] == "finish_pr_review"
+    assert "finish_scan" not in root_names
+
+
 def test_per_call_extra_tools_stack_with_registry() -> None:
     factory.register_agent_tools(_tool("registered"))
 

@@ -675,6 +675,7 @@ def build_strix_agent(
     extra_tools: Sequence[Tool] | None = None,
     instructions_override: str | None = None,
     supports_images: bool = True,
+    finish_tool: Tool = finish_scan,
 ) -> SandboxAgent[Any]:
     """Build a SandboxAgent for either root or child use.
 
@@ -687,6 +688,7 @@ def build_strix_agent(
             registered via ``register_agent_tools``.
         instructions_override: Use this verbatim as the system prompt instead
             of rendering the built-in scan prompt.
+        finish_tool: The tool that ends the run, given to the root agent.
     """
     if instructions_override is not None:
         instructions = instructions_override
@@ -707,7 +709,7 @@ def build_strix_agent(
         # Yielding to the user is only meaningful when one is attached.
         agent_tools.append(wait_for_user)
     if is_root:
-        tools: list[Tool] = [*_BASE_TOOLS, *agent_tools, finish_scan]
+        tools: list[Tool] = [*_BASE_TOOLS, *agent_tools, finish_tool]
     else:
         tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
     _ensure_unique_tool_names(tools)

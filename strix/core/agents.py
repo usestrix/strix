@@ -71,6 +71,7 @@ class AgentCoordinator:
         self._lock = asyncio.Lock()
         self._snapshot_path: Path | None = None
         self.is_shutting_down = False
+        self.root_finish_tool = "finish_scan"
         self._budget_stopped = False
         self._reserve_stopped = False
         self._budget_paused = False

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from strix.core.agents import AgentCoordinator
 from strix.core.hooks import (
     BudgetExceededError,
     BudgetPausedError,
@@ -333,6 +334,21 @@ async def test_budget_warning_root_directive_distinct_from_subagent() -> None:
     assert "finish_scan" in root and "agent_finish" not in root
     assert "agent_finish" in sub and "finish_scan" not in sub
     assert "confirmed" in sub
+
+
+@pytest.mark.asyncio
+async def test_root_directive_names_the_coordinators_finish_tool() -> None:
+    hooks = ReportUsageHooks(model="test-model", max_turns=100)
+    coordinator = AgentCoordinator()
+    coordinator.root_finish_tool = "finish_pr_review"
+    ctx = _make_warn_context(requests=85, parent_id=None)
+    ctx.context["coordinator"] = coordinator
+
+    items: list[Any] = []
+    await hooks.on_llm_start(ctx, MagicMock(), None, items)
+
+    assert "finish_pr_review" in items[0]["content"]
+    assert "finish_scan" not in items[0]["content"]
 
 
 @pytest.mark.parametrize("parent_id", [None, "root-1"])

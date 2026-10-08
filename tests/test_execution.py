@@ -133,6 +133,27 @@ async def test_reserve_stop_notifies_root_once(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.asyncio
+async def test_reserve_notice_names_the_root_finish_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+    coordinator = AgentCoordinator()
+    coordinator.root_finish_tool = "finish_pr_review"
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child-a", "recon", parent_id="root")
+
+    sent: list[dict[str, Any]] = []
+
+    async def _record(_target_agent_id: str, message: dict[str, Any]) -> bool:
+        sent.append(message)
+        return True
+
+    monkeypatch.setattr(coordinator, "send", _record)
+
+    await _notify_root_on_budget_reserve(coordinator)
+
+    assert "call finish_pr_review" in str(sent[0]["content"])
+    assert "finish_scan" not in str(sent[0]["content"])
+
+
+@pytest.mark.asyncio
 async def test_concurrent_reserve_claims_yield_single_root() -> None:
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)
@@ -1293,6 +1314,21 @@ async def test_interactive_nudge_offers_waiting_without_repeating() -> None:
 
     assert "call wait_for_user" in items[0]["content"]
     assert "do not repeat it" in items[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_nudge_names_the_root_finish_tool() -> None:
+    items = await execution._append_tool_required_message(
+        session=None,
+        context={"parent_id": None},
+        attempt=1,
+        limit=3,
+        interactive=False,
+        root_finish_tool="finish_pr_review",
+    )
+
+    assert "call finish_pr_review" in items[0]["content"]
+    assert "finish_scan" not in items[0]["content"]
 
 
 def _cycle_with_items(
