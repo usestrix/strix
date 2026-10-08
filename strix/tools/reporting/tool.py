@@ -2539,6 +2539,54 @@ def _sandbox_session(ctx: RunContextWrapper) -> Any:
     return inner.get("sandbox_session")
 
 
+def _entry_kind(entry: Any) -> str:
+    kind = getattr(entry, "kind", None)
+    if kind is None:
+        return "file"
+    value = getattr(kind, "value", kind)
+    return str(value).lower()
+
+
+def _entry_matches_path(entry: Any, path: str) -> bool:
+    entry_path = str(getattr(entry, "path", "") or "")
+    if not entry_path:
+        return False
+    wanted = PurePosixPath(path)
+    listed = PurePosixPath(entry_path)
+    return entry_path in {path, wanted.name} or listed.name == wanted.name
+
+
+async def _inspect_workspace_file(session: Any, path: str) -> str | None:
+    """Reject symlinks and oversized files before the sandbox read follows them."""
+    ls = getattr(session, "ls", None)
+    if not callable(ls):
+        return None
+    parent = PurePosixPath(path).parent.as_posix()
+    try:
+        entries = await ls(Path(parent))
+    except Exception as exc:
+        logger.exception("export_markdown_report ls failed")
+        return f"Failed to inspect '{path}' in the sandbox: {exc!s}"
+    entry = next((item for item in entries or [] if _entry_matches_path(item, path)), None)
+    if entry is None:
+        return f"Markdown file not found: {path}"
+    return _reject_workspace_entry(path, entry)
+
+
+def _reject_workspace_entry(path: str, entry: Any) -> str | None:
+    kind = _entry_kind(entry)
+    if kind == "symlink":
+        return f"'{path}' is a symlink; export a regular markdown file inside /workspace"
+    if kind != "file":
+        return f"'{path}' is not a regular markdown file"
+    size = getattr(entry, "size", None)
+    if isinstance(size, int) and size <= 0:
+        return f"Markdown file is empty: {path}"
+    if isinstance(size, int) and size > _MAX_EXPORTED_REPORT_BYTES:
+        return f"Markdown file exceeds {_MAX_EXPORTED_REPORT_BYTES} bytes ({size} bytes)"
+    return None
+
+
 def _export_destination(
     ctx: RunContextWrapper, path: str
 ) -> tuple[Any, Path, str, str] | dict[str, Any]:
@@ -2563,7 +2611,33 @@ def _export_destination(
     return session, report_state.get_run_dir(), workspace_path, name
 
 
+def _read_limited_bytes(stream: Any) -> tuple[bytes | None, str | None]:
+    """Copy at most one extra byte past the export limit, then close ``stream``."""
+    limit = _MAX_EXPORTED_REPORT_BYTES + 1
+    try:
+        chunks: list[bytes] = []
+        remaining = limit
+        while remaining > 0:
+            chunk = stream.read(remaining)
+            if not chunk:
+                break
+            if isinstance(chunk, str):
+                chunk = chunk.encode("utf-8")
+            if not isinstance(chunk, bytes | bytearray):
+                return None, "sandbox read did not return file bytes"
+            chunks.append(bytes(chunk))
+            remaining -= len(chunk)
+        return b"".join(chunks), None
+    finally:
+        close = getattr(stream, "close", None)
+        if callable(close):
+            close()
+
+
 async def _read_workspace_markdown(session: Any, path: str) -> tuple[bytes | None, str | None]:
+    inspect_error = await _inspect_workspace_file(session, path)
+    if inspect_error is not None:
+        return None, inspect_error
     try:
         stream = await session.read(Path(path))
     except FileNotFoundError:
@@ -2571,17 +2645,14 @@ async def _read_workspace_markdown(session: Any, path: str) -> tuple[bytes | Non
     except Exception as exc:
         logger.exception("export_markdown_report read failed")
         return None, f"Failed to read '{path}' from the sandbox: {exc!s}"
-    try:
-        data = stream.read()
-    finally:
-        close = getattr(stream, "close", None)
-        if callable(close):
-            close()
-    if isinstance(data, str):
-        return data.encode("utf-8"), None
-    if isinstance(data, bytes | bytearray):
-        return bytes(data), None
-    return None, "sandbox read did not return file bytes"
+    data, read_error = _read_limited_bytes(stream)
+    if data is None:
+        return None, read_error
+    if len(data) > _MAX_EXPORTED_REPORT_BYTES:
+        return None, (
+            f"Markdown file exceeds {_MAX_EXPORTED_REPORT_BYTES} bytes ({len(data)} bytes)"
+        )
+    return data, None
 
 
 def _markdown_text(path: str, payload: bytes) -> tuple[str | None, str | None]:
@@ -2605,6 +2676,15 @@ async def _export_markdown_report(ctx: RunContextWrapper, path: str) -> dict[str
     if isinstance(ready, dict):
         return ready
     session, run_dir, workspace_path, name = ready
+    destination = run_dir / name
+    if destination.exists():
+        return {
+            "success": False,
+            "error": (
+                f"'{name}' already exists in the host run directory; "
+                "choose another markdown filename"
+            ),
+        }
 
     payload, read_error = await _read_workspace_markdown(session, workspace_path)
     if payload is None:
@@ -2613,7 +2693,6 @@ async def _export_markdown_report(ctx: RunContextWrapper, path: str) -> dict[str
     if text is None:
         return {"success": False, "error": text_error}
 
-    destination = run_dir / name
     try:
         atomic_write_text(destination, text)
     except OSError as exc:
