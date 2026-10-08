@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import json
 import logging
 import os
 import time
@@ -262,6 +263,8 @@ class _TurnGuardModel(Model):
     not covered by the request timeout, which resets on any byte (keepalives
     included). ``LLM_STREAM_IDLE_TIMEOUT`` bounds the gap between events so the
     turn fails instead of hanging, and the existing retry path replays it.
+    ``LLM_STREAM_FIRST_EVENT_TIMEOUT`` and ``LLM_STREAM_TOTAL_TIMEOUT`` bound
+    the first event and the whole stream.
     """
 
     def __init__(
@@ -269,11 +272,15 @@ class _TurnGuardModel(Model):
         inner: Model,
         *,
         max_tool_calls_per_turn: int = 0,
-        stream_idle_timeout: float = 0.0,
+        stream_idle_timeout: float | None = None,
+        first_event_timeout: float | None = None,
+        total_timeout: float | None = None,
     ) -> None:
         self._inner = inner
         self._max_tool_calls_per_turn = max_tool_calls_per_turn
         self._stream_idle_timeout = stream_idle_timeout
+        self._first_event_timeout = first_event_timeout
+        self._total_timeout = total_timeout
 
     def _limiter(self) -> TurnToolCallLimiter:
         return TurnToolCallLimiter(self._max_tool_calls_per_turn)
@@ -360,7 +367,12 @@ class _TurnGuardModel(Model):
             conversation_id=conversation_id,
             prompt=prompt,
         )
-        async for event in _with_idle_timeout(stream, self._stream_idle_timeout):
+        async for event in _with_timeouts(
+            stream,
+            idle=self._stream_idle_timeout,
+            first_event=self._first_event_timeout,
+            total=self._total_timeout,
+        ):
             guarded = _guard_event(event, rewriter, limiter)
             if guarded is not None:
                 yield guarded
@@ -394,26 +406,66 @@ async def _aclose(stream: AsyncIterator[TResponseStreamEvent]) -> None:
             await stream.aclose()
 
 
-async def _with_idle_timeout(
-    stream: AsyncIterator[TResponseStreamEvent], timeout: float
+async def _with_timeouts(
+    stream: AsyncIterator[TResponseStreamEvent],
+    *,
+    idle: float | None = None,
+    first_event: float | None = None,
+    total: float | None = None,
 ) -> AsyncIterator[TResponseStreamEvent]:
-    if timeout <= 0:
-        async for event in stream:
-            yield event
-        return
-
+    """Bound the first event, the gap between events and the whole stream; None is no bound."""
     iterator = stream.__aiter__()
+    started = time.monotonic()
     while True:
+        limits: list[tuple[float, float, str]] = []
+        # Wait until the soonest limit expires: first-event (else idle) until the
+        # first event arrives, then idle; plus whatever is left of the total.
+        if first_event is not None:
+            limits.append((first_event, first_event, "stream_first_event_timeout"))
+        elif idle is not None:
+            limits.append((idle, idle, "stream_idle_timeout"))
+        if total is not None:
+            left = max(0.0, started + total - time.monotonic())
+            limits.append((left, total, "stream_total_timeout"))
         try:
-            event = await asyncio.wait_for(iterator.__anext__(), timeout)
+            if limits:
+                event = await _next_event(iterator, *min(limits))
+            else:
+                event = await iterator.__anext__()
         except StopAsyncIteration:
             return
-        except TimeoutError:
+        except TimeoutError as exc:
             await _aclose(stream)
-            message = f"model stream produced no event for {timeout:.0f}s"
-            logger.warning("%s; abandoning the turn", message)
-            raise TimeoutError(message) from None
+            logger.warning("%s; abandoning the turn", exc)
+            raise
+        first_event = None
         yield event
+
+
+async def _next_event(
+    iterator: AsyncIterator[TResponseStreamEvent], wait: float, limit: float, reason: str
+) -> TResponseStreamEvent:
+    # asyncio.timeout() cancels without a message, so the request log could not
+    # tell this from a shutdown; this is asyncio.timeout() with a message.
+    task = asyncio.current_task()
+    assert task is not None
+    cancelling = task.cancelling()
+    expired = False
+
+    def expire() -> None:
+        nonlocal expired
+        expired = True
+        task.cancel(msg=f"{request_log.CANCEL_REASON_PREFIX}{reason}")
+
+    handle = asyncio.get_running_loop().call_later(wait, expire)
+    try:
+        return await iterator.__anext__()
+    except BaseException as exc:
+        if expired and task.uncancel() <= cancelling and isinstance(exc, asyncio.CancelledError):
+            raise TimeoutError(f"model stream hit {reason} ({limit:.0f}s)") from None
+        raise
+    finally:
+        handle.cancel()
 
 
 def _guard_event(
@@ -550,7 +602,10 @@ class StrixProvider(MultiProvider):
     def get_model(self, model_name: str | None) -> Model:
         llm = load_settings().llm
         slug = codex.subscription_model(model_name)
-        idle_timeout = float(llm.stream_idle_timeout)
+        # The settings use 0 for no bound.
+        idle_timeout = float(llm.stream_idle_timeout) or None
+        first_event_timeout = float(llm.stream_first_event_timeout) or None
+        total_timeout = float(llm.stream_total_timeout) or None
         if slug:
             # The ChatGPT subscription backend is always streamed; it has no
             # non-streaming mode to fall back to, so LLM_DISABLE_STREAMING
@@ -591,11 +646,13 @@ class StrixProvider(MultiProvider):
                 # The wrapper emits its single event only once the whole request
                 # is done, so an idle gap is meaningless here; the request
                 # timeout bounds it instead.
-                idle_timeout = 0.0
+                idle_timeout = first_event_timeout = total_timeout = None
         return _TurnGuardModel(
             model,
             max_tool_calls_per_turn=llm.max_tool_calls_per_turn,
             stream_idle_timeout=idle_timeout,
+            first_event_timeout=first_event_timeout,
+            total_timeout=total_timeout,
         )
 
 
@@ -745,6 +802,11 @@ def _install_openrouter_stream_cost_capture() -> None:
 
     class _StrixOpenRouterStreamingHandler(OpenRouterChatCompletionStreamingHandler):
         def chunk_parser(self, chunk: dict[str, Any]) -> Any:
+            # Before parsing: LiteLLM raises on an error chunk and drops its
+            # top-level ``provider``.
+            request_log.record_upstream_provider(
+                chunk.get("provider"), _openrouter_error_type(chunk.get("error"))
+            )
             stream = super().chunk_parser(chunk)
             usage = chunk.get("usage")
             response_id = chunk.get("id") or getattr(stream, "id", None)
@@ -763,12 +825,22 @@ def _install_openrouter_stream_cost_capture() -> None:
                 json_mode=json_mode,
             )
 
+        def get_error_class(self, error_message: str, status_code: int, headers: Any) -> Any:
+            # A non-2xx reply names the provider in ``error.metadata``.
+            with contextlib.suppress(Exception):
+                error = json.loads(error_message)["error"]
+                request_log.record_upstream_provider(
+                    error["metadata"].get("provider_name"), _openrouter_error_type(error)
+                )
+            return super().get_error_class(error_message, status_code, headers)
+
         def transform_response(self, *args: Any, **kwargs: Any) -> Any:
             # Non-streamed replies (LLM_DISABLE_STREAMING) skip the chunk parser.
             response = super().transform_response(*args, **kwargs)
             raw_response = kwargs.get("raw_response", args[1] if len(args) > 1 else None)
             with contextlib.suppress(Exception):
                 body = raw_response.json()  # type: ignore[union-attr]
+                request_log.record_upstream_provider(body.get("provider"))
                 if body.get("usage"):
                     record_openrouter_provider(body.get("provider"), body["usage"])
             return response
@@ -787,6 +859,14 @@ def _install_openrouter_stream_cost_capture() -> None:
     # time, so overriding the attribute is enough for the subclass to take
     # effect. (type: ignore — mypy rejects reassigning a class attribute.)
     litellm.OpenrouterConfig = _StrixOpenrouterConfig  # type: ignore[misc]
+
+
+def _openrouter_error_type(error: object) -> object:
+    if isinstance(error, dict):
+        metadata = error.get("metadata")
+        if isinstance(metadata, dict):
+            return metadata.get("error_type")
+    return None
 
 
 OPENROUTER_ATTRIBUTION_HEADERS = {
