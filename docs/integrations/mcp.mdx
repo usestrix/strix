@@ -8,6 +8,7 @@ Strix can connect to [Model Context Protocol (MCP)](https://modelcontextprotocol
 A few things it pays off for:
 
 - **A database server.** The agent can read the schema and access policies and see tables left readable without them, rather than guessing from responses.
+- **A web search / research server (e.g. [Parallel Search](https://search.parallel.ai/mcp)).** The agent can look up current CVEs, security advisories, and documentation in real time without needing a Perplexity API key.
 - **A hosting or infrastructure server.** Deployments, domains and environment variable names tell it what is really running, so it tests what exists instead of what it discovered by crawling.
 - **An issue tracker.** Known and accepted risks stop the agent re-reporting findings you already triaged.
 - **A logging server.** Reading logs lets it confirm an exploit attempt actually landed instead of inferring it from a status code.
@@ -22,7 +23,7 @@ Create the directory if it does not exist, then write the file:
 mkdir -p ~/.strix
 ```
 
-Paste the servers you want into `~/.strix/mcp-servers.json`. The example below shows one of each transport: a local filesystem server over `stdio` and a remote GitHub server over `http` with a bearer token:
+Paste the servers you want into `~/.strix/mcp-servers.json`. The example below shows a local filesystem server over `stdio`, a keyless remote web search server (Parallel Search) over `http`, and a remote GitHub server with a bearer token:
 
 ```json
 [
@@ -31,6 +32,12 @@ Paste the servers you want into `~/.strix/mcp-servers.json`. The example below s
     "transport": "stdio",
     "command": "npx",
     "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/project"]
+  },
+  {
+    "name": "parallel_search",
+    "transport": "http",
+    "url": "https://search.parallel.ai/mcp",
+    "notes": "Web search for CVEs, advisories, and documentation via Parallel Search"
   },
   {
     "name": "github",
