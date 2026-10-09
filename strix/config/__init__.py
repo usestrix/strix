@@ -4,8 +4,8 @@ Public surface:
 
 - :class:`Settings` — composite model. Get via :func:`load_settings`.
 - :class:`LlmSettings`, :class:`RuntimeSettings`, :class:`TelemetrySettings`,
-  :class:`IntegrationSettings` — sub-models, attribute-accessed off
-  ``Settings``.
+  :class:`IntegrationSettings`, :class:`CaidoSettings` — sub-models,
+  attribute-accessed off ``Settings``.
 - :func:`load_settings` — memoized resolve (env > JSON file > defaults).
 - :func:`apply_config_override` — switch the JSON source to a custom path.
 - :func:`persist_current` — write currently-set env vars to the active file.
@@ -17,6 +17,7 @@ from strix.config.loader import (
     persist_current,
 )
 from strix.config.settings import (
+    CaidoSettings,
     ContextSettings,
     DedupeSettings,
     IntegrationSettings,
@@ -28,6 +29,7 @@ from strix.config.settings import (
 
 
 __all__ = [
+    "CaidoSettings",
     "ContextSettings",
     "DedupeSettings",
     "IntegrationSettings",

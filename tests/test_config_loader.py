@@ -37,6 +37,9 @@ _LLM_ENV_KEYS = [
     "STRIX_RUNTIME_BACKEND",
     # TelemetrySettings
     "STRIX_TELEMETRY",
+    "CAIDO_LOGIN",
+    "CAIDO_PAT",
+    "CAIDO_REGISTRATION_KEY",
 ]
 
 

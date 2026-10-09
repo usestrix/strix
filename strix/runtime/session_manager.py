@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from agents.sandbox.entries import BaseEntry, LocalDir
 from agents.sandbox.manifest import Environment, Manifest
 
-from strix.config import load_settings
+from strix.config import CaidoSettings, load_settings
 from strix.runtime.backends import backend_supports_bind_mounts, get_backend
 from strix.runtime.caido_bootstrap import bootstrap_caido
 from strix.runtime.caido_handle import CaidoBootstrapHandle
@@ -59,6 +59,18 @@ def _host_identity_env() -> dict[str, str]:
     # Bind-mount ownership only needs mapping on Linux, where the container uid
     # must match the host's.
     return {"STRIX_HOST_UID": str(os.getuid()), "STRIX_HOST_GID": str(os.getgid())}
+
+
+def _registration_key_env(caido: CaidoSettings) -> dict[str, str]:
+    """Pass the registration key only when login is on.
+
+    ``CAIDO_PAT`` stays on the host. ``caido-cli`` reads
+    ``CAIDO_REGISTRATION_KEY`` from the container environment and claims this
+    ephemeral instance.
+    """
+    if not caido.login or not caido.registration_key:
+        return {}
+    return {"CAIDO_REGISTRATION_KEY": caido.registration_key}
 
 
 def build_bind_mounts(local_sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -283,7 +295,8 @@ async def create_or_reuse(
         logger.info("Reusing existing sandbox session for scan %s", scan_id)
         return cached
 
-    backend_name = load_settings().runtime.backend
+    settings = load_settings()
+    backend_name = settings.runtime.backend
     backend = get_backend(backend_name)
 
     if backend_supports_bind_mounts(backend_name):
@@ -299,8 +312,8 @@ async def create_or_reuse(
     # Caido runs as an in-container sidecar; HTTP(S) traffic from any
     # process started via ``session.exec`` (the SDK's Shell tool, etc.)
     # picks up these env vars automatically. ``NO_PROXY`` keeps the
-    # agent-browser CDP daemon's localhost traffic from looping back
-    # through Caido.
+    # agent-browser CDP daemon's localhost traffic, and ``caido-cli``'s
+    # calls to ``api.caido.io``, from looping back through Caido.
     container_caido_url = f"http://127.0.0.1:{_CONTAINER_CAIDO_PORT}"
     manifest = Manifest(
         entries=entries,
@@ -312,7 +325,8 @@ async def create_or_reuse(
                 "http_proxy": container_caido_url,
                 "https_proxy": container_caido_url,
                 "ALL_PROXY": container_caido_url,
-                "NO_PROXY": "localhost,127.0.0.1",
+                "NO_PROXY": "localhost,127.0.0.1,api.caido.io",
+                **_registration_key_env(settings.caido),
             },
         ),
     )
@@ -355,6 +369,7 @@ async def create_or_reuse(
                 session,
                 host_url=host_caido_url,
                 container_url=container_caido_url,
+                pat=settings.caido.pat if settings.caido.login else None,
             ),
             name=f"caido-bootstrap-{scan_id}",
         )

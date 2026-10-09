@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -288,14 +288,14 @@ wheels = [
 
 [[package]]
 name = "caido-server-auth"
-version = "0.1.2"
+version = "0.1.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "gql", extra = ["aiohttp", "websockets"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/69/be/58cc2eaf97f729124b8939a9ea1c1a664b2d96dce0448788df073fca3ac9/caido_server_auth-0.1.2.tar.gz", hash = "sha256:eb2c25e9de15062760b68112f5d8e9ad63eeb1322518b90c1a0119a69a7524a4", size = 6559, upload-time = "2026-03-14T20:41:55.119Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8d/9f/85674f74aa3ac05124c8bcd73315f6b4fdb606c702683baf43229f0b9928/caido_server_auth-0.1.3.tar.gz", hash = "sha256:5eeaa54bd5f8cb840c44afa31cba628aecccc845c9652713ed1028747c31b070", size = 6723, upload-time = "2026-10-05T19:46:10.529Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/76/7b/14d192151bcc3c1624cfb488c59ec03e96c1009d015089d729c1aecd26e9/caido_server_auth-0.1.2-py3-none-any.whl", hash = "sha256:40c6cd3728e24cdff402c4efa5d8f55bf6e6cc73ac0169bdea1ad1e34faff8ff", size = 10197, upload-time = "2026-03-14T20:41:54.091Z" },
+    { url = "https://files.pythonhosted.org/packages/51/bc/5d6d7ab9c42f92319544bf4ddb7c1fc3f2f9808c7b84f88867ea86bf894e/caido_server_auth-0.1.3-py3-none-any.whl", hash = "sha256:9d7d4eac99f9b811d9771b9c856a67229fc1ddad0d887cc16792c1c98f20e7d9", size = 10366, upload-time = "2026-10-05T19:46:09.745Z" },
 ]
 
 [[package]]

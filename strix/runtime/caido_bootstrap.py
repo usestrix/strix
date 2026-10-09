@@ -1,24 +1,32 @@
 """Caido client bootstrap.
 
 The Caido CLI runs as an in-container sidecar listening on
-``127.0.0.1:48080`` *inside* the sandbox. We grab a guest token by
-``session.exec()``-ing curl from inside the container, then construct
-a host-side :class:`caido_sdk_client.Client` against the runtime's
-exposed-port URL for all subsequent SDK calls.
+``127.0.0.1:48080`` *inside* the sandbox. Guest mode grabs a token by
+``session.exec()``-ing curl from inside the container. Account login uses a
+personal access token. An in-memory :class:`TokenCache` captures the access
+token the SDK saves after login and refresh, and publishes only that token
+into the container for in-sandbox ``caido_api``. Nothing is written on the host.
+The host-side :class:`caido_sdk_client.Client` always talks to the runtime's
+exposed-port URL.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import io
 import json
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+from strix.tools.proxy.caido_api import ACCESS_TOKEN_PATH
 
 
 if TYPE_CHECKING:
     from agents.sandbox.session import BaseSandboxSession
     from caido_sdk_client import Client
+    from caido_sdk_client.auth.cache.types import CachedToken
 
 
 logger = logging.getLogger(__name__)
@@ -78,29 +86,72 @@ async def _login_as_guest(
     raise RuntimeError(f"loginAsGuest failed after {attempts} attempts: {last_err}")
 
 
+class _RunTokenCache:
+    """Capture the access token the SDK saves. Never reload it.
+
+    ``load`` stays empty so each ephemeral instance logs in with the PAT.
+    ``save`` runs after login and again after a refresh.
+    """
+
+    def __init__(self, session: BaseSandboxSession) -> None:
+        self._session = session
+
+    async def load(self) -> CachedToken | None:
+        return None
+
+    async def save(self, token: CachedToken) -> None:
+        access_token = token.access_token.strip()
+        if not access_token:
+            raise RuntimeError("Caido login returned no access token")
+        await self._session.write(Path(ACCESS_TOKEN_PATH), io.BytesIO(access_token.encode()))
+
+    async def clear(self) -> None:
+        return None
+
+
 async def bootstrap_caido(
     session: BaseSandboxSession,
     *,
     host_url: str,
     container_url: str,
+    pat: str | None = None,
 ) -> Client:
-    """Connect to the in-container Caido sidecar and select a fresh project."""
+    """Connect to the in-container Caido sidecar and select a fresh project.
+
+    ``pat`` selects account login via :class:`PATAuthOptions` and an in-memory
+    cache. Omit it for the guest token flow.
+    """
     # The Caido SDK (and its generated GraphQL schema) is slow to import and is
     # only needed once a sandbox is actually being bootstrapped, so it is
     # imported here rather than at module scope.
-    from caido_sdk_client import Client, TokenAuthOptions
     from caido_sdk_client.types import CreateProjectOptions
 
     logger.info("Bootstrapping Caido client (host=%s, container=%s)", host_url, container_url)
 
-    access_token = await _login_as_guest(session, container_url=container_url)
+    if pat:
+        from caido_sdk_client import Client, ConsoleLogger, PATAuthOptions
 
-    client = Client(host_url, auth=TokenAuthOptions(token=access_token))
+        client = Client(
+            host_url,
+            auth=PATAuthOptions(pat=pat, cache=_RunTokenCache(session)),
+            logger=ConsoleLogger(),
+        )
+    else:
+        from caido_sdk_client import Client, ConsoleLogger, TokenAuthOptions
+
+        access_token = await _login_as_guest(session, container_url=container_url)
+        client = Client(host_url, auth=TokenAuthOptions(token=access_token), logger=ConsoleLogger())
     try:
         # connect() is inside the guard as well: a cancellation there (scan
         # teardown while the bootstrap is still in flight) would otherwise
         # leave the half-connected transport behind.
-        await client.connect()
+        try:
+            await client.connect()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("Caido client connect failed: %s", exc)
+            raise
         project = await client.project.create(
             CreateProjectOptions(name="sandbox", temporary=True),
         )
