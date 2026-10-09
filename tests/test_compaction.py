@@ -6,6 +6,8 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from agents.extensions.models.litellm_model import InternalChatCompletionMessage
+from agents.models.chatcmpl_converter import Converter
 from litellm.exceptions import BadRequestError, ContextWindowExceededError, RateLimitError
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
@@ -240,6 +242,29 @@ async def test_summarize_routes_through_provider_with_settings(
     settings = captured["model_settings"]
     assert settings.extra_headers == {"X-Feature-Key": "svc"}
     assert settings.max_tokens == 64
+
+
+@pytest.mark.asyncio
+async def test_summarize_falls_back_to_reasoning_when_no_output_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_budget(monkeypatch, keep_tokens=30, window=4_000)
+    message = InternalChatCompletionMessage(
+        role="assistant", content=None, reasoning_content="REASONED SUMMARY"
+    )
+    response = SimpleNamespace(output=Converter.message_to_output_items(message))
+
+    class FakeModel:
+        async def get_response(self, **_kwargs: Any) -> Any:
+            return response
+
+    class FakeProvider:
+        def get_model(self, _model_name: str | None) -> Any:
+            return FakeModel()
+
+    monkeypatch.setattr(compaction, "StrixProvider", FakeProvider)
+
+    assert await compaction._summarize("m", "p", 64) == "REASONED SUMMARY"
 
 
 def test_fit_to_tokens_truncates_oversized_text(monkeypatch: pytest.MonkeyPatch) -> None:
