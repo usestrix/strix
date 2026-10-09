@@ -355,3 +355,17 @@ func TestLonePanelHasNoControls(t *testing.T) {
 		t.Fatalf("controls should return once a second panel exists")
 	}
 }
+
+func TestStatsPanelListsTargets(t *testing.T) {
+	m := panelsModel(t)
+	m.snapshot.Targets = []string{"https://example.com", "./app"}
+	m.snapshot.TargetCount = 2
+	m.resizeViewport()
+	_, sidebarWidth, _, _ := m.layout()
+	view := ansi.Strip(m.sidebarView(sidebarWidth, m.height))
+	for _, want := range []string{"Targets 2", "▸ https://example.com", "▸ ./app"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("sidebar missing %q:\n%s", want, view)
+		}
+	}
+}

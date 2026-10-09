@@ -421,7 +421,7 @@ func (m Model) setupComposer(width int) string {
 	inner := max(1, width-4)
 	body := m.highlightInputSelection(m.input.View())
 	body += "\n\n" + m.setupSummaryView(inner)
-	if targets := m.setupTargetsView(inner); targets != "" {
+	if targets := m.targetsView(inner); targets != "" {
 		body += "\n" + targets
 	}
 	return lipgloss.NewStyle().Width(max(1, width-2)).Padding(0, 1).
@@ -454,8 +454,8 @@ func (m Model) setupSummaryView(width int) string {
 	return truncate(strings.Join(chips, render.Dim().Render(" · ")), max(1, width))
 }
 
-// setupTargetsView lists what the scan is pointed at, once anything is queued.
-func (m Model) setupTargetsView(width int) string {
+// targetsView lists what the scan is pointed at, once anything is queued.
+func (m Model) targetsView(width int) string {
 	if len(m.snapshot.Targets) == 0 {
 		return ""
 	}
