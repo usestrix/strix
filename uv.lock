@@ -2391,6 +2391,7 @@ source = { editable = "." }
 dependencies = [
     { name = "boto3" },
     { name = "caido-sdk-client" },
+    { name = "certifi" },
     { name = "cryptography" },
     { name = "cvss" },
     { name = "docker" },
@@ -2406,6 +2407,7 @@ dependencies = [
     { name = "reportlab" },
     { name = "requests" },
     { name = "rich" },
+    { name = "urllib3" },
 ]
 
 [package.dev-dependencies]
@@ -2425,6 +2427,7 @@ dev = [
 requires-dist = [
     { name = "boto3", specifier = ">=1.28.0" },
     { name = "caido-sdk-client", specifier = ">=0.2.0" },
+    { name = "certifi", specifier = ">=2024.2.2" },
     { name = "cryptography", specifier = ">=48.0.1,<49" },
     { name = "cvss", specifier = ">=3.2" },
     { name = "docker", specifier = ">=7.1.0" },
@@ -2440,6 +2443,7 @@ requires-dist = [
     { name = "reportlab", specifier = ">=4.0" },
     { name = "requests", specifier = ">=2.32.0" },
     { name = "rich" },
+    { name = "urllib3", specifier = ">=2.0.0" },
 ]
 
 [package.metadata.requires-dev]
