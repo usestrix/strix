@@ -356,16 +356,35 @@ func TestLonePanelHasNoControls(t *testing.T) {
 	}
 }
 
-func TestStatsPanelListsTargets(t *testing.T) {
+func TestTargetsBoxSitsUnderViewer(t *testing.T) {
 	m := panelsModel(t)
 	m.snapshot.Targets = []string{"https://example.com", "./app"}
 	m.snapshot.TargetCount = 2
 	m.resizeViewport()
 	_, sidebarWidth, _, _ := m.layout()
-	view := ansi.Strip(m.sidebarView(sidebarWidth, m.height))
-	for _, want := range []string{"Targets 2", "▸ https://example.com", "▸ ./app"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("sidebar missing %q:\n%s", want, view)
+	rows := strings.Split(ansi.Strip(m.sidebarView(sidebarWidth, m.height)), "\n")
+	if len(rows) != m.height {
+		t.Fatalf("sidebar renders %d rows, want %d", len(rows), m.height)
+	}
+	top := m.viewerHeight()
+	for i, want := range []string{"Targets 2", "▸ https://example.com", "▸ ./app"} {
+		if !strings.Contains(rows[top+1+i], want) {
+			t.Fatalf("row %d missing %q:\n%s", top+1+i, want, strings.Join(rows, "\n"))
 		}
+	}
+	if !strings.Contains(rows[panelRectOf(t, m, panelAgents).top+1], "Agents") {
+		t.Fatalf("agents panel not where its rect says:\n%s", strings.Join(rows, "\n"))
+	}
+}
+
+func TestTargetsBoxDropsOnShortTerminal(t *testing.T) {
+	m := panelsModel(t)
+	m.height = 19
+	m.snapshot.Targets = []string{"a", "b", "c", "d", "e"}
+	m.snapshot.TargetCount = 5
+	m.resizeViewport()
+	_, sidebarWidth, _, _ := m.layout()
+	if got := lipgloss.Height(m.sidebarView(sidebarWidth, m.height)); got > m.height {
+		t.Fatalf("sidebar renders %d rows on a %d-row terminal", got, m.height)
 	}
 }
