@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -53,6 +53,11 @@ class LlmSettings(BaseSettings):
     extra_headers: dict[str, str] | None = Field(
         default=None,
         alias="LLM_EXTRA_HEADERS",
+        repr=False,
+    )
+    extra_body: dict[str, Any] | None = Field(
+        default=None,
+        alias="LLM_EXTRA_BODY",
         repr=False,
     )
     reasoning_effort: ReasoningEffort = Field(default="high", alias="STRIX_REASONING_EFFORT")
@@ -108,6 +113,11 @@ class DedupeSettings(BaseSettings):
     extra_headers: dict[str, str] | None = Field(
         default=None,
         alias="DEDUPE_LLM_EXTRA_HEADERS",
+        repr=False,
+    )
+    extra_body: dict[str, Any] | None = Field(
+        default=None,
+        alias="DEDUPE_LLM_EXTRA_BODY",
         repr=False,
     )
 

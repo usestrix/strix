@@ -250,6 +250,7 @@ def make_model_settings(
     request_timeout: float | None = None,
     prompt_cache: bool = True,
     extra_headers: dict[str, str] | None = None,
+    extra_body: dict[str, Any] | None = None,
     has_tools: bool = True,
 ) -> ModelSettings:
     headers = _request_headers(model_name, extra_headers)
@@ -259,13 +260,16 @@ def make_model_settings(
         include_usage=True,
         extra_args=request_timeout_extra_args(request_timeout),
         extra_headers=headers,
+        extra_body=dict(extra_body) if extra_body else None,
     )
     if (
         reasoning_effort is not None
         and reasoning_effort != "none"
         and model_supports_reasoning(model_name)
     ):
-        model_settings = model_settings.resolve(_reasoning_settings(reasoning_effort))
+        model_settings = model_settings.resolve(
+            _reasoning_settings(reasoning_effort, extra_body),
+        )
     if force_required_tool_choice and _accepts_required_tool_choice(model_name):
         model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
 
@@ -290,7 +294,9 @@ def _request_headers(
     return headers or None
 
 
-def _reasoning_settings(effort: ReasoningEffort) -> ModelSettings:
+def _reasoning_settings(
+    effort: ReasoningEffort, extra_body: dict[str, Any] | None = None
+) -> ModelSettings:
     """``max`` is not in the OpenAI SDK's ``Reasoning.effort`` enum, so send it as
     a raw body field instead — also keeping it clear of LiteLLM's DeepSeek mapping,
     which collapses every ``reasoning_effort`` level to plain thinking-enabled.
@@ -298,11 +304,13 @@ def _reasoning_settings(effort: ReasoningEffort) -> ModelSettings:
 
     It goes in ``extra_body``, the field every model implementation forwards as the
     request's ``extra_body``; the same value under ``extra_args`` collides with that
-    keyword and raises before a request is ever sent.
+    keyword and raises before a request is ever sent. ``resolve`` replaces
+    ``extra_body`` wholesale, so the user's ``LLM_EXTRA_BODY`` fields are carried
+    over, with ``reasoning_effort`` taking precedence.
     """
     if effort != "max":
         return ModelSettings(reasoning=Reasoning(effort=effort))
-    return ModelSettings(extra_body={"reasoning_effort": "max"})
+    return ModelSettings(extra_body={**(extra_body or {}), "reasoning_effort": "max"})
 
 
 def _prompt_cache_extra_args(model_name: str) -> dict[str, Any] | None:

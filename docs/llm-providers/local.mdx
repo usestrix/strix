@@ -68,6 +68,21 @@ export LLM_API_KEY="your-bearer-token"          # sent as Authorization: Bearer 
 export LLM_EXTRA_HEADERS='{"X-Feature-Key":"value","X-Tenant":"acme"}'
 ```
 
+### Extra request-body fields
+
+Some provider parameters go in the request body rather than a header, and
+Strix has no dedicated setting for them. Set them with `LLM_EXTRA_BODY` as a
+JSON object — they are merged into the body of every request to the model. For example, to
+use OpenAI's cheaper flex processing and attribute requests to a user with a
+safety identifier (a hash, never a raw email):
+
+```bash
+export LLM_EXTRA_BODY='{"service_tier":"flex","safety_identifier":"9f86d081884c7d65"}'
+```
+
+Fields aren't validated, so use only fields your provider accepts, and don't
+set fields Strix already sends, such as `model`, `messages` or `stream`.
+
 For endpoints behind a private CA, point Strix at your certificate bundle with
 the standard `SSL_CERT_FILE=/path/to/ca-bundle.pem` — never disable TLS
 verification against a real endpoint.

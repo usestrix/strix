@@ -164,12 +164,13 @@ async def warm_up_llm() -> None:
             raw_model = dedupe_model
             deduper = resolve_dedupe_model(settings.dedupe, dedupe_model)
             # A dedicated dedupe model may route to another provider, which must
-            # never receive the main endpoint's headers; it has its own
-            # DEDUPE_LLM_EXTRA_HEADERS.
+            # never receive the main endpoint's headers or body fields; it has
+            # its own DEDUPE_LLM_EXTRA_HEADERS and DEDUPE_LLM_EXTRA_BODY.
             await preflight_request(
                 deduper,
                 model_name=dedupe_model,
                 extra_headers=settings.dedupe.extra_headers,
+                extra_body=settings.dedupe.extra_body,
                 timeout=llm.preflight_timeout,
                 api_base_setting="DEDUPE_LLM_API_BASE",
             )

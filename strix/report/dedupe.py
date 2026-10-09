@@ -39,11 +39,13 @@ def _dedupe_model_settings(
         model_name=model_name,
         force_required_tool_choice=False,
         request_timeout=request_timeout,
-        # The main model's headers apply only when dedupe falls back to the main
-        # model; a dedicated dedupe model may route to another provider, which
-        # must never receive the main endpoint's credentials. A dedicated model
-        # gets its own DEDUPE_LLM_EXTRA_HEADERS instead.
+        # The main model's headers and body fields apply only when dedupe falls
+        # back to the main model; a dedicated dedupe model may route to another
+        # provider, which must never receive the main endpoint's credentials or
+        # identifiers. A dedicated model gets its own DEDUPE_LLM_EXTRA_HEADERS
+        # and DEDUPE_LLM_EXTRA_BODY instead.
         extra_headers=dedupe.extra_headers if dedupe.model else llm.extra_headers,
+        extra_body=dedupe.extra_body if dedupe.model else llm.extra_body,
         has_tools=False,
     )
 
