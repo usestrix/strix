@@ -50,15 +50,19 @@ _EXTRA_FILE_MODE = 0o644
 
 
 def _host_identity_env() -> dict[str, str]:
-    # Read the platform through a local so it is not narrowed to whichever OS is
-    # type-checking: comparing sys.platform directly makes one of these branches
-    # statically dead, and which one flips between Linux and macOS.
-    platform_name: str = sys.platform
-    if platform_name != "linux":
-        return {}
-    # Bind-mount ownership only needs mapping on Linux, where the container uid
-    # must match the host's.
-    return {"STRIX_HOST_UID": str(os.getuid()), "STRIX_HOST_GID": str(os.getgid())}
+    # The outer guard is a real platform check, so mypy narrows it under every
+    # --platform it is asked about and `os.getuid` resolves where it exists.
+    if sys.platform != "win32":
+        # Inside it, read the platform through a local so it is not narrowed to
+        # whichever OS is type-checking: comparing sys.platform directly makes
+        # one of these branches statically dead, and which one flips between
+        # Linux and macOS.
+        platform_name: str = sys.platform
+        if platform_name == "linux":
+            # Bind-mount ownership only needs mapping on Linux, where the
+            # container uid must match the host's.
+            return {"STRIX_HOST_UID": str(os.getuid()), "STRIX_HOST_GID": str(os.getgid())}
+    return {}
 
 
 def build_bind_mounts(local_sources: list[dict[str, Any]]) -> list[dict[str, Any]]:

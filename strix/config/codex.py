@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import secrets
+import sys
 import threading
 import time
 import urllib.parse
@@ -103,27 +104,52 @@ def logout() -> None:
         AUTH_PATH.unlink()
 
 
+# `fcntl` exists only on POSIX. Resolve it once behind a platform guard, which
+# mypy narrows on every `--platform` it is asked to check, rather than at the
+# call sites where it would need a per-platform ignore.
+if sys.platform != "win32":
+    import fcntl
+
+    _HAS_FILE_LOCKING = True
+
+    def _lock_exclusive(descriptor: int) -> None:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+
+    def _unlock(descriptor: int) -> None:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+
+else:
+    _HAS_FILE_LOCKING = False
+
+    def _lock_exclusive(descriptor: int) -> None:
+        """Windows has no advisory file lock; the in-process lock still holds."""
+
+    def _unlock(descriptor: int) -> None:
+        """Windows has no advisory file lock; the in-process lock still holds."""
+
+
 @contextlib.contextmanager
 def _refresh_guard() -> Iterator[None]:
     """Serialize token refresh within (lock) and across (flock) Strix processes,
     so concurrent runs can't both spend the single-use refresh token."""
     with _refresh_lock:
+        if not _HAS_FILE_LOCKING:
+            yield
+            return
         try:
-            import fcntl
-
             lock_path = AUTH_PATH.with_suffix(".lock")
             lock_path.parent.mkdir(parents=True, exist_ok=True)
             handle = lock_path.open("w")
-        except (ImportError, OSError):
+        except OSError:
             yield
             return
         try:
             with contextlib.suppress(OSError):
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                _lock_exclusive(handle.fileno())
             yield
         finally:
             with contextlib.suppress(OSError):
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                _unlock(handle.fileno())
             handle.close()
 
 
