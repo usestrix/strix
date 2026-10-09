@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ---------------------------------------------------------------------------
@@ -37,25 +39,23 @@ func NumericValue(v any) (float64, bool) {
 	return 0, false
 }
 
+// truncStr and firstN keep the first n display columns of s, without splitting
+// a multi-byte rune. Kept as two names since callers use both spellings for the
+// same "keep the start" truncation.
 func truncStr(s string, n int) string {
-	if len(s) > n {
-		return s[:n]
-	}
-	return s
+	return ansi.Truncate(s, n, "")
 }
 
+// lastN keeps the last n display columns of s, without splitting a multi-byte rune.
 func lastN(s string, n int) string {
-	if len(s) > n {
-		return s[len(s)-n:]
+	if w := ansi.StringWidth(s); w > n {
+		return ansi.TruncateLeft(s, w-n, "")
 	}
 	return s
 }
 
 func firstN(s string, n int) string {
-	if len(s) > n {
-		return s[:n]
-	}
-	return s
+	return ansi.Truncate(s, n, "")
 }
 
 func joinTrunc(items []any, max, limit int) string {
