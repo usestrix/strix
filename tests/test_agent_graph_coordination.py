@@ -13,6 +13,7 @@ import json
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+from agents.memory import SQLiteSession
 from agents.tool_context import ToolContext
 
 from strix.core.agents import AgentCoordinator
@@ -162,8 +163,12 @@ async def test_wait_returns_at_once_when_no_child_can_answer() -> None:
 
 
 @pytest.mark.asyncio
-async def test_wait_delivers_a_pending_report_before_checking_liveness() -> None:
+async def test_wait_delivers_a_pending_report_before_checking_liveness(
+    tmp_path: Path,
+) -> None:
     coordinator = await _graph(interactive=False)
+    session = SQLiteSession("root", tmp_path / "agents.db")
+    await coordinator.attach_runtime("root", session=session)
     await coordinator.send("root", {"from": "child", "type": "completion", "content": "done"})
     await coordinator.set_status("child", "completed")
 
