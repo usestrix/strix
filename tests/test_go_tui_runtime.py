@@ -878,6 +878,50 @@ async def test_scan_passes_max_turns_and_budget(monkeypatch: pytest.MonkeyPatch)
 
 
 @pytest.mark.asyncio
+async def test_quitting_twice_lets_the_sandbox_teardown_finish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl+Q quits twice: the app.quit command and run()'s finally."""
+    runtime = GoTuiRuntime(args())
+    runtime.scan_config = {"run_name": "test-run"}
+    torn_down: list[str] = []
+    scanning = asyncio.Event()
+    tearing_down = asyncio.Event()
+    docker_replied = asyncio.Event()
+
+    async def run_scan(**kwargs: Any) -> None:
+        try:
+            scanning.set()
+            await asyncio.sleep(3600)
+        finally:
+            # session_manager.cleanup() waits on the docker daemon here
+            tearing_down.set()
+            await docker_replied.wait()
+            torn_down.append(kwargs["scan_id"])
+
+    monkeypatch.setattr(
+        go_tui,
+        "load_settings",
+        lambda: SimpleNamespace(runtime=SimpleNamespace(image="test-image")),
+    )
+    monkeypatch.setattr(go_tui, "run_strix_scan", run_scan)
+    monkeypatch.setattr(go_tui, "read_workspace_files", lambda _value: [])
+
+    runtime.start_scan()
+    await scanning.wait()
+
+    command_quit = asyncio.create_task(runtime.quit())
+    await tearing_down.wait()
+    final_quit = asyncio.create_task(runtime.quit())
+    for _ in range(3):
+        await asyncio.sleep(0)
+    docker_replied.set()
+    await asyncio.gather(command_quit, final_quit)
+
+    assert torn_down == ["test-run"], "the sandbox container was left running"
+
+
+@pytest.mark.asyncio
 async def test_setup_preflight_failure_does_not_start_scan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
