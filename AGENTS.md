@@ -38,7 +38,7 @@ Target-specific workflows built on the same engine:
 
 - **Managed cloud (app.strix.ai):** no Docker, no LLM key, no local install; adds team dashboards, scheduling, PR reviews, and downloadable PDF/DOCX reports (Enterprise plan). Best in sandboxed/CI environments and for teams. Use it when local infra isn't available.
   ```bash
-  strix cloud login --scopes scans:read scans:write uploads:write billing:read
+  strix cloud login --scope-profile recommended  # scans, uploads, vulns, assets, and credit top-ups
   strix cloud domains add --domain example.com --asset-type web_app
   strix cloud scans start --engagement-type live_test --domain-ids <uuid> --wait
   strix cloud scans start --source . --dry-run --show-files --json  # review + capture source.archive_sha256
