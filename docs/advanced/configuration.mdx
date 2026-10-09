@@ -104,8 +104,26 @@ affecting the agents that do the actual testing.
 </ParamField>
 
 <ParamField path="STRIX_WEB_SEARCH_PROVIDER" default="auto" type="string">
-  Web search provider: `auto`, `perplexity`, or `exa`. With `auto`, Strix uses Exa when `EXA_API_KEY` is set, and Perplexity otherwise. Set an explicit provider to pin one when you configure both keys.
+  Web search provider: `auto`, `perplexity`, `exa`, or `parallel`. With `auto`, Strix uses Exa when `EXA_API_KEY` is set, and Perplexity otherwise. Set an explicit provider to pin one. Parallel is opt-in and must be selected explicitly.
 </ParamField>
+
+<ParamField path="PARALLEL_API_KEY" type="string">
+  API key for [Parallel Search](https://docs.parallel.ai/search/search-quickstart).
+  Set `STRIX_WEB_SEARCH_PROVIDER=parallel` to use it for the built-in `web_search` tool.
+  Requests use `/v1/search` in `fast` mode, returning up to five source URLs with
+  relevant excerpts. Excerpts are shortened to keep output within 12,000 characters
+  plus a truncation notice. Source titles and URLs are always preserved, even if
+  those headers alone exceed the budget.
+  Queries may contain up to 5,000 characters; the full query is the search objective,
+  with its first 200 characters also supplied as a search query.
+  This uses the authenticated API, not the free Search MCP. `web_get_contents`
+  remains Exa-only and requires `EXA_API_KEY`.
+</ParamField>
+
+```bash
+export STRIX_WEB_SEARCH_PROVIDER="parallel"
+export PARALLEL_API_KEY="your-parallel-api-key"
+```
 
 <ParamField path="STRIX_EXA_SEARCH_TYPE" default="auto" type="string">
   Exa search mode: `auto`, `fast`, `instant`, `deep-lite`, `deep`, or `deep-reasoning`. Lower modes return results faster. Higher modes plan across more steps and take more time. This setting applies only to the Exa provider.

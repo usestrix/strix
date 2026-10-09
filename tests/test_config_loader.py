@@ -31,6 +31,7 @@ _LLM_ENV_KEYS = [
     "LLM_TIMEOUT",
     "PERPLEXITY_API_KEY",
     "EXA_API_KEY",
+    "PARALLEL_API_KEY",
     "STRIX_WEB_SEARCH_PROVIDER",
     # RuntimeSettings
     "STRIX_IMAGE",
@@ -91,6 +92,30 @@ def test_read_json_overrides_maps_exa_and_provider(tmp_path: Path) -> None:
     assert loader._read_json_overrides(path) == {
         "integrations": {"exa_api_key": "exa-key", "web_search_provider": "exa"},
     }
+
+
+def test_parallel_settings_persistence_and_env_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "cli-config.json"
+    loader.apply_config_override(target)
+    monkeypatch.setenv("STRIX_WEB_SEARCH_PROVIDER", "parallel")
+    monkeypatch.setenv("PARALLEL_API_KEY", "parallel-file-key")
+    loader.persist_current()
+    assert target.stat().st_mode & 0o777 == 0o600
+
+    monkeypatch.delenv("PARALLEL_API_KEY")
+    monkeypatch.delenv("STRIX_WEB_SEARCH_PROVIDER")
+    loader.apply_config_override(target)
+    integrations = loader.load_settings().integrations
+    assert integrations.web_search_provider == "parallel"
+    assert integrations.parallel_api_key == "parallel-file-key"
+    assert "parallel-file-key" not in repr(integrations)
+
+    monkeypatch.setenv("PARALLEL_API_KEY", "parallel-env-key")
+    loader.apply_config_override(target)
+    assert loader.load_settings().integrations.parallel_api_key == "parallel-env-key"
 
 
 def test_read_json_overrides_skips_keys_already_in_environ(
