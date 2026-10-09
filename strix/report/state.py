@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -210,6 +211,9 @@ class ReportState:
         self.end_time: str | None = None
 
         self.vulnerability_reports: list[dict[str, Any]] = []
+        # Held while a new finding is checked against the stored ones and then added,
+        # so two agents filing the same finding at once cannot both pass the check.
+        self.dedupe_lock = asyncio.Lock()
         self.final_scan_result: str | None = None
 
         self.scan_results: dict[str, Any] | None = None

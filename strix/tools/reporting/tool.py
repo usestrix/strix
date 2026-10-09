@@ -872,7 +872,6 @@ async def _do_create(
 
         from strix.report.dedupe import check_duplicate
 
-        existing = report_state.get_existing_vulnerabilities()
         candidate = {
             "title": title,
             "description": description,
@@ -913,30 +912,35 @@ async def _do_create(
             "http_exchange_ids": normalized_http_exchange_ids,
         }
 
-        dedupe = await check_duplicate(candidate, existing)
-        if dedupe.get("is_duplicate"):
-            duplicate_id = str(dedupe.get("duplicate_id") or "")
-            duplicate_title = next(
-                (r.get("title", "Unknown") for r in existing if r.get("id") == duplicate_id),
-                "",
-            )
-            return {
-                "success": False,
-                "error": (
-                    f"Potential duplicate of '{duplicate_title}' "
-                    f"(id={duplicate_id[:8]}...) — do not re-report the same vulnerability"
-                ),
-                "duplicate_of": duplicate_id,
-                "duplicate_title": duplicate_title,
-                "confidence": dedupe.get("confidence", 0.0),
-                "reason": dedupe.get("reason", ""),
-            }
+        # The duplicate check awaits an LLM call. Without a lock, two agents filing
+        # the same finding at once each compare against a list the other has not
+        # joined yet and both store it, so read, check and store as one step.
+        async with report_state.dedupe_lock:
+            existing = report_state.get_existing_vulnerabilities()
+            dedupe = await check_duplicate(candidate, existing)
+            if dedupe.get("is_duplicate"):
+                duplicate_id = str(dedupe.get("duplicate_id") or "")
+                duplicate_title = next(
+                    (r.get("title", "Unknown") for r in existing if r.get("id") == duplicate_id),
+                    "",
+                )
+                return {
+                    "success": False,
+                    "error": (
+                        f"Potential duplicate of '{duplicate_title}' "
+                        f"(id={duplicate_id[:8]}...) — do not re-report the same vulnerability"
+                    ),
+                    "duplicate_of": duplicate_id,
+                    "duplicate_title": duplicate_title,
+                    "confidence": dedupe.get("confidence", 0.0),
+                    "reason": dedupe.get("reason", ""),
+                }
 
-        report_id = report_state.add_vulnerability_report(
-            **report_fields,
-            agent_id=agent_id if isinstance(agent_id, str) else None,
-            agent_name=agent_name if isinstance(agent_name, str) else None,
-        )
+            report_id = report_state.add_vulnerability_report(
+                **report_fields,
+                agent_id=agent_id if isinstance(agent_id, str) else None,
+                agent_name=agent_name if isinstance(agent_name, str) else None,
+            )
     except Exception as e:
         logger.exception("create_vulnerability_report persistence failed")
         return {
@@ -1883,7 +1887,7 @@ def _build_dependency_evidence(
     return evidence
 
 
-async def _do_create_dependency(  # noqa: PLR0912
+async def _do_create_dependency(  # noqa: PLR0912, PLR0915
     *,
     title: str,
     description: str,
@@ -2016,7 +2020,6 @@ async def _do_create_dependency(  # noqa: PLR0912
 
         from strix.report.dedupe import check_duplicate
 
-        existing = report_state.get_existing_vulnerabilities()
         candidate = {
             "title": title,
             "description": description,
@@ -2025,39 +2028,43 @@ async def _do_create_dependency(  # noqa: PLR0912
             "dependency_metadata": dependency_metadata,
             "technical_analysis": technical_analysis,
         }
-        dedupe = await check_duplicate(candidate, existing)
-        if dedupe.get("is_duplicate"):
-            duplicate_id = dedupe.get("duplicate_id", "")
-            return {
-                "success": False,
-                "error": (
-                    f"Potential duplicate (id={duplicate_id[:8]}...) — "
-                    "do not re-report the same dependency finding"
-                ),
-                "duplicate_of": duplicate_id,
-                "confidence": dedupe.get("confidence", 0.0),
-                "reason": dedupe.get("reason", ""),
-            }
+        # Same race as create_vulnerability_report: the duplicate check awaits an LLM
+        # call, so read, check and store under one lock.
+        async with report_state.dedupe_lock:
+            existing = report_state.get_existing_vulnerabilities()
+            dedupe = await check_duplicate(candidate, existing)
+            if dedupe.get("is_duplicate"):
+                duplicate_id = dedupe.get("duplicate_id", "")
+                return {
+                    "success": False,
+                    "error": (
+                        f"Potential duplicate (id={duplicate_id[:8]}...) — "
+                        "do not re-report the same dependency finding"
+                    ),
+                    "duplicate_of": duplicate_id,
+                    "confidence": dedupe.get("confidence", 0.0),
+                    "reason": dedupe.get("reason", ""),
+                }
 
-        report_id = report_state.add_vulnerability_report(
-            title=title,
-            description=description,
-            severity=severity,
-            impact=impact,
-            target=target,
-            technical_analysis=technical_analysis,
-            remediation_steps=remediation_steps,
-            evidence=evidence,
-            assumptions=assumptions,
-            fix_effort=fix_effort,
-            cvss=cvss_score if advisory_cvss is not None else None,
-            cve=parsed_cve,
-            cwe=cwe,
-            finding_class="dependency_cve",
-            dependency_metadata=dependency_metadata,
-            agent_id=agent_id if isinstance(agent_id, str) else None,
-            agent_name=agent_name if isinstance(agent_name, str) else None,
-        )
+            report_id = report_state.add_vulnerability_report(
+                title=title,
+                description=description,
+                severity=severity,
+                impact=impact,
+                target=target,
+                technical_analysis=technical_analysis,
+                remediation_steps=remediation_steps,
+                evidence=evidence,
+                assumptions=assumptions,
+                fix_effort=fix_effort,
+                cvss=cvss_score if advisory_cvss is not None else None,
+                cve=parsed_cve,
+                cwe=cwe,
+                finding_class="dependency_cve",
+                dependency_metadata=dependency_metadata,
+                agent_id=agent_id if isinstance(agent_id, str) else None,
+                agent_name=agent_name if isinstance(agent_name, str) else None,
+            )
     except Exception as e:
         logger.exception("create_dependency_report persistence failed")
         return {
