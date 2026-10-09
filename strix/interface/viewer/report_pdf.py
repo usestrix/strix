@@ -570,6 +570,16 @@ def _finding_flowables(
     meta_bits = []
     if vuln.get("cvss") is not None:
         meta_bits.append(f"<b>CVSS</b> {_esc(vuln.get('cvss'))}")
+    confidence = str(vuln.get("confidence") or "").strip().title()
+    meta_bits.extend(
+        f"<b>{label}</b> {_esc(value)}"
+        for label, value in (
+            ("Confidence", confidence),
+            ("CWE", vuln.get("cwe")),
+            ("CVE", vuln.get("cve")),
+        )
+        if value
+    )
     meta_bits.extend(
         f"<b>{key.title()}</b> {_esc(vuln.get(key))}"
         for key in ("target", "endpoint", "method")
@@ -592,6 +602,15 @@ def _finding_flowables(
     poc_script = _strip_code_fence(vuln.get("poc_script_code"))
     story.extend(_field_block(styles, "PoC script", poc_script, code=True))
     story.extend(_field_block(styles, "Evidence", vuln.get("evidence"), code=True))
+    # What a reader needs to weigh the finding, as in the per-finding markdown report.
+    story.extend(_field_block(styles, "Counterevidence", vuln.get("counterevidence")))
+    story.extend(_field_block(styles, "Confidence rationale", vuln.get("confidence_rationale")))
+    story.extend(
+        _field_block(
+            styles, "What would change this severity", vuln.get("severity_change_conditions")
+        )
+    )
+    story.extend(_field_block(styles, "Assumptions", vuln.get("assumptions")))
 
     remediation = vuln.get("remediation_steps")
     if isinstance(remediation, list):
