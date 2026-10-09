@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import pytest
 
+from strix.config import loader
+from strix.interface import platform_identity
+
 
 @pytest.fixture(autouse=True)
 def _isolate_mcp_config(
@@ -24,6 +27,24 @@ def _isolate_mcp_config(
     monkeypatch.setenv("STRIX_MCP_CONFIG", str(missing))
     monkeypatch.delenv("STRIX_MCP_ONLY", raising=False)
     monkeypatch.delenv("STRIX_MCP_EXCLUDE", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_user_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Keep the suite from writing the developer's real ``~/.strix`` files.
+
+    Code the tests drive persists the CLI config and the device identity at paths
+    that are fixed when the modules are imported (``Path.home()`` at import time),
+    so setting ``HOME`` per test is too late for them. Without this, running the
+    suite replaces ``~/.strix/cli-config.json`` (the stored model, API key and API
+    base) and ``~/.strix/cli-identity.json`` with whatever the last test wrote.
+    Tests that exercise these paths set their own after this runs.
+    """
+    state = tmp_path_factory.mktemp("strix-user-state")
+    monkeypatch.setattr(loader, "_DEFAULT_PATH", state / "cli-config.json")
+    monkeypatch.setattr(platform_identity, "IDENTITY_PATH", state / "cli-identity.json")
 
 
 @pytest.fixture(autouse=True)
