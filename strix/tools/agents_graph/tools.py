@@ -103,9 +103,9 @@ def _render_completion_report(
         lines.append("- (none)")
         if findings:
             lines.append(
-                "  [WARNING: This agent reported narrative findings above but filed 0 "
-                "authoritative vulnerability reports. Unreported findings are not included "
-                "in scan results or SARIF unless filed via create_vulnerability_report.]"
+                "  [NOTICE: This agent noted narrative findings above with 0 formal "
+                "reports filed. If any finding represents an unfiled vulnerability, ensure it "
+                "is reported via create_vulnerability_report.]"
             )
     lines.append("")
     lines.append("Open items (unresolved, need follow-up):")
@@ -744,8 +744,8 @@ async def agent_finish(
         parent_notified,
     )
     if unfiled_findings:
-        logger.warning(
-            "agent_finish: %s reported %d narrative finding(s) but filed 0 vulnerability reports",
+        logger.info(
+            "agent_finish: %s reported %d narrative finding(s) with 0 reports filed",
             me,
             len(findings or []),
         )
@@ -762,10 +762,11 @@ async def agent_finish(
         "has_recommendations": bool(final_recommendations),
     }
     if unfiled_findings:
-        response_payload["warning"] = (
-            f"Reported {len(findings or [])} finding(s) but filed 0 vulnerability reports. "
+        response_payload["notice"] = (
+            f"Reported {len(findings or [])} finding(s)/observation(s) with 0 reports filed. "
             "Narrative findings in agent_finish do not register vulnerabilities in the scan "
-            "report. Verified findings must be filed via create_vulnerability_report."
+            "report. If any finding represents an unfiled vulnerability, ensure it is filed "
+            "via create_vulnerability_report."
         )
 
     return json.dumps(

@@ -276,13 +276,13 @@ async def test_agent_finish_warns_when_findings_reported_without_filing() -> Non
 
     assert result["success"] is True
     assert result["filed_report_ids"] == []
-    assert "warning" in result
-    assert "Reported 1 finding(s) but filed 0 vulnerability reports" in result["warning"]
+    assert "notice" in result
+    assert "Reported 1 finding(s)/observation(s) with 0 reports filed" in result["notice"]
 
     delivered = coordinator.runtimes["root"].mailbox
     assert len(delivered) == 1
     assert delivered[0]["unfiled_findings"] is True
     body = delivered[0]["content"]
-    assert "authoritative vulnerability reports" in body
+    assert "0 formal reports filed" in body
     assert "create_vulnerability_report" in body
 
