@@ -1,0 +1,11 @@
+{
+  "cli.description": "Strix - 자율형 AI 보안 모의해킹 에이전트",
+  "cli.scan_started": "대상에 대한 스캔 시작: {target}",
+  "cli.scan_completed": "대상에 대한 스캔 완료: {target}",
+  "cli.vulnerabilities_found": "{count}개의 취약점이 발견되었습니다",
+  "report.title": "보안 침투 테스트 보고서",
+  "report.description": "설명",
+  "report.evidence": "증거",
+  "report.impact": "영향도",
+  "report.remediation": "조치 방안"
+}

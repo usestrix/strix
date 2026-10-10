@@ -61,6 +61,7 @@ def parse_arguments() -> argparse.Namespace:
     for idx, arg in enumerate(sys.argv[:-1]):
         if arg in ("--language", "-l") and idx + 1 < len(sys.argv):
             from strix.i18n import set_language
+
             set_language(sys.argv[idx + 1])
             break
 
@@ -134,6 +135,8 @@ Strix Cloud:
         help="Update strix to the latest version and exit. Self-updates the "
         "standalone binary install; for pip/pipx/uv installs, prints the "
         "matching upgrade command instead.",
+    )
+
     parser.add_argument(
         "--language",
         "-l",
@@ -335,6 +338,11 @@ Strix Cloud:
     args.local_sources = []
     args.diff_scope = {"active": False}
     args.run_name = None
+
+    if args.language:
+        from strix.i18n import set_language
+
+        set_language(args.language)
 
     if args.config:
         apply_config_override(validate_config_file(args.config))

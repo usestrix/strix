@@ -117,6 +117,11 @@ hiddenimports = [
     # Strix modules
     'strix',
     'strix.i18n',
+    'strix.i18n.catalog',
+    'strix.i18n.context',
+    'strix.i18n.detector',
+    'strix.i18n.directive',
+    'strix.i18n.translator',
     'strix.interface',
     'strix.interface.main',
     'strix.interface.cli',
