@@ -123,13 +123,21 @@ def _resolve_server_url(url: str, variables: Any) -> str:
     return _SERVER_VAR_PATTERN.sub(lambda m: defaults.get(m.group(1), m.group(0)), url)
 
 
+_OPENAPI_OPERATION_METHODS = frozenset(
+    {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
+)
+
+
 def _collect_path_item_servers(path_item: Any, server_objs: list[dict[str, Any]]) -> None:
     if not isinstance(path_item, dict):
         return
     path_servers = path_item.get("servers")
     if isinstance(path_servers, list):
         server_objs.extend(s for s in path_servers if isinstance(s, dict))
-    for op in path_item.values():
+    # Inspect only standard HTTP method operations; skip metadata, parameters,
+    # and vendor extensions (x-*).
+    for method in _OPENAPI_OPERATION_METHODS:
+        op = path_item.get(method)
         if isinstance(op, dict):
             op_servers = op.get("servers")
             if isinstance(op_servers, list):
@@ -148,7 +156,9 @@ def _openapi_base_urls(raw: dict[str, Any]) -> list[str]:
     for section_key in ("paths", "webhooks"):
         section = raw.get(section_key)
         if isinstance(section, dict):
-            for path_item in section.values():
+            for path_key, path_item in section.items():
+                if str(path_key).startswith("x-"):
+                    continue
                 _collect_path_item_servers(path_item, server_objs)
 
     return _absolute_urls(

@@ -208,6 +208,33 @@ def test_openapi_extracts_webhook_servers() -> None:
     assert spec_base_urls(raw) == ["https://webhook-receiver.test"]
 
 
+def test_openapi_ignores_vendor_extensions_in_paths_and_operations() -> None:
+    raw = {
+        "openapi": "3.0.0",
+        "info": {"title": "Extensions Test"},
+        "paths": {
+            "x-internal-path": {
+                "servers": [{"url": "https://leaked-internal.test"}],
+                "get": {"servers": [{"url": "https://leaked-internal-op.test"}]},
+            },
+            "/api/valid": {
+                "servers": [{"url": "https://valid.test"}],
+                "get": {
+                    "servers": [{"url": "https://valid-get.test"}],
+                    "summary": "Valid GET operation",
+                },
+                "x-deployment": {
+                    "servers": [{"url": "https://admin-extension.test"}],
+                },
+                "parameters": [
+                    {"name": "id", "in": "query", "servers": [{"url": "https://param.test"}]}
+                ],
+            },
+        },
+    }
+    assert spec_base_urls(raw) == ["https://valid.test", "https://valid-get.test"]
+
+
 def test_swagger_base_urls_built_from_host() -> None:
     assert spec_base_urls(SWAGGER_JSON) == ["https://legacy.test/api"]
 
