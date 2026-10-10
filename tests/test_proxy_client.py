@@ -252,3 +252,91 @@ async def test_existing_request_ids_queries_current_project(
 
     assert existing == {"1042"}
     assert looked_up == ["1042", "1088"]
+
+
+def test_apply_modifications_case_insensitive_header_override() -> None:
+    components = {
+        "method": "POST",
+        "url_path": "/api",
+        "headers": {"authorization": "Bearer old-token", "content-type": "text/plain"},
+        "body": "",
+    }
+    mods = {
+        "headers": {
+            "Authorization": "Bearer new-token",
+            "Content-Type": "application/json",
+            "X-Custom": "val",
+        }
+    }
+    result = caido_api.apply_modifications(components, mods, "https://example.com/api")
+    headers = result["headers"]
+    assert headers["Authorization"] == "Bearer new-token"
+    assert headers["Content-Type"] == "application/json"
+    assert headers["X-Custom"] == "val"
+    assert "authorization" not in headers
+    assert "content-type" not in headers
+
+
+def test_apply_modifications_case_insensitive_cookies() -> None:
+    components = {
+        "method": "GET",
+        "url_path": "/",
+        "headers": {"cookie": "session=old; theme=dark"},
+        "body": "",
+    }
+    mods = {"cookies": {"session": "new", "lang": "en"}}
+    result = caido_api.apply_modifications(components, mods, "https://example.com/")
+    headers = result["headers"]
+    assert "cookie" not in headers
+    assert "Cookie" in headers
+    assert "session=new" in headers["Cookie"]
+    assert "theme=dark" in headers["Cookie"]
+    assert "lang=en" in headers["Cookie"]
+
+
+def test_apply_modifications_preserves_blank_query_params_and_multi_values() -> None:
+    components = {"method": "GET", "url_path": "/search", "headers": {}, "body": ""}
+    mods = {"params": {"q": "sql", "filter": ["a", "b"]}}
+    url = "https://example.com/search?debug&empty=&role=user"
+    result = caido_api.apply_modifications(components, mods, url)
+    final_url = result["url"]
+    assert "debug=" in final_url or "debug" in final_url
+    assert "empty=" in final_url
+    assert "q=sql" in final_url
+    assert "filter=a&filter=b" in final_url
+
+
+def test_apply_modifications_syncs_host_on_url_change() -> None:
+    components = {
+        "method": "GET",
+        "url_path": "/v1",
+        "headers": {"Host": "original.host"},
+        "body": "",
+    }
+    # When URL is replaced without custom Host in headers:
+    result = caido_api.apply_modifications(
+        components,
+        {"url": "https://new.host:8443/v2"},
+        "https://new.host:8443/v2",
+    )
+    assert result["headers"]["Host"] == "new.host:8443"
+
+    # When URL is replaced AND an explicit custom Host is provided (Host injection test):
+    result_custom = caido_api.apply_modifications(
+        components,
+        {"url": "https://new.host:8443/v2", "headers": {"Host": "attacker.com"}},
+        "https://new.host:8443/v2",
+    )
+    assert result_custom["headers"]["Host"] == "attacker.com"
+
+
+def test_build_raw_request_avoids_duplicate_lowercase_host_or_user_agent() -> None:
+    _conn, raw = caido_api.build_raw_request(
+        method="GET",
+        url="https://example.com/test",
+        headers={"host": "custom.example.com", "user-agent": "CustomBot/1.0"},
+        body="",
+    )
+    assert _headers_named(raw, "Host") == ["custom.example.com"]
+    assert _headers_named(raw, "User-Agent") == ["CustomBot/1.0"]
+
