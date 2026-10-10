@@ -123,15 +123,39 @@ def _resolve_server_url(url: str, variables: Any) -> str:
     return _SERVER_VAR_PATTERN.sub(lambda m: defaults.get(m.group(1), m.group(0)), url)
 
 
+def _collect_path_item_servers(path_item: Any, server_objs: list[dict[str, Any]]) -> None:
+    if not isinstance(path_item, dict):
+        return
+    path_servers = path_item.get("servers")
+    if isinstance(path_servers, list):
+        server_objs.extend(s for s in path_servers if isinstance(s, dict))
+    for op in path_item.values():
+        if isinstance(op, dict):
+            op_servers = op.get("servers")
+            if isinstance(op_servers, list):
+                server_objs.extend(s for s in op_servers if isinstance(s, dict))
+
+
 def _openapi_base_urls(raw: dict[str, Any]) -> list[str]:
-    servers = raw.get("servers")
-    if not isinstance(servers, list):
-        return []
+    server_objs: list[dict[str, Any]] = []
+
+    # 1. Root-level servers
+    root_servers = raw.get("servers")
+    if isinstance(root_servers, list):
+        server_objs.extend(s for s in root_servers if isinstance(s, dict))
+
+    # 2. PathItem- and Operation-level servers (OpenAPI 3.0 paths / 3.1 webhooks)
+    for section_key in ("paths", "webhooks"):
+        section = raw.get(section_key)
+        if isinstance(section, dict):
+            for path_item in section.values():
+                _collect_path_item_servers(path_item, server_objs)
+
     return _absolute_urls(
         [
             _resolve_server_url(str(server["url"]), server.get("variables"))
-            for server in servers
-            if isinstance(server, dict) and server.get("url")
+            for server in server_objs
+            if server.get("url")
         ],
     )
 
