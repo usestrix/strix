@@ -36,6 +36,10 @@ for asset in viewer_static.rglob('*'):
         rel_path = asset.relative_to(project_root)
         datas.append((str(asset), str(rel_path.parent)))
 
+for json_locale in strix_root.rglob('locales/*.json'):
+    rel_path = json_locale.relative_to(project_root)
+    datas.append((str(json_locale), str(rel_path.parent)))
+
 datas += collect_data_files('tiktoken')
 datas += collect_data_files('tiktoken_ext')
 
@@ -112,6 +116,12 @@ hiddenimports = [
 
     # Strix modules
     'strix',
+    'strix.i18n',
+    'strix.i18n.catalog',
+    'strix.i18n.context',
+    'strix.i18n.detector',
+    'strix.i18n.directive',
+    'strix.i18n.translator',
     'strix.interface',
     'strix.interface.main',
     'strix.interface.cli',
