@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import tracemalloc
 
 import pytest
 
@@ -214,13 +215,24 @@ def test_head_tail_large_line_count_lazy_split() -> None:
     assert dropped_bytes > 0
 
 
-def test_fast_bounding_does_not_thrash_on_huge_strings() -> None:
-    # 1 million characters: old character loop would do 1M iterations of char.encode().
-    # Fast path should finish in milliseconds.
-    huge_text = "a" * 1_000_000
-    prefix = _take_prefix(huge_text, 500)
-    suffix = _take_suffix(huge_text, 500)
+def test_fast_bounding_does_not_thrash_on_large_budgets() -> None:
+    # When taking a large slice (e.g. 50,000 bytes), the previous character loop
+    # iterated through 50,000 characters, calling char.encode() and appending each
+    # to a list, resulting in high heap churn (~500 KB peak traced memory).
+    # The fast path encodes and slices in C, keeping peak memory tightly bounded.
+    huge_text = "a" * 100_000
+    budget = 50_000
 
-    assert len(prefix) == 500
-    assert len(suffix) == 500
+    tracemalloc.start()
+    try:
+        prefix = _take_prefix(huge_text, budget)
+        suffix = _take_suffix(huge_text, budget)
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert len(prefix) == budget
+    assert len(suffix) == budget
+    # Fast path avoids per-character list/bytes allocations (< 250 KB vs ~500 KB previously).
+    assert peak < 250_000
 
