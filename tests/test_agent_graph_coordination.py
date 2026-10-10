@@ -256,3 +256,33 @@ async def test_agent_finish_without_report_state_still_completes() -> None:
 
     assert result["success"] is True
     assert result["filed_report_ids"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("report_state")
+async def test_agent_finish_warns_when_findings_reported_without_filing() -> None:
+    coordinator = await _graph(interactive=False)
+
+    result = await _call(
+        agent_finish,
+        coordinator,
+        "child",
+        {
+            "result_summary": "discovered injection",
+            "findings": ["SQL injection on /login.php"],
+        },
+        parent_id="root",
+    )
+
+    assert result["success"] is True
+    assert result["filed_report_ids"] == []
+    assert "warning" in result
+    assert "Reported 1 finding(s) but filed 0 vulnerability reports" in result["warning"]
+
+    delivered = coordinator.runtimes["root"].mailbox
+    assert len(delivered) == 1
+    assert delivered[0]["unfiled_findings"] is True
+    body = delivered[0]["content"]
+    assert "authoritative vulnerability reports" in body
+    assert "create_vulnerability_report" in body
+

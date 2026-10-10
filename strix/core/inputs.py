@@ -364,8 +364,10 @@ def child_initial_input(
         )
     parts.append(
         f"You are agent {name} ({child_id}); your parent is {parent_id}. "
-        "Maintain your own identity. Call agent_finish when your task "
-        "is complete.",
+        "Maintain your own identity. File any confirmed vulnerabilities using "
+        "create_vulnerability_report (or create_dependency_report) BEFORE calling "
+        "agent_finish — passing findings to agent_finish does not file reports. "
+        "Call agent_finish when your task is complete.",
     )
     parts.append(task)
     return [{"role": "user", "content": "\n\n".join(parts)}]
