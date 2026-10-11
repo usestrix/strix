@@ -29,6 +29,12 @@ Also in scope, and routinely missed:
 - A behavioral change that invalidates an assumption elsewhere: a type
   loosened, a default flipped, a validator made optional, an error path
   changed from reject to log-and-continue.
+- A change that adds or alters client-side URL or route construction
+  from user-controlled URL input (path, query, or hash) feeding a
+  fetch/XHR/axios call or client router navigation — a
+  CSPT-introduction candidate. Load `client_side_path_traversal` and
+  confirm an EXPLOITABLE sink; a decoded `../` reaching no request sink
+  with real impact is a false positive.
 
 **Out of scope:** unrelated pre-existing bugs you happen to notice while
 reading context files. Note them, do not file them against this PR. The

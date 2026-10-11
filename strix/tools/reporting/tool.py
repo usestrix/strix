@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any
 
 from agents import RunContextWrapper, function_tool
 
+from strix.report.coverage import selectable_finding_classes
+from strix.report.sarif import _build_physical_locations
 from strix.tools.nullish import clean_optional
 from strix.tools.proxy.tools import existing_request_ids
 
@@ -803,6 +805,7 @@ async def _do_create(
     confidence_rationale: str | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
+    finding_class: str | None = None,
     agent_id: str | None = None,
     agent_name: str | None = None,
 ) -> dict[str, Any]:
@@ -850,6 +853,31 @@ async def _do_create(
     )
     errors.extend(http_exchange_errors)
 
+    finding_class = (finding_class or "dynamic").strip().lower()
+    if finding_class not in _VALID_FINDING_CLASSES:
+        errors.append(
+            f"Invalid finding_class: {finding_class!r}. "
+            f"Must be one of: {sorted(_VALID_FINDING_CLASSES)}"
+        )
+    elif finding_class == "client_side_path_traversal":
+        # CSPT findings are typically locationless (the bug is in a JS bundle,
+        # not a server route), so without a discriminator multiple distinct CSPT
+        # findings collapse onto one synthetic SARIF fingerprint. The anchor has
+        # to be one SARIF can actually use: an endpoint (→ route), or a
+        # code_location that survives _build_physical_locations (a repo-relative
+        # file with a real start line — an absolute or drive path is dropped and
+        # would leave the finding synthetic and collapsed).
+        has_endpoint = bool(str(endpoint or "").strip())
+        physical_locations, _dropped = _build_physical_locations(parsed_locations)
+        if not (has_endpoint or physical_locations):
+            errors.append(
+                "finding_class 'client_side_path_traversal' needs a discriminator SARIF "
+                "can anchor, or distinct CSPT findings collapse onto one fingerprint: set "
+                "endpoint (the traversed target path, e.g. '/admin/keys') and method, or a "
+                "code_location with a repo-relative file and start line (not an absolute or "
+                "drive path, which SARIF drops)."
+            )
+
     if errors:
         return {"success": False, "error": "Validation failed", "errors": errors}
 
@@ -883,6 +911,7 @@ async def _do_create(
             "poc_script_code": poc_script_code,
             "endpoint": endpoint,
             "method": method,
+            "finding_class": finding_class,
         }
         report_fields: dict[str, Any] = {
             "title": title,
@@ -911,6 +940,7 @@ async def _do_create(
             "fix_verification": fix_verification,
             "fix_pr_body": fix_pr_body,
             "http_exchange_ids": normalized_http_exchange_ids,
+            "finding_class": finding_class,
         }
 
         dedupe = await check_duplicate(candidate, existing)
@@ -1005,6 +1035,7 @@ async def create_vulnerability_report(
     confidence_rationale: str | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
+    finding_class: str | None = None,
 ) -> str:
     """File a vulnerability report — one report per fully-verified finding.
 
@@ -1410,6 +1441,22 @@ async def create_vulnerability_report(
             fix (summary + rationale). Prose/markdown only — the code
             change itself belongs in ``code_locations``. Omit for
             black-box findings.
+        finding_class: Optional machine-readable sub-class, default
+            ``"dynamic"``. Set ``"client_side_path_traversal"`` for a
+            confirmed CSPT finding — attacker-controlled client input
+            (URL path/query/fragment, ``document.referrer``,
+            ``postMessage`` data, browser storage) reaching a browser
+            request sink (``fetch`` / ``XMLHttpRequest`` / ``axios`` /
+            ``EventSource`` / ``WebSocket``) so the victim's own
+            authenticated browser is steered to an unintended
+            same-origin endpoint. CSPT shares ``CWE-22`` with
+            server-side path traversal / LFI / RFI but is a distinct
+            class; setting this keeps it separated in the report
+            artifacts and SARIF (do NOT use it for server-side
+            traversal — leave those ``dynamic``). A CSPT report must
+            also carry a discriminator: ``endpoint`` (the traversed
+            target path) and ``method``, or a ``code_location`` for the
+            client sink. See the ``client_side_path_traversal`` skill.
     """
     (
         http_exchange_ids,
@@ -1454,6 +1501,7 @@ async def create_vulnerability_report(
         http_exchange_ids=http_exchange_ids,
         fix_verification=fix_verification,
         fix_pr_body=fix_pr_body,
+        finding_class=finding_class,
         agent_id=agent_id,
         agent_name=agent_name,
     )
@@ -2294,7 +2342,13 @@ _SEVERITY_ORDER = {
     "none": 5,
 }
 _VALID_SEVERITIES = frozenset(_SEVERITY_ORDER)
-_VALID_FINDING_CLASSES = frozenset({"dynamic", "dependency_cve"})
+# ``dynamic`` (the PoC-backed default) and ``dependency_cve`` (reserved for
+# create_dependency_report) are report-type markers; the remaining selectable
+# classes come from the canonical vulnerability-class registry so this set
+# never drifts from the class definitions. ``client_side_path_traversal`` is
+# the first registry-sourced member — machine-separable from server-side
+# path traversal / LFI / RFI, which share CWE-22.
+_VALID_FINDING_CLASSES = frozenset({"dynamic", "dependency_cve"}) | selectable_finding_classes()
 _REPORT_DESCRIPTION_PREVIEW_CHARS = 280
 
 # Compact, listing-safe fields — no full bodies / PoC code / evidence.

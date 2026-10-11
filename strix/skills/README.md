@@ -46,6 +46,7 @@ Notable source-aware skills:
 - `semantic_confusion` (vulnerabilities): cross-boundary parser, normalization, and representation mismatch analysis
 - `agentic_system_security` (vulnerabilities): effective-authority and MCP/tool ecosystem security testing
 - `browser_security` (vulnerabilities): browsing-context, postMessage, XS-Leaks, service-worker, and cross-origin state-machine testing
+- `client_side_path_traversal` (vulnerabilities): exploitable client-side path traversal — route/query/hash into fetch/router/BFF request, escalated by sink
 - `azure` (cloud): Azure and Microsoft Entra privilege, PIM, workload identity, and cross-plane escalation analysis
 - `infrastructure_lifecycle` (reconnaissance): abandoned or mutable external dependencies such as update endpoints, MX, storage, and control domains
 - `argument_injection` (vulnerabilities): shell-free CLI option smuggling, secondary argument-file parsing, and platform-specific argv transformation boundaries

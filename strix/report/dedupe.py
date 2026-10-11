@@ -94,6 +94,14 @@ CRITICAL DEDUPLICATION RULES:
    - Same CVE but different package/ecosystem is NOT a duplicate
    - Same package/ecosystem but different CVE is NOT a duplicate
 
+5. finding_class separates classes only when both are specific:
+   - two reports with different SPECIFIC (non-default) finding_class values are
+     distinct classes even under one shared CWE - fixed by different code, NOT duplicates
+   - but `dynamic` is the default catch-all, not a class: a `dynamic` report and a
+     `client_side_path_traversal` report can still be the SAME bug (e.g. an older CSPT
+     filed before the class existed). Do not treat dynamic-vs-specific as proof of
+     distinctness - compare the underlying root cause
+
 COMPARISON GUIDELINES:
 - Focus on the technical root cause, not surface-level similarities
 - Same vulnerability type (SQLi, XSS) doesn't mean duplicate - location matters
@@ -103,6 +111,9 @@ COMPARISON GUIDELINES:
 FIELDS TO ANALYZE:
 - title, description: General vulnerability info
 - target, endpoint, method: Exact location of vulnerability
+- finding_class: Machine-readable class. Two different SPECIFIC classes under one
+  CWE are different bugs (not duplicates); but `dynamic` is the default, not a
+  class, so a `dynamic` report may still duplicate a specific one - compare the bug
 - technical_analysis: Root cause details
 - poc_description: How it's exploited
 - impact: What damage it can cause
@@ -145,6 +156,7 @@ def _prepare_report_for_comparison(report: dict[str, Any]) -> dict[str, Any]:
         "endpoint",
         "method",
         "cve",
+        "finding_class",
         "dependency_metadata",
     ]
 

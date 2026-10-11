@@ -1,6 +1,6 @@
 ---
 name: browser-security
-description: Browser-internals security testing for browsing-context relationships, postMessage, client-side path traversal, XS-Leaks, service workers, Web Workers, navigation behavior, CSP interactions, caches, and cross-origin state machines
+description: Browser-internals security testing for browsing-context relationships, postMessage, client-side path traversal (SPA fetch-or-router URL built from a URL path, query, or hash), XS-Leaks, service workers, Web Workers, navigation behavior, CSP interactions, caches, and cross-origin state machines
 ---
 
 # Browser Security
@@ -44,6 +44,8 @@ Draw the context graph. Security checks on `event.origin`, `event.source`, or a 
 - Use random per-flow names or `_blank` with `noopener` where an opener relationship is unnecessary.
 
 ### Client-Side Path Traversal
+
+For the full exploitable-CSPT discovery/escalation/validation workflow, load `client_side_path_traversal`.
 
 Trace the complete source-to-request pipeline:
 

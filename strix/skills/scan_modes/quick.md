@@ -38,6 +38,7 @@ Test in priority order:
 4. **SQL injection** - authentication endpoints, search, filters
 5. **SSRF** - URL parameters, webhooks, integrations
 6. **Exposed secrets** - hardcoded credentials, API keys, config files
+7. **Client-side path traversal** - client-rendered front end (SPA in React/Vue/Angular/Svelte/Next.js, or any page building a fetch/XHR/axios URL or client router navigation from the URL path, query, or hash) → load `client_side_path_traversal` and test for EXPLOITABLE CSPT; a decoded `../` reaching no request sink with real impact is a false positive
 
 Skip for quick scans:
 - Exhaustive subdomain enumeration

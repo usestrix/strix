@@ -13,6 +13,9 @@ Improper file path handling and dynamic inclusion enable sensitive file disclosu
 - Read files outside intended roots via `../`, encoding, normalization gaps
 - Write or create files outside intended roots, then evaluate framework-controlled resolution paths separately from direct web access
 
+**Client-Side Variant**
+- A browser-controlled path builds a client-issued request (fetch/XHR/router navigation) rather than a filesystem path — see `client_side_path_traversal`
+
 **Local File Inclusion (LFI)**
 - Include server-side files into interpreters/templates
 
@@ -194,7 +197,7 @@ Test search order with candidate marker files or filesystem traces. Trigger the 
 
 ## False Positives
 
-- In-app virtual paths that do not map to filesystem; content comes from safe stores (DB/object storage)
+- In-app virtual paths that do not map to filesystem; content comes from safe stores (DB/object storage). When a browser-controlled path segment builds a client-side fetch/XHR/router URL (or a server-side/BFF fetch the client shapes), that is client-side path traversal and may be exploitable — see `client_side_path_traversal` — not an automatic false positive
 - Canonicalized paths constrained to an allowlist/root after normalization
 - Wrappers disabled and includes using constant templates only
 - Archive extractors that sanitize paths and enforce destination directories
