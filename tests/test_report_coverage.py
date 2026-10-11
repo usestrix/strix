@@ -154,6 +154,27 @@ def test_unfinished_agent_makes_the_record_partial() -> None:
     assert "authz-tester" in doc["completeness"]["caveats"][0]
 
 
+def test_failed_agent_makes_the_record_partial() -> None:
+    """A failed agent must not let the record read as complete (#1458)."""
+    doc = _document(
+        agent_graph=_graph(statuses={"agent-1": "failed"}),
+        exit_reason="finished_by_tool",
+    )
+
+    assert doc["completeness"]["complete"] is False
+    assert "authz-tester" in doc["completeness"]["caveats"][0]
+
+
+def test_budget_paused_agent_makes_the_record_partial() -> None:
+    doc = _document(
+        agent_graph=_graph(statuses={"agent-1": "budget_paused"}),
+        exit_reason="finished_by_tool",
+    )
+
+    assert doc["completeness"]["complete"] is False
+    assert "authz-tester" in doc["completeness"]["caveats"][0]
+
+
 def test_failed_run_status_makes_the_record_partial() -> None:
     doc = _document(
         run_record={"run_id": "r1", "status": "failed"},
