@@ -285,6 +285,44 @@ def _with_strictness(tool: FunctionTool, strict_schemas: bool) -> FunctionTool:
     return dataclasses.replace(tool, strict_json_schema=False)
 
 
+def _merged_variants(variants: list[dict[str, Any]]) -> dict[str, Any] | None:
+    merged: dict[str, Any] = {}
+    types: list[str] = []
+    for variant in variants:
+        if not isinstance(variant.get("type"), str) or variant["type"] in types:
+            return None
+        if merged.keys() & (variant.keys() - {"type"}) or variant.keys() & {"enum", "const"}:
+            return None
+        merged |= variant
+        types.append(variant["type"])
+    merged["type"] = types
+    return merged
+
+
+def _typed_schema(spec: dict[str, Any]) -> dict[str, Any]:
+    variants: list[dict[str, Any]] | None = spec.get("anyOf")
+    if "type" not in spec and variants:
+        merged = _merged_variants(variants)
+        if merged is not None:
+            rest = {key: value for key, value in spec.items() if key != "anyOf"}
+            spec = {**merged, **rest}
+    typed = dict(spec)
+    properties: dict[str, dict[str, Any]] | None = spec.get("properties")
+    if properties:
+        typed["properties"] = {key: _typed_schema(value) for key, value in properties.items()}
+    items: dict[str, Any] | bool | None = spec.get("items")
+    if isinstance(items, dict):
+        typed["items"] = _typed_schema(items)
+    return typed
+
+
+def _with_typed_parameters(tool: FunctionTool) -> FunctionTool:
+    # Ollama's tool templates fail with ``index $prop.Type 0`` on a bare ``anyOf``.
+    # Rewrites in place, so callers pass a copy of a shared tool singleton.
+    tool.params_json_schema = _typed_schema(tool.params_json_schema)
+    return tool
+
+
 def _function_tool_with_error_result(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
 
@@ -360,7 +398,9 @@ def _configure_filesystem_tools(
                     toolset,
                     name,
                     _function_tool_with_error_result(
-                        _with_strictness(_with_coerced_arguments(tool), strict_schemas)
+                        _with_typed_parameters(
+                            _with_strictness(_with_coerced_arguments(tool), strict_schemas)
+                        )
                     ),
                 )
         elif isinstance(tool, CustomTool):
@@ -499,7 +539,7 @@ def _configure_shell_tools(
         elif tool.name == "write_stdin":
             wrapped = _wrap_write_stdin(wrapped)
         if chat_completions:
-            wrapped = _function_tool_with_error_result(wrapped)
+            wrapped = _function_tool_with_error_result(_with_typed_parameters(wrapped))
         setattr(toolset, name, wrapped)
 
 
@@ -713,12 +753,14 @@ def build_strix_agent(
     else:
         tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
     _ensure_unique_tool_names(tools)
-    tools = [
-        _with_bounded_result(_with_strictness(_with_coerced_arguments(tool), strict_tool_schemas))
-        if isinstance(tool, FunctionTool)
-        else tool
-        for tool in tools
-    ]
+
+    def wrap(tool: FunctionTool) -> FunctionTool:
+        wrapped = _with_strictness(_with_coerced_arguments(tool), strict_tool_schemas)
+        if chat_completions_tools:
+            wrapped = _with_typed_parameters(dataclasses.replace(wrapped))
+        return _with_bounded_result(wrapped)
+
+    tools = [wrap(tool) if isinstance(tool, FunctionTool) else tool for tool in tools]
 
     logger.info(
         "Built %s agent '%s' (skills=%d, tools=%d, scan_mode=%s, whitebox=%s)",

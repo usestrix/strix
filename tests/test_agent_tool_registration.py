@@ -139,6 +139,78 @@ def test_disabling_strict_leaves_shared_tools_untouched() -> None:
     assert any(t.strict_json_schema for t in agent.tools if isinstance(t, FunctionTool))
 
 
+def _untyped_properties(schema: dict[str, Any], path: str) -> list[str]:
+    untyped = []
+    for key, spec in (schema.get("properties") or {}).items():
+        if "type" not in spec:
+            untyped.append(f"{path}.{key}")
+        untyped += _untyped_properties(spec, f"{path}.{key}")
+        if isinstance(spec.get("items"), dict):
+            untyped += _untyped_properties(spec["items"], f"{path}.{key}[]")
+    return untyped
+
+
+@pytest.mark.parametrize("strict", [True, False])
+def test_chat_completions_tool_parameters_all_declare_a_type(strict: bool) -> None:
+    """Ollama's tool templates index ``$prop.Type`` and fail on a bare ``anyOf``."""
+    agent = factory.build_strix_agent(
+        is_root=True, chat_completions_tools=True, strict_tool_schemas=strict, interactive=True
+    )
+
+    untyped = [
+        path
+        for t in agent.tools
+        if isinstance(t, FunctionTool)
+        for path in _untyped_properties(t.params_json_schema, t.name)
+    ]
+    assert untyped == []
+
+
+def test_nullable_parameter_keeps_its_variant_schema() -> None:
+    spec = {
+        "anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "null"}],
+        "default": None,
+        "description": "Filter by tag.",
+    }
+
+    assert factory._typed_schema({"type": "object", "properties": {"tags": spec}}) == {
+        "type": "object",
+        "properties": {
+            "tags": {
+                "type": ["array", "null"],
+                "items": {"type": "string"},
+                "default": None,
+                "description": "Filter by tag.",
+            }
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        {"anyOf": [{"type": "string", "enum": ["a", "b"]}, {"type": "null"}]},
+        {"anyOf": [{"type": "string", "const": "a"}, {"type": "null"}]},
+        {"anyOf": [{"type": "string", "format": "uri"}, {"type": "array", "format": "x"}]},
+        {"anyOf": [{"$ref": "#/$defs/Mode"}, {"type": "null"}]},
+        {"anyOf": [{"type": "string", "minLength": 2}, {"type": "string"}]},
+    ],
+)
+def test_unmergeable_unions_are_left_untouched(spec: dict[str, Any]) -> None:
+    schema = {"type": "object", "properties": {"value": spec}}
+
+    assert factory._typed_schema(schema) == schema
+
+
+def test_typing_parameters_leaves_shared_tools_untouched() -> None:
+    factory.build_strix_agent(is_root=True, chat_completions_tools=True)
+    agent = factory.build_strix_agent(is_root=True)
+    list_notes = next(t for t in agent.tools if t.name == "list_notes")
+
+    assert isinstance(list_notes, FunctionTool)
+    assert "anyOf" in list_notes.params_json_schema["properties"]["tags"]
+
+
 @pytest.mark.parametrize(
     ("tool_name", "output", "completed"),
     [
