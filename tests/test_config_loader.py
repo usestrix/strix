@@ -35,6 +35,7 @@ _LLM_ENV_KEYS = [
     # RuntimeSettings
     "STRIX_IMAGE",
     "STRIX_RUNTIME_BACKEND",
+    "STRIX_CAIDO_BOOT_WAIT_S",
     # TelemetrySettings
     "STRIX_TELEMETRY",
 ]
@@ -140,6 +141,12 @@ def test_tool_output_max_bytes_rejects_sub_notice_values() -> None:
 
 def test_tool_output_max_bytes_accepts_floor() -> None:
     assert ContextSettings(STRIX_TOOL_OUTPUT_MAX_BYTES=1024).tool_output_max_bytes == 1024
+
+
+def test_runtime_caido_boot_wait_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIX_CAIDO_BOOT_WAIT_S", "900")
+
+    assert loader.load_settings().runtime.caido_boot_wait_s == 900
 
 
 # --------------------------------------------------------------------------- #

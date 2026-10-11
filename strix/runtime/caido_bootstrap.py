@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 from typing import TYPE_CHECKING
 
 
@@ -33,16 +34,23 @@ async def _login_as_guest(
     session: BaseSandboxSession,
     *,
     container_url: str,
-    attempts: int = 10,
+    wait_timeout_s: float,
 ) -> str:
-    """``session.exec`` curl to fetch a guest token; retry until ready.
+    """``session.exec`` curl to fetch a guest token until the deadline.
 
     Caido's GraphQL listener may not be up the instant the container
     starts. The retry loop also doubles as the Caido readiness probe —
     no separate TCP healthcheck needed.
     """
+    started_at = time.monotonic()
+    deadline = started_at + wait_timeout_s
     last_err: str | None = None
-    for i in range(1, attempts + 1):
+    attempts = 0
+
+    while attempts == 0 or time.monotonic() < deadline:
+        attempts += 1
+        remaining = deadline - time.monotonic()
+        exec_timeout = min(15, remaining)
         result = await session.exec(
             "curl",
             "-fsS",
@@ -53,7 +61,7 @@ async def _login_as_guest(
             "-d",
             _LOGIN_AS_GUEST_BODY,
             f"{container_url}/graphql",
-            timeout=15,
+            timeout=exec_timeout,
         )
         if result.ok():
             try:
@@ -72,10 +80,24 @@ async def _login_as_guest(
         else:
             stderr = result.stderr.decode("utf-8", errors="replace")[:200]
             last_err = f"curl exit {result.exit_code}: {stderr}"
-        logger.debug("loginAsGuest attempt %d/%d failed: %s", i, attempts, last_err)
-        await asyncio.sleep(min(2.0 * i, 8.0))
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        retry_delay = min(2.0 * attempts, 8.0, remaining)
+        logger.debug(
+            "loginAsGuest attempt %d failed after %.1fs; retrying in %.1fs (%.1fs remaining): %s",
+            attempts,
+            time.monotonic() - started_at,
+            retry_delay,
+            remaining,
+            last_err,
+        )
+        await asyncio.sleep(retry_delay)
 
-    raise RuntimeError(f"loginAsGuest failed after {attempts} attempts: {last_err}")
+    raise RuntimeError(
+        f"loginAsGuest not ready after {float(wait_timeout_s):g} seconds "
+        f"({attempts} attempts): {last_err}"
+    )
 
 
 async def bootstrap_caido(
@@ -83,6 +105,7 @@ async def bootstrap_caido(
     *,
     host_url: str,
     container_url: str,
+    wait_timeout_s: float,
 ) -> Client:
     """Connect to the in-container Caido sidecar and select a fresh project."""
     # The Caido SDK (and its generated GraphQL schema) is slow to import and is
@@ -93,7 +116,11 @@ async def bootstrap_caido(
 
     logger.info("Bootstrapping Caido client (host=%s, container=%s)", host_url, container_url)
 
-    access_token = await _login_as_guest(session, container_url=container_url)
+    access_token = await _login_as_guest(
+        session,
+        container_url=container_url,
+        wait_timeout_s=wait_timeout_s,
+    )
 
     client = Client(host_url, auth=TokenAuthOptions(token=access_token))
     try:
