@@ -48,7 +48,7 @@ Security testing for Spring Boot REST applications, from source code or a runnin
 
 **Authentication & CSRF**
 - Default configuration: HTTP Basic and form login for `user`, with a password generated at startup and written to the log
-- `NoOpPasswordEncoder`, `{noop}`, or `InMemoryUserDetailsManager` leave weak credentials; for JWT check issuer, audience, and algorithms
+- `NoOpPasswordEncoder` and `{noop}` store passwords without hashing; `InMemoryUserDetailsManager` alone does not imply weak credentials: inspect the configured passwords and encoder. For JWT check issuer, audience, and algorithms
 - `csrf.disable()` or a broad `ignoringRequestMatchers` weakens the default: replay POST, PUT, and DELETE with a session cookie and no token
 
 ### REST Controllers
