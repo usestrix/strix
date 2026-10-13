@@ -78,7 +78,7 @@ Test: `PUT /api/users/{id}` with `{"role":"ADMIN"}` as a regular user, then read
 - Nested objects need `@Valid` on the field, and a plain `@Valid` does not validate a `Collection` or `Map` body; `BindingResult` after a validated argument suppresses rejection, so read the handler body
 
 **Expression Language Injection**
-- Input reaching `SpelExpressionParser`, `StandardEvaluationContext`, SpEL in `@Value`/`@Query`, or a Thymeleaf view name is evaluated as code
+- Trace whether attacker-controlled text is parsed and evaluated as an expression through `SpelExpressionParser`, SpEL in `@Value`/`@Query`, or Thymeleaf template or view-name construction. Values supplied through `StandardEvaluationContext` or bound to a fixed expression are not automatically evaluated as code
 - A violation message built from input can reach Hibernate Validator's Expression Language; interpolation of custom messages is disabled by default in current releases
 
 Vulnerable patterns:
