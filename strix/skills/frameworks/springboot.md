@@ -143,7 +143,7 @@ Test: send a type id (`{"payload":{"@class":"<class name>"}}`) outside the inten
 ## Validation Requirements
 
 - Exposure and authorization: identities or alternate paths compared for the same action or object; a 200 alone is insufficient
-- CSRF and CORS: a state change accepted without a valid token, or a foreign `Origin` reflected with credentials
+- CSRF: demonstrate an attacker's page causing a state change with the victim's credentials and without a valid token. CORS: demonstrate an attacker's page reading a sensitive response with the victim's credentials; reflected `Origin` headers alone are a lead, not proof
 - Over-binding and expression injection: a privileged field accepted with the resulting state change, or a deterministic oracle (`${7*7}` returning `49`) and the evaluating sink
 - Deserialization and outbound requests: untrusted input reaching the sink or the resolved host reached (bounded callback where feasible)
 - Sessions: pre/post-login identifiers, old-cookie validity, or post-logout replay
