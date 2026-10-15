@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
@@ -68,7 +68,7 @@ async def _run(
         coordinator,
         "root",
         input_data="task",
-        run_config=cast("RunConfig", object()),
+        run_config=RunConfig(),
         context={},
         max_turns=5,
         session=None,
@@ -122,7 +122,7 @@ async def test_run_agent_loop_binds_agent_context_and_resets(
     await execution.run_agent_loop(
         agent=_Agent(),
         initial_input="task",
-        run_config=cast("RunConfig", object()),
+        run_config=RunConfig(),
         context={},
         max_turns=1,
         coordinator=coordinator,

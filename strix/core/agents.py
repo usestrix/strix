@@ -50,6 +50,7 @@ class AgentRuntime:
     resumable: bool = True
     wake: asyncio.Event = field(default_factory=asyncio.Event)
     mailbox: list[dict[str, Any]] = field(default_factory=list)
+    mailbox_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     user_wake_required: bool = False
 
 
@@ -373,6 +374,50 @@ class AgentCoordinator:
         logger.info("agent.status %s=%s", agent_id, status)
         await self._maybe_snapshot()
 
+    async def has_pending(self, agent_id: str) -> bool:
+        """Whether accepted messages still need to enter the agent's context."""
+        async with self._lock:
+            runtime = self.runtimes.get(agent_id)
+            return self.pending_counts.get(agent_id, 0) > 0 or bool(runtime and runtime.mailbox)
+
+    async def complete_if_no_pending(
+        self, agent_id: str, *, parent_message: dict[str, Any] | None = None
+    ) -> tuple[bool, bool]:
+        """Atomically settle an empty inbox and queue the parent's completion notice.
+
+        Return (completed, parent_notified). The parent must never observe a
+        completed child before that child's report is available in its inbox.
+        """
+        stream = None
+        notified = False
+        async with self._lock:
+            runtime = self.runtimes.get(agent_id)
+            if agent_id not in self.statuses:
+                return False, False
+            if self.pending_counts.get(agent_id, 0) > 0 or (runtime and runtime.mailbox):
+                return False, False
+            parent = self.parent_of.get(agent_id)
+            if (
+                parent_message is not None
+                and parent is not None
+                and parent in self.statuses
+                and agent_id not in self._parent_notified
+                and not self._unreachable_locked(parent)
+            ):
+                recipient = self.runtimes.setdefault(parent, AgentRuntime())
+                recipient.mailbox.append(dict(parent_message))
+                self.pending_counts[parent] = self.pending_counts.get(parent, 0) + 1
+                recipient.wake.set()
+                self._parent_notified.add(agent_id)
+                notified = True
+                if recipient.interrupt_on_message:
+                    stream = recipient.stream
+            self._set_status_locked(agent_id, "completed")
+        if stream is not None:
+            stream.cancel(mode="immediate")
+        await self._maybe_snapshot()
+        return True, notified
+
     def _set_status_locked(
         self, agent_id: str, status: Status | str, *, error: str | None = None
     ) -> None:
@@ -483,38 +528,40 @@ class AgentCoordinator:
         *,
         include_items: bool = False,
     ) -> tuple[int, list[Any]]:
-        """Drain the agent's mailbox into its own SDK session."""
+        """Persist a mailbox batch before acknowledging it; serialize concurrent drains.
+
+        With no session, callers must request the items and insert them into
+        their next input/tool result themselves. Failed writes leave the batch
+        queued, including its order relative to messages accepted during I/O.
+        """
         async with self._lock:
             runtime = self.runtimes.setdefault(agent_id, AgentRuntime())
-            queued = list(runtime.mailbox)
-            runtime.mailbox.clear()
-            count = max(self.pending_counts.get(agent_id, 0), len(queued))
-            self.pending_counts[agent_id] = 0
-            session = runtime.session
-        if count <= 0:
-            return 0, []
-        items = [self._message_to_session_item(m) for m in queued]
-        if items:
-            if session is None:
-                logger.warning(
-                    "agent %s has no SDK session attached; %d queued messages were not persisted",
-                    agent_id,
-                    len(items),
-                )
-            else:
-                try:
-                    async with session_write_lock(session):
-                        await session.add_items(items)
-                except Exception:
-                    logger.exception(
-                        "failed to append %d queued messages to the session of %s",
-                        len(items),
-                        agent_id,
-                    )
-        await self._maybe_snapshot()
-        if not include_items:
-            return count, []
-        return count, items
+        async with runtime.mailbox_lock:
+            async with self._lock:
+                queued = list(runtime.mailbox)
+                count = max(self.pending_counts.get(agent_id, 0), len(queued))
+                session = runtime.session
+            if count <= 0:
+                return 0, []
+            items = [self._message_to_session_item(m) for m in queued]
+            if items:
+                if session is None and not include_items:
+                    logger.warning("agent %s has no session; retaining queued messages", agent_id)
+                    return 0, []
+                if session is not None:
+                    try:
+                        async with session_write_lock(session):
+                            await session.add_items(items)
+                    except Exception:
+                        logger.exception(
+                            "mailbox write failed for %s; retaining messages", agent_id
+                        )
+                        return 0, []
+            async with self._lock:
+                del runtime.mailbox[: len(queued)]
+                self.pending_counts[agent_id] = max(0, self.pending_counts.get(agent_id, 0) - count)
+            await self._maybe_snapshot()
+            return count, items if include_items else []
 
     async def request_stop(self, agent_id: str) -> None:
         async with self._lock:
