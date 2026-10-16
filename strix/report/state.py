@@ -1163,18 +1163,21 @@ def _estimate_response_cost(kwargs: Any, completion_response: Any) -> float | No
         candidates.append(model.rsplit("/", 1)[-1])
 
     for candidate in candidates:
+        models_to_try = [candidate]
         resolved = resolve_litellm_model(candidate)
-        if not resolved:
-            continue
-        try:
-            value = completion_cost(
-                completion_response={"model": resolved, "usage": usage_payload},
-                model=resolved,
-            )
-        except Exception:  # nosec B112  # noqa: BLE001, S112
-            continue
-        if isinstance(value, int | float) and value > 0:
-            return float(value)
+        if resolved and resolved not in models_to_try:
+            models_to_try.append(resolved)
+
+        for target_model in models_to_try:
+            try:
+                value = completion_cost(
+                    completion_response={"model": target_model, "usage": usage_payload},
+                    model=target_model,
+                )
+            except Exception:  # nosec B112  # noqa: BLE001, S112
+                continue
+            if isinstance(value, int | float) and value > 0:
+                return float(value)
     return None
 
 

@@ -217,6 +217,7 @@ async def run_strix_scan(
     status_sink: StatusSink | None = None,
     mcp_connection_requests: list[McpConnectionRequest] | None = None,
     mcp_status_sink: McpStatusSink | None = None,
+    subagent_model: str | None = None,
     root_finish_tool: Tool = finish_scan,
 ) -> RunResultBase | None:
     """Run or resume one Strix scan against a sandbox.
@@ -529,6 +530,7 @@ async def run_strix_scan(
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=scope_context,
+            subagent_model=subagent_model or scan_config.get("subagent_model"),
             supports_images=supports_images,
         )
 
