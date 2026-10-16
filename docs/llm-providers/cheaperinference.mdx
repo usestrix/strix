@@ -1,0 +1,44 @@
+---
+title: "Cheaper Inference"
+description: "Configure Strix with models via Cheaper Inference"
+---
+
+[Cheaper Inference](https://cheaperinference.com) provides an OpenAI-compatible API for models from multiple labs.
+Each model costs 15–60% less than the list price of its lab.
+
+## Setup
+
+```bash
+export STRIX_LLM="openai/gpt-5.4-mini"
+export LLM_API_KEY="ci_live_..."
+export LLM_API_BASE="https://api.cheaperinference.com/v1"
+```
+
+The `openai/` prefix tells Strix to use its OpenAI-compatible client.
+The rest of the value is the Cheaper Inference model ID.
+
+## Available Models
+
+Prefix any Cheaper Inference model ID with `openai/` when you set `STRIX_LLM`:
+
+| Model | Configuration |
+|-------|---------------|
+| GPT-5.4 mini (default) | `openai/gpt-5.4-mini` |
+| GPT-5.4 | `openai/gpt-5.4` |
+| Claude Sonnet 5 | `openai/claude-sonnet-5` |
+| Gemini 3.1 Pro | `openai/gemini-3.1-pro` |
+
+The full model list is at [cheaperinference.com](https://cheaperinference.com/#models).
+
+## Get API Key
+
+1. Sign up at [cheaperinference.com](https://cheaperinference.com/signup)
+2. Create an API key
+3. Set the key as `LLM_API_KEY`
+
+## Benefits
+
+- **OpenAI-compatible** — Drop-in replacement using `LLM_API_BASE`
+- **Tool calling** — Models support tool/function calling
+- **Structured output** — Models support JSON schema output
+- **Vision** — Some models accept image input
