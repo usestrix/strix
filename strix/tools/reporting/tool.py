@@ -270,7 +270,17 @@ def _with_warning(result: dict[str, Any], warning: str | None) -> dict[str, Any]
         result["warning"] = warning
     return result
 
+# Dynamically-proven finding sub-classes that a reporting agent may set on
+# ``create_vulnerability_report``. ``dynamic`` is the default catch-all.
+# ``client_side_path_traversal`` (CSPT) is called out explicitly so the
+# finding is machine-separable from server-side path traversal / LFI / RFI,
+# which share CWE-22 but are a distinct vulnerability class (see the
+# ``client_side_path_traversal`` skill). ``dependency_cve`` is reserved for
+# ``create_dependency_report`` and is not selectable here.
+_VALID_FINDING_CLASS = frozenset({"dynamic", "client_side_path_traversal"})
 
+
+async def _do_create(  # noqa: PLR0912, PLR0915
 def _validate_cvss_breakdown(breakdown: Any) -> list[str]:
     """Check the 8 CVSS metrics are all present with legal values."""
     if not isinstance(breakdown, dict) or not breakdown:
@@ -803,6 +813,7 @@ async def _do_create(
     confidence_rationale: str | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
+    finding_class: str | None = None,
     agent_id: str | None = None,
     agent_name: str | None = None,
 ) -> dict[str, Any]:
@@ -837,6 +848,37 @@ async def _do_create(
             f"Invalid fix_effort: {fix_effort!r}. Must be one of: {sorted(_VALID_FIX_EFFORT)}"
         )
 
+    finding_class = (finding_class or "dynamic").strip().lower()
+    if finding_class not in _VALID_FINDING_CLASS:
+        errors.append(
+            f"Invalid finding_class: {finding_class!r}. Must be one of: "
+            f"{sorted(_VALID_FINDING_CLASS)}"
+        )
+
+    # CSPT findings are typically locationless (the bug lives in a JS bundle,
+    # not a server route), so they anchor to SECURITY.md in SARIF. Without a
+    # discriminator, multiple distinct CSPT findings collapse onto the same
+    # synthetic fingerprint. Require the traversed endpoint/method or a
+    # physical code location so each one stays a separate alert.
+    if finding_class == "client_side_path_traversal":
+        has_endpoint = bool(str(endpoint or "").strip())
+        has_location = bool(_normalize_code_locations(code_locations))
+        if not (has_endpoint or has_location):
+            errors.append(
+                "finding_class 'client_side_path_traversal' requires a discriminator: "
+                "set endpoint (the traversed target path, e.g. '/admin/keys') and method, "
+                "or a code_location for the vulnerable client sink. Locationless CSPT "
+                "findings otherwise collapse onto one SARIF fingerprint."
+            )
+
+    if not isinstance(cvss_breakdown, dict) or not cvss_breakdown:
+        errors.append("cvss_breakdown: must be an object with the 8 CVSS metrics")
+        cvss_breakdown = {}
+    else:
+        for name, valid in _CVSS_VALID.items():
+            value = cvss_breakdown.get(name)
+            if value not in valid:
+                errors.append(f"Invalid {name}: {value}. Must be one of: {valid}")
     errors.extend(_validate_cvss_breakdown(cvss_breakdown))
 
     parsed_locations = _normalize_code_locations(code_locations)
@@ -883,6 +925,7 @@ async def _do_create(
             "poc_script_code": poc_script_code,
             "endpoint": endpoint,
             "method": method,
+            "finding_class": finding_class,
         }
         report_fields: dict[str, Any] = {
             "title": title,
@@ -933,6 +976,27 @@ async def _do_create(
             }
 
         report_id = report_state.add_vulnerability_report(
+            title=title,
+            description=description,
+            severity=severity,
+            impact=impact,
+            target=target,
+            technical_analysis=technical_analysis,
+            poc_description=poc_description,
+            poc_script_code=poc_script_code,
+            remediation_steps=remediation_steps,
+            evidence=evidence,
+            assumptions=assumptions,
+            fix_effort=fix_effort,
+            cvss=cvss_score,
+            cvss_breakdown=cvss_breakdown,
+            endpoint=endpoint,
+            method=method,
+            cve=cve,
+            cwe=cwe,
+            code_locations=parsed_locations,
+            fix_pr_body=fix_pr_body,
+            finding_class=finding_class,
             **report_fields,
             agent_id=agent_id if isinstance(agent_id, str) else None,
             agent_name=agent_name if isinstance(agent_name, str) else None,
@@ -1005,6 +1069,7 @@ async def create_vulnerability_report(
     confidence_rationale: str | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
+    finding_class: str | None = None,
 ) -> str:
     """File a vulnerability report — one report per fully-verified finding.
 
@@ -1410,6 +1475,57 @@ async def create_vulnerability_report(
             fix (summary + rationale). Prose/markdown only — the code
             change itself belongs in ``code_locations``. Omit for
             black-box findings.
+        finding_class: Optional finding sub-class for machine-readable
+            categorization. Defaults to ``"dynamic"``. Set to
+            ``"client_side_path_traversal"`` for a confirmed CSPT finding
+            — attacker-controlled client-side input (URL params, path
+            segments, fragment, ``document.referrer``, ``postMessage``
+            data, browser storage) reaching a browser request sink
+            (``fetch`` / ``XMLHttpRequest`` / ``axios`` / ``$.ajax`` /
+            ``EventSource`` / ``WebSocket``) so the victim's own
+            authenticated browser is steered to an unintended same-origin
+            endpoint. CSPT shares ``CWE-22`` with server-side path
+            traversal / LFI / RFI but is a distinct class; setting this
+            keeps it separated in the report artifacts and SARIF. Do NOT
+            use it for server-side traversal / LFI / RFI (leave those
+            ``dynamic``). See the ``client_side_path_traversal`` skill.
+
+    Example (abbreviated — mirror this structure)::
+
+        title: "Reflected XSS in /search q parameter"
+        description:
+            The **`q`** parameter of `/search` reflects user input into
+            the HTML response without encoding, allowing script
+            injection.
+        technical_analysis:
+            The handler interpolates `q` directly into the page body:
+
+            ```python title=views.py startLineNumber=42 endLineNumber=44
+            html = f"<h2>Results for {q}</h2>"
+            return HttpResponse(html)
+            ```
+
+            No output encoding is applied, so `<script>` executes.
+        poc_description:
+            1. Navigate to `/search?q=<payload>`.
+            2. Observe the payload executes in the victim's browser.
+        poc_script_code:
+            ```
+            GET /search?q=<script>alert(document.domain)</script>
+            ```
+        evidence:
+            Response echoes the payload verbatim:
+
+            ```html
+            <h2>Results for <script>alert(document.domain)</script></h2>
+            ```
+        assumptions:
+            Assumes a victim can be induced to open a crafted link.
+        remediation_steps:
+            Context-encode all user input rendered into HTML; prefer the
+            template engine's auto-escaping over string interpolation.
+        fix_effort: "low"
+
     """
     (
         http_exchange_ids,
@@ -1454,6 +1570,7 @@ async def create_vulnerability_report(
         http_exchange_ids=http_exchange_ids,
         fix_verification=fix_verification,
         fix_pr_body=fix_pr_body,
+        finding_class=finding_class,
         agent_id=agent_id,
         agent_name=agent_name,
     )
