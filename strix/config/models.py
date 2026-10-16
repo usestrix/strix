@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import inspect
 import json
 import logging
@@ -39,7 +40,7 @@ from openai.types.responses.response_usage import ResponseUsage
 from openai.types.shared import Reasoning
 
 from strix.agents.prompt import CACHE_POINT
-from strix.config import codex
+from strix.config import anthropic_wif, codex
 from strix.config.loader import load_settings
 from strix.config.tool_call_arguments import repair_input
 from strix.config.tool_call_ids import TurnCallIdRewriter, dedupe_input
@@ -51,6 +52,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from agents.agent_output import AgentOutputSchemaBase
+    from agents.extensions.models.litellm_model import LitellmModel
     from agents.handoffs import Handoff
     from agents.items import ModelResponse, TResponseInputItem, TResponseStreamEvent
     from agents.models.interface import ModelTracing
@@ -560,6 +562,39 @@ class _CredentialedLitellmProvider(ModelProvider):
         )
 
 
+@functools.cache
+def _wif_litellm_model_cls() -> type[LitellmModel]:
+    from agents.extensions.models.litellm_model import LitellmModel
+
+    class _WifLitellmModel(LitellmModel):
+        """An Anthropic model authenticated by Workload Identity Federation.
+
+        Every request re-reads the access token, so a scan outlives each
+        short-lived token; the exchange runs off the event loop.
+        """
+
+        async def _fetch_response(self, *args: Any, **kwargs: Any) -> Any:
+            self.api_key = await asyncio.to_thread(anthropic_wif.get_valid_token)
+            return await super()._fetch_response(*args, **kwargs)
+
+    return _WifLitellmModel
+
+
+class _WifLitellmProvider(ModelProvider):
+    """LiteLLM route that federates Anthropic models and leaves the rest alone."""
+
+    def __init__(self, fallback: ModelProvider) -> None:
+        self._fallback = fallback
+
+    def get_model(self, model_name: str | None) -> Model:
+        from agents.models.default_models import get_default_model
+
+        name = model_name or get_default_model()
+        if not anthropic_wif.is_anthropic_model(name):
+            return self._fallback.get_model(model_name)
+        return _wif_litellm_model_cls()(model=name)
+
+
 class StrixProvider(MultiProvider):
     """Route any non-OpenAI prefix through LiteLLM with the prefix preserved,
     so users type ``deepseek/deepseek-chat`` rather than
@@ -591,7 +626,14 @@ class StrixProvider(MultiProvider):
     def _create_fallback_provider(self, prefix: str) -> ModelProvider:
         if prefix == "litellm" and (self._override_api_key or self._override_base_url):
             return _CredentialedLitellmProvider(self._override_api_key, self._override_base_url)
-        return super()._create_fallback_provider(prefix)
+        provider = super()._create_fallback_provider(prefix)
+        if (
+            prefix == "litellm"
+            and not load_settings().llm.api_key
+            and anthropic_wif.is_configured()
+        ):
+            return _WifLitellmProvider(provider)
+        return provider
 
     def _resolve_prefixed_model(
         self,
@@ -710,6 +752,9 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
         return
     _configure_litellm_compatibility()
     _configure_openrouter_attribution(llm.model)
+    if anthropic_wif.applies(llm.model, llm.api_key):
+        # Fail at startup, not on the first turn, when the federation is misconfigured.
+        anthropic_wif.get_valid_token()
     if llm.api_key:
         set_default_openai_key(llm.api_key, use_for_tracing=False)
         _configure_litellm_default("api_key", llm.api_key)

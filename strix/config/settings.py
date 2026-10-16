@@ -212,11 +212,36 @@ class ViewerSettings(BaseSettings):
     app_url: str = Field(default="https://app.strix.ai", alias="STRIX_APP_URL")
 
 
+class AnthropicWifSettings(BaseSettings):
+    """Anthropic Workload Identity Federation, under the Anthropic SDKs' own env names.
+
+    ``ANTHROPIC_IDENTITY_TOKEN_COMMAND`` is Strix-only: a command whose stdout is
+    the JWT. The literal ``ANTHROPIC_IDENTITY_TOKEN`` JWT is read straight from
+    the environment instead, so it never lands in the persisted config file.
+    """
+
+    model_config = _BASE_CONFIG
+
+    federation_rule_id: str | None = Field(default=None, alias="ANTHROPIC_FEDERATION_RULE_ID")
+    organization_id: str | None = Field(default=None, alias="ANTHROPIC_ORGANIZATION_ID")
+    service_account_id: str | None = Field(default=None, alias="ANTHROPIC_SERVICE_ACCOUNT_ID")
+    workspace_id: str | None = Field(default=None, alias="ANTHROPIC_WORKSPACE_ID")
+    identity_token_file: str | None = Field(default=None, alias="ANTHROPIC_IDENTITY_TOKEN_FILE")
+    identity_token_command: str | None = Field(
+        default=None, alias="ANTHROPIC_IDENTITY_TOKEN_COMMAND"
+    )
+    # Defaults for `strix auth login entra`: the Entra tenant, and the app registration
+    # that is both the OAuth client and the token audience.
+    entra_tenant_id: str | None = Field(default=None, alias="STRIX_ENTRA_TENANT_ID")
+    entra_app_id: str | None = Field(default=None, alias="STRIX_ENTRA_APP_ID")
+
+
 class Settings(BaseSettings):
     model_config = _BASE_CONFIG
 
     llm: LlmSettings = Field(default_factory=LlmSettings)
     dedupe: DedupeSettings = Field(default_factory=DedupeSettings)
+    anthropic_wif: AnthropicWifSettings = Field(default_factory=AnthropicWifSettings)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     context: ContextSettings = Field(default_factory=ContextSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
