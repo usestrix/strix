@@ -26,6 +26,8 @@ def _missing_web_search_vars(integrations: IntegrationSettings) -> list[str]:
         return [] if integrations.exa_api_key else ["EXA_API_KEY"]
     if integrations.web_search_provider == "perplexity":
         return [] if integrations.perplexity_api_key else ["PERPLEXITY_API_KEY"]
+    if integrations.web_search_provider == "parallel":
+        return [] if integrations.parallel_api_key else ["PARALLEL_API_KEY"]
     if integrations.exa_api_key or integrations.perplexity_api_key:
         return []
     return ["EXA_API_KEY", "PERPLEXITY_API_KEY"]
@@ -111,6 +113,9 @@ def validate_environment() -> None:
                         " - API key for Exa web search (enables real-time research)\n",
                         style="white",
                     )
+                elif var == "PARALLEL_API_KEY":
+                    error_text.append("• PARALLEL_API_KEY", style="bold cyan")
+                    error_text.append(" - API key for Parallel web search\n", style="white")
                 elif var == "STRIX_REASONING_EFFORT":
                     error_text.append("• ", style="white")
                     error_text.append("STRIX_REASONING_EFFORT", style="bold cyan")
@@ -137,6 +142,10 @@ def validate_environment() -> None:
                     )
                 elif var == "EXA_API_KEY":
                     error_text.append("export EXA_API_KEY='your-exa-key-here'\n", style="dim white")
+                elif var == "PARALLEL_API_KEY":
+                    error_text.append(
+                        "export PARALLEL_API_KEY='your-parallel-key-here'\n", style="dim white"
+                    )
                 elif var == "STRIX_REASONING_EFFORT":
                     error_text.append(
                         "export STRIX_REASONING_EFFORT='high'\n",
