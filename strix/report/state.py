@@ -806,22 +806,27 @@ class ReportState:
         self.save_run_data(status=status)
 
     def _format_final_scan_result(self, scan_results: dict[str, Any]) -> str:
-        return f"""# Executive Summary
+        def section(heading: str, content: object) -> str:
+            # The agent is asked for section prose and often prepends the very
+            # heading this template already emits (e.g. "# Executive Summary"),
+            # which doubled every H1 in penetration_test_report.md. Strip a
+            # leading heading line from the content when it duplicates the
+            # template heading. Case-insensitive; only the FIRST line is
+            # examined, so a repeated heading later in the body is untouched.
+            text = str(content or "").strip()
+            first_line, _, rest = text.partition("\n")
+            if first_line.strip().lstrip("#").strip().lower() == heading.lstrip("#").strip().lower() and first_line.lstrip().startswith("#"):
+                text = rest.strip()
+            return f"{heading}\n\n{text}"
 
-{str(scan_results.get("executive_summary", "")).strip()}
-
-# Methodology
-
-{str(scan_results.get("methodology", "")).strip()}
-
-# Technical Analysis
-
-{str(scan_results.get("technical_analysis", "")).strip()}
-
-# Recommendations
-
-{str(scan_results.get("recommendations", "")).strip()}
-"""
+        return "\n\n".join(
+            [
+                section("# Executive Summary", scan_results.get("executive_summary", "")),
+                section("# Methodology", scan_results.get("methodology", "")),
+                section("# Technical Analysis", scan_results.get("technical_analysis", "")),
+                section("# Recommendations", scan_results.get("recommendations", "")),
+            ]
+        ) + "\n"
 
     def _coverage_document(self) -> dict[str, Any] | None:
         """Assemble the coverage record, or None when it can't be built.
