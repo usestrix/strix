@@ -110,6 +110,28 @@ async def test_chat_completions_filesystem_custom_tool_becomes_function_tool() -
     assert isinstance(toolset.read_file, FunctionTool)
 
 
+def test_chat_completions_shell_tool_nullable_parameters_get_a_type() -> None:
+    async def invoke(_ctx: Any, _inp: str) -> str:
+        return "ok"
+
+    toolset = SimpleNamespace(
+        exec_command=FunctionTool(
+            name="exec_command",
+            description="test tool",
+            params_json_schema={
+                "type": "object",
+                "properties": {"workdir": {"anyOf": [{"type": "string"}, {"type": "null"}]}},
+            },
+            on_invoke_tool=invoke,
+            strict_json_schema=False,
+        )
+    )
+    factory._configure_shell_tools(toolset, chat_completions=True)
+
+    properties = toolset.exec_command.params_json_schema["properties"]
+    assert properties["workdir"] == {"type": ["string", "null"]}
+
+
 def test_function_tools_are_result_bounded() -> None:
     agent = factory.build_strix_agent(is_root=True)
     by_name = {t.name: t for t in agent.tools}
