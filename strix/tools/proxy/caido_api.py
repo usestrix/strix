@@ -127,6 +127,25 @@ async def close_client() -> None:
     await client.aclose()
 
 
+def _normalize_optional_id(value: str | None, *, name: str) -> str | None:
+    if value is None:
+        return None
+
+    normalized = value.strip()
+    if not normalized or normalized.lower() in {"null", "none", "undefined"}:
+        return None
+
+    try:
+        numeric_id = int(normalized, 10)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer-shaped Caido ID") from exc
+
+    if not -(2**31) <= numeric_id < 2**31:
+        raise ValueError(f"{name} must fit in a signed 32-bit integer")
+
+    return str(numeric_id)
+
+
 async def list_requests_with_client(
     client: CaidoClient,
     *,
@@ -137,6 +156,8 @@ async def list_requests_with_client(
     sort_order: SortOrder = "desc",
     scope_id: str | None = None,
 ) -> Any:
+    scope_id = _normalize_optional_id(scope_id, name="scope_id")
+
     builder = client.request.list().first(first)
     if httpql_filter:
         builder = builder.filter(httpql_filter)
@@ -651,6 +672,9 @@ async def list_sitemap_with_client(
     pagination, so we fetch all edges for the requested level and slice
     client-side.
     """
+    scope_id = _normalize_optional_id(scope_id, name="scope_id")
+    parent_id = _normalize_optional_id(parent_id, name="parent_id")
+
     if parent_id:
         raw = await client.graphql.query(
             _SITEMAP_DESCENDANTS_QUERY,
