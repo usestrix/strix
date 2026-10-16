@@ -103,6 +103,62 @@ def _structured_provider_refusal(result: Any) -> str | None:
     return None
 
 
+# Plain-text refusals: the model answers with refusal text (no structured
+# ``refusal`` content) instead of calling a lifecycle tool. An autonomous run
+# would nudge that up to ``max_turns`` times and then crash as if the agent had
+# merely stalled (#1155). Single words like "cannot" or "as an AI" also appear
+# in ordinary turns ("I cannot reproduce the issue", quoted page content), so
+# only action-anchored phrases count on their own.
+_STRONG_REFUSAL_PHRASES: frozenset[str] = frozenset(
+    {
+        "i cannot help",
+        "i cannot assist",
+        "i can't help",
+        "i can't assist",
+        "cannot help with",
+        "cannot assist",
+        "unable to help",
+        "unable to assist",
+        "i will not help",
+        "i will not assist",
+        "refuse to help",
+        "refuse to assist",
+        "i must decline",
+        "i have to decline",
+        "can't help with",
+        "won't help with",
+    }
+)
+
+
+def _extract_final_output_text(result: Any) -> str | None:
+    """Return the final output as stripped text if it is a non-empty string."""
+    final = getattr(result, "final_output", None)
+    if isinstance(final, str) and final.strip():
+        return final.strip()
+    return None
+
+
+def _is_text_refusal(text: str) -> bool:
+    """Heuristic: does plain-text output look like a model safety refusal?
+
+    Uses action-anchored strong phrases plus guarded co-occurrence checks
+    for ambiguous markers to avoid false positives on ordinary turns
+    (e.g. quoted page content or 'I cannot reproduce the issue').
+    """
+    lower = text.lower()
+    if any(phrase in lower for phrase in _STRONG_REFUSAL_PHRASES):
+        return True
+    # Ambiguous markers only count when paired with an inability signal.
+    if "i apologize" in lower and any(k in lower for k in ("cannot", "unable", "won't", "can't")):
+        return True
+    if "as an ai" in lower and any(k in lower for k in ("cannot", "unable", "not able", "won't")):
+        return True
+    return ("safety guidelines" in lower or "my safety" in lower) and any(
+        k in lower for k in ("cannot", "unable", "refuse", "not able", "won't")
+    )
+
+
 def _run_config_model(run_config: RunConfig) -> str | None:
     return run_config.model if isinstance(run_config.model, str) else None
 
@@ -625,6 +681,23 @@ async def _run_until_lifecycle(
         status = await _agent_status(coordinator, agent_id)
         if status != "running" and not silent_yield:
             await coordinator.reset_recovery(agent_id)
+            return result
+
+        # A refusal won't turn into a tool call however often it is nudged, so an
+        # autonomous run fails it now instead of spending the recovery budget.
+        # Interactive runs keep the nudge: plain text is how the agent talks to
+        # the user there, and declining a request is a legitimate reply.
+        refusal_text = None if interactive else _extract_final_output_text(result)
+        if refusal_text is not None and _is_text_refusal(refusal_text):
+            preview = _final_output_preview(result)
+            logger.error(
+                "agent %s refused task (plain-text refusal); failing fast instead of "
+                "retrying without tool call: %s",
+                agent_id,
+                preview,
+            )
+            await coordinator.set_status(agent_id, "failed", error=f"model refusal: {preview}")
+            await notify_parent_on_terminal(coordinator, agent_id, "failed")
             return result
 
         recoveries = await coordinator.record_recovery(agent_id)
