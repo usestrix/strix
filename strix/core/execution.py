@@ -57,9 +57,10 @@ logger = logging.getLogger(__name__)
 
 StreamEventSink = Callable[[str, Any], None]
 
-_INPUT_REJECTION_CODES = frozenset({400, 404, 422})
-# Replies meaning "this model takes no images", not image errors in general: a
-# context overflow that counts "image/vision expansion" must not match.
+_INPUT_REJECTION_CODES = frozenset({400, 404, 415, 422})
+# Replies meaning "this model takes no images" or "this image is not a decodable
+# image"; stripping images and retrying fixes both. Not image errors in general:
+# a context overflow that counts "image/vision expansion" must not match.
 _IMAGE_REJECTION = re.compile(
     r"no endpoints found that support image input"  # OpenRouter
     r"|image_url is only supported by certain models"  # OpenAI
@@ -67,7 +68,16 @@ _IMAGE_REJECTION = re.compile(
     r"|does not support image input"  # LiteLLM's Fireworks check
     r"|doesn't support the image field"  # Bedrock Converse
     r"|unknown variant `image_url`"  # DeepSeek, e.g. via Vercel AI Gateway
-    r"|'[^']*image[^']*' functionality not supported",  # Vercel AI Gateway (AI SDK), unverified
+    r"|'[^']*image[^']*' functionality not supported"  # Vercel AI Gateway (AI SDK), unverified
+    r"|\binvalid_image\b"  # xAI error code
+    r"|does not contain a valid JPG, PNG, WebP, or ICO image"  # xAI
+    r"|unsupported content-type encountered when downloading image"  # xAI
+    r"|does not represent a valid image"  # OpenAI
+    r"|could not process image"  # Anthropic, Bedrock
+    r"|provided image is not valid"  # Gemini
+    r"|could not be loaded as a valid image"  # Mistral
+    r"|url did not return an image"  # OpenRouter
+    r"|not an allowed image type|cannot identify image file",  # vLLM/PIL-based hosts
     re.IGNORECASE,
 )
 _MAX_COMPACTIONS_PER_CYCLE = 2
