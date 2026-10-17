@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING, Any
 
 from strix.report.coverage import (
     _SKILL_PHRASINGS,
+    VULN_CLASSES,
     build_coverage_document,
+    cwe_for_skill,
     read_agent_graph,
     write_coverage,
 )
@@ -84,6 +86,46 @@ def test_assigned_risk_skill_without_coverage_becomes_a_gap() -> None:
     assert [gap["risk_area"] for gap in gaps] == ["sql injection"]
 
 
+def test_substring_match_does_not_hide_a_gap() -> None:
+    """A short class token matches whole words, not substrings: 'brute force' is
+    not RCE coverage, 'enforcement' is not 'rce', 'corridor' is not 'idor'."""
+    cases = [
+        ("rce", "POST /login", "brute force protection"),
+        ("rce", "GET /api/resources/{id}", "object-level authorization"),
+        ("rce", "Access control enforcement", "authorization"),
+        ("idor", "GET /building/corridor/{id}", "information disclosure"),
+    ]
+    for skill, surface, risk in cases:
+        doc = _document(
+            entries=[_entry(surface=surface, risk_area=risk)],
+            agent_graph=_graph(metadata={"agent-1": {"skills": [skill]}}),
+        )
+        classes = [g["risk_area"] for g in doc["gaps"] if g["kind"] == "unrecorded_risk_class"]
+        assert skill.replace("_", " ") in classes, (skill, surface, risk, classes)
+
+
+def test_joined_camelcase_name_counts_as_coverage() -> None:
+    """A row recorded as a joined/CamelCase class name ('DirectoryTraversal')
+    still counts, via the joined-token fallback — no substring matching."""
+    doc = _document(
+        entries=[_entry(risk_area="DirectoryTraversal reviewed", surface="/download")],
+        agent_graph=_graph(metadata={"agent-1": {"skills": ["path_traversal_lfi_rfi"]}}),
+    )
+
+    assert not [g for g in doc["gaps"] if g["kind"] == "unrecorded_risk_class"]
+
+
+def test_simple_plural_still_counts_as_coverage() -> None:
+    """Whole-word matching tolerates a trivial plural, so 'passwords' /
+    'credentials' still cover weak_password_detection."""
+    doc = _document(
+        entries=[_entry(risk_area="weak passwords and credentials reviewed", surface="/login")],
+        agent_graph=_graph(metadata={"agent-1": {"skills": ["weak_password_detection"]}}),
+    )
+
+    assert not [g for g in doc["gaps"] if g["kind"] == "unrecorded_risk_class"]
+
+
 def test_recorded_risk_class_is_not_reported_as_a_gap() -> None:
     doc = _document(
         entries=[_entry(risk_area="SQL injection", surface="GET /search?q=")],
@@ -98,6 +140,148 @@ def test_synonym_phrasing_counts_as_recorded_coverage() -> None:
     doc = _document(agent_graph=_graph(metadata={"agent-1": {"skills": ["idor"]}}))
 
     assert not [gap for gap in doc["gaps"] if gap["kind"] == "unrecorded_risk_class"]
+
+
+def test_cspt_acronym_phrasing_counts_as_recorded_coverage() -> None:
+    """The ledger spells out "Client-Side Path Traversal (CSPT)"; the skill is
+    called client_side_path_traversal."""
+    doc = _document(
+        entries=[
+            _entry(risk_area="Client-Side Path Traversal (CSPT)", surface="GET /app#/profile")
+        ],
+        agent_graph=_graph(metadata={"agent-1": {"skills": ["client_side_path_traversal"]}}),
+    )
+
+    assert not [gap for gap in doc["gaps"] if gap["kind"] == "unrecorded_risk_class"]
+
+
+def test_bundled_skill_partially_tested_flags_untested_subtopics() -> None:
+    """browser_security bundles many surfaces; proving postMessage must not
+    mark client-side path traversal covered."""
+    doc = _document(
+        entries=[_entry(risk_area="postMessage origin validation", surface="window listener")],
+        agent_graph=_graph(metadata={"agent-1": {"skills": ["browser_security"]}}),
+    )
+
+    flagged = {g["risk_area"] for g in doc["gaps"] if g["kind"] == "unrecorded_sub_topic"}
+    assert "client-side path traversal" in flagged
+    assert "postMessage" not in flagged  # the surface that was tested is not re-flagged
+    # a partially-tested bundled skill is not also reported as a wholesale gap
+    assert not [
+        g
+        for g in doc["gaps"]
+        if g["kind"] == "unrecorded_risk_class" and g["risk_area"] == "browser security"
+    ]
+
+
+def test_bundled_skill_wholly_untested_is_a_single_gap() -> None:
+    """A bundled skill nobody touched collapses to one class-level gap, not one
+    per surface — the honest short statement is "not examined"."""
+    doc = _document(
+        entries=[_entry(risk_area="SQL injection", surface="GET /search")],
+        agent_graph=_graph(metadata={"agent-1": {"skills": ["browser_security"]}}),
+    )
+
+    class_gaps = [
+        g
+        for g in doc["gaps"]
+        if g["kind"] == "unrecorded_risk_class" and g["risk_area"] == "browser security"
+    ]
+    assert len(class_gaps) == 1
+    assert "surfaces" in class_gaps[0]["detail"]
+    assert not [g for g in doc["gaps"] if g["kind"] == "unrecorded_sub_topic"]
+
+
+def test_bundled_skill_with_every_surface_covered_is_clean() -> None:
+    """Covering every surface of a bundled skill leaves no coverage gap."""
+    entries = [
+        _entry(risk_area=sub.phrasings[0], surface=sub.label)
+        for sub in VULN_CLASSES["browser_security"].sub_topics
+    ]
+    doc = _document(
+        entries=entries,
+        agent_graph=_graph(metadata={"agent-1": {"skills": ["browser_security"]}}),
+    )
+
+    assert not [
+        g
+        for g in doc["gaps"]
+        if g["kind"] in {"unrecorded_risk_class", "unrecorded_sub_topic"}
+    ]
+
+
+def test_unrelated_agents_row_does_not_cover_a_browser_subtopic() -> None:
+    """An open_redirect agent's 'meta refresh' row must not mark browser_security's
+    navigation surface covered — only a browser_security carrier's row counts."""
+    doc = _document(
+        entries=[
+            _entry(
+                risk_area="postMessage origin validation",
+                surface="listener",
+                agent_id="agent-1",
+                agent_name="browser-tester",
+            ),
+            _entry(
+                risk_area="open redirect via meta refresh",
+                surface="/login?next=",
+                agent_id="agent-2",
+                agent_name="redirect-tester",
+            ),
+        ],
+        agent_graph=_graph(
+            statuses={"agent-1": "completed", "agent-2": "completed"},
+            names={"agent-1": "browser-tester", "agent-2": "redirect-tester"},
+            metadata={
+                "agent-1": {"skills": ["browser_security"]},
+                "agent-2": {"skills": ["open_redirect"]},
+            },
+        ),
+    )
+
+    sub = {g["risk_area"] for g in doc["gaps"] if g["kind"] == "unrecorded_sub_topic"}
+    assert "navigation and redirect control" in sub  # not masked by the open_redirect row
+    assert "postMessage" not in sub  # the browser agent's own row still counts
+
+
+def test_updated_browser_row_keeps_its_carrier_authorship() -> None:
+    """update_coverage overwrites agent_id with the updater's; a browser surface a
+    carrier assessed must still count via the author preserved in history."""
+    doc = _document(
+        entries=[
+            _entry(
+                risk_area="client-side path traversal",
+                surface="fetch from route param",
+                agent_id="agent-2",  # current author after an unrelated update
+                agent_name="redirect-tester",
+                history=[
+                    {
+                        "outcome": "no_issue_found",
+                        "agent_id": "agent-1",  # the carrier who first assessed it
+                        "agent_name": "browser-tester",
+                    }
+                ],
+            ),
+        ],
+        agent_graph=_graph(
+            statuses={"agent-1": "completed", "agent-2": "completed"},
+            names={"agent-1": "browser-tester", "agent-2": "redirect-tester"},
+            metadata={
+                "agent-1": {"skills": ["browser_security"]},
+                "agent-2": {"skills": ["open_redirect"]},
+            },
+        ),
+    )
+
+    sub = {g["risk_area"] for g in doc["gaps"] if g["kind"] == "unrecorded_sub_topic"}
+    assert "client-side path traversal" not in sub  # preserved carrier authorship counts
+
+
+def test_registry_backs_skill_phrasings_and_cwe() -> None:
+    """_SKILL_PHRASINGS is derived from the registry, so they cannot drift."""
+    assert _SKILL_PHRASINGS == {name: v.aliases for name, v in VULN_CLASSES.items()}
+    assert cwe_for_skill("sql_injection") == ("CWE-89",)
+    assert cwe_for_skill("vulnerabilities/ssrf") == ("CWE-918",)
+    assert cwe_for_skill("subdomain_takeover") == ()
 
 
 def test_non_risk_skills_carry_no_coverage_obligation() -> None:

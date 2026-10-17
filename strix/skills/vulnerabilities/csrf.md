@@ -152,6 +152,7 @@ Cross-site request forgery abuses ambient authority (cookies, HTTP auth) across 
 - CSRF + IDOR: force actions on other users' resources once references are known
 - CSRF + Clickjacking: guide user interactions to bypass UI confirmations
 - CSRF + OAuth mix-up: bind victim sessions to unintended clients
+- CSRF + client-side path traversal: a browser-controlled path can retarget a same-origin, credentialed request to a state-changing endpoint, defeating assumptions that only the intended path is called — see `client_side_path_traversal`
 
 ## Testing Methodology
 

@@ -117,6 +117,22 @@ row because the fetch is an intended feature, because the filter is
 operator-configured or empty by default, or because it only runs
 pre-request.
 
+**Client-side request construction.** Enumerate every place a route
+segment, query value, or URL hash flows into a client request URL —
+`fetch`/XHR/axios or any other HTTP client — into a client-router
+navigation, or into a server-side/BFF fetch whose path the client
+shapes. Keep both lines candidate-visible: the decode/normalize step
+(where `../`, `%2f`, `%2e`, a backslash, or double-encoded forms survive)
+and the request-construction sink that consumes the tainted path.
+Promote only when the traversed request has a security-relevant effect —
+a state change (CSRF-like), a response rendered or executed in an unsafe
+sink (XSS), a server-side fetch reaching an internal/privileged target
+(SSRF), an authorization or permission bypass, or disclosure of another
+user's or tenant's data. A router or framework that merely decodes `../`
+with no request sink, or a sink whose redirected request has no
+security-relevant effect, is a false positive — do not report it. Point
+to `client_side_path_traversal`.
+
 **Command and action runners.** Enumerate every attacker-controllable
 argument type and execution mode before you call command injection
 covered. Type-safety maps, unsafe-type denylists, template substitution,
