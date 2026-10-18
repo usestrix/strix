@@ -100,6 +100,15 @@ def test_synonym_phrasing_counts_as_recorded_coverage() -> None:
     assert not [gap for gap in doc["gaps"] if gap["kind"] == "unrecorded_risk_class"]
 
 
+def test_plural_risk_phrase_counts_as_recorded_coverage() -> None:
+    doc = _document(
+        entries=[_entry(risk_area="File uploads")],
+        agent_graph=_graph(metadata={"agent-1": {"skills": ["insecure_file_uploads"]}}),
+    )
+
+    assert not [gap for gap in doc["gaps"] if gap["kind"] == "unrecorded_risk_class"]
+
+
 def test_non_risk_skills_carry_no_coverage_obligation() -> None:
     """Tooling skills describe how an agent works, not what it hunts."""
     doc = _document(agent_graph=_graph(metadata={"agent-1": {"skills": ["idor", "caido"]}}))
@@ -147,6 +156,16 @@ def test_budget_exhausted_run_is_not_a_complete_record() -> None:
 def test_unfinished_agent_makes_the_record_partial() -> None:
     doc = _document(
         agent_graph=_graph(statuses={"agent-1": "crashed"}),
+        exit_reason="finished_by_tool",
+    )
+
+    assert doc["completeness"]["complete"] is False
+    assert "authz-tester" in doc["completeness"]["caveats"][0]
+
+
+def test_failed_agent_makes_the_record_partial() -> None:
+    doc = _document(
+        agent_graph=_graph(statuses={"agent-1": "failed"}),
         exit_reason="finished_by_tool",
     )
 
