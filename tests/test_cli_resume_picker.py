@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 cli_main: Any = importlib.import_module("strix.interface.main")
 
 
-def _write_run(base: Path, name: str, *, state: bool = True) -> None:
+def _write_run(base: Path, name: str, *, state: bool = True, scan_mode: str = "deep") -> None:
     run_dir = base / name
     (run_dir / ".state").mkdir(parents=True)
     (run_dir / "run.json").write_text(
@@ -26,6 +26,7 @@ def _write_run(base: Path, name: str, *, state: bool = True) -> None:
                 "run_name": name,
                 "status": "completed",
                 "start_time": "2026-10-04T10:00:00+00:00",
+                "scan_mode": scan_mode,
                 "targets_info": [
                     {
                         "type": "web_application",
@@ -124,3 +125,36 @@ def test_named_resume_without_agent_state_is_an_error(
         cli_main.parse_arguments()
 
     assert "never reached its first agent snapshot" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("persisted_mode", ["quick", "standard"])
+def test_named_resume_honors_explicit_deep_scan_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, persisted_mode: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_run(
+        tmp_path / "strix_runs",
+        "example-com_1111",
+        scan_mode=persisted_mode,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["strix", "--resume", "example-com_1111", "--scan-mode", "deep"],
+    )
+
+    args = cli_main.parse_arguments()
+
+    assert args.scan_mode == "deep"
+
+
+def test_named_resume_restores_scan_mode_when_flag_is_omitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_run(tmp_path / "strix_runs", "example-com_1111", scan_mode="quick")
+    monkeypatch.setattr(sys, "argv", ["strix", "--resume", "example-com_1111"])
+
+    args = cli_main.parse_arguments()
+
+    assert args.scan_mode == "quick"
