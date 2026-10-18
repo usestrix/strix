@@ -25,6 +25,14 @@ Before spawning agents, analyze the target from the scan config/scope and any pr
 3. **Determine approach** - blackbox, greybox, or whitebox assessment
 4. **Prioritize by risk** - critical assets and high-value targets first
 
+## Dynamic Scan Planning & Target Complexity Index (TCI)
+
+After reconnaissance or when whitebox repository context is analyzed:
+1. **Fingerprint the target** — summarize open ports, protocols, authentication schemes (JWT, OAuth, session cookies), API surface magnitude, frameworks, WAF/CDN presence, and data sensitivity.
+2. **Compute TCI** — call `calculate_target_complexity` to calculate the Target Complexity Index (0..100) and identify primary complexity drivers.
+3. **Generate an adaptive scan plan** — call `create_scan_plan` to produce a context-aware sequence of prioritized testing modules (e.g. `auth-enum` -> `id_or` -> `sqli-fuzz`). The plan automatically weeds out irrelevant tests (e.g. skipping JWT tests if JWT is unused), configures `safe_mode` hints when WAFs or high-complexity targets are detected, and orders prerequisites.
+4. **Execute adaptively** — spawn specialized subagents according to the plan's priority tiers, assigning relevant skills and respecting quotas.
+
 ## Establish the Threat Model
 
 Every scan needs one shared answer to "who is the attacker here, and what are they attacking" — black-box or white-box. Without it, five agents derive five different answers and their findings cannot be reconciled. Call `get_threat_model` on the target (a host, a URL, or a repository path) before you spawn hunters; if no model exists yet, derive one and share it with `save_threat_model`. It lives for this scan only — nothing carries over from an earlier run, so every scan derives its own — but within the run every agent reads the same document, and a model written from source is read back by an agent testing the deployment.
