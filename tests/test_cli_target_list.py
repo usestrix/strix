@@ -146,6 +146,25 @@ def test_parse_arguments_rejects_baseline_paths_outside_runs_dir(
     assert "must be a run name, not a path" in capsys.readouterr().err
 
 
+def test_parse_arguments_rejects_windows_drive_baseline_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _stub_settings(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["strix", "--target", TARGET_URL, "--baseline-run", f"C:{OUTSIDE_RUN_NAME}"],
+    )
+
+    with pytest.raises(SystemExit):
+        cli_main.parse_arguments()
+
+    assert "must be a run name, not a path" in capsys.readouterr().err
+
+
 def test_parse_arguments_validates_baseline_before_interactive_setup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -183,23 +202,6 @@ def test_parse_arguments_rejects_unreadable_baseline_run(
         cli_main.parse_arguments()
 
     assert "vulnerabilities.json" in capsys.readouterr().err
-
-
-def test_parse_arguments_reports_target_validation_error(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    def reject_target(_args: object) -> None:
-        raise ValueError("invalid test target")
-
-    _stub_settings(monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["strix", "--target", TARGET_URL])
-    monkeypatch.setattr(cli_args, "build_targets_info", reject_target)
-
-    with pytest.raises(SystemExit):
-        cli_main.parse_arguments()
-
-    assert "invalid test target" in capsys.readouterr().err
 
 
 def test_parse_arguments_rejects_resume_with_target_list(

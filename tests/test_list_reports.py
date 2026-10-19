@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from strix.report.state import ReportState, set_global_report_state
+from strix.report.state import BASELINE_REPORT_ID_PREFIX, ReportState, set_global_report_state
 from strix.tools.reporting.tool import (
     _do_get_report,
     _do_list_reports,
@@ -234,7 +234,9 @@ def test_hydrate_baseline_run_reads_dedupe_only_findings(
 
     report_state.hydrate_baseline_run(BASELINE_RUN_NAME)
 
-    assert report_state.get_dedupe_vulnerabilities() == [baseline_report]
+    assert report_state.get_dedupe_vulnerabilities() == [
+        {**baseline_report, "id": f"{BASELINE_REPORT_ID_PREFIX}{BASELINE_REPORT_ID}"}
+    ]
     assert report_state.get_existing_vulnerabilities() == []
 
 

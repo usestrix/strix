@@ -14,7 +14,12 @@ from strix.report.dedupe import (
     _prepare_report_for_comparison,
     check_duplicate,
 )
-from strix.report.state import ReportRollbackError, ReportState, set_global_report_state
+from strix.report.state import (
+    BASELINE_REPORT_ID_PREFIX,
+    ReportRollbackError,
+    ReportState,
+    set_global_report_state,
+)
 from strix.report.writer import write_run_record
 from strix.tools.finish.tool import finish_scan
 from strix.tools.reporting import tool as reporting_tool
@@ -49,6 +54,8 @@ _CVSS = {
 
 BASELINE_RUN_NAME = "baseline-run"
 BASELINE_REPORT_ID = "vuln-0042"
+BASELINE_DEDUPE_ID = f"{BASELINE_REPORT_ID_PREFIX}{BASELINE_REPORT_ID}"
+CURRENT_REPORT_TITLE = "Stored XSS in profile"
 BASELINE_REPORT_TITLE = "Baseline SQL injection"
 BASELINE_REPORT_SEVERITY = "high"
 BASELINE_REPORT_TIMESTAMP = "2026-07-27 00:00:00 UTC"
@@ -841,7 +848,9 @@ async def test_dependency_report_dedupe_candidate_includes_dependency_metadata(
     )
 
     assert result["success"] is True
-    assert captured["existing"] == [baseline_report]
+    assert captured["existing"] == [
+        {**baseline_report, "id": f"{BASELINE_REPORT_ID_PREFIX}{baseline_report['id']}"}
+    ]
     assert captured["candidate"] == {
         "title": "CVE-2024-0001 in sample 1.0.0",
         "description": "Published advisory affects the pinned version.",
@@ -879,7 +888,7 @@ async def test_create_report_suppresses_duplicate_from_baseline_run(
         captured["existing"] = existing
         return {
             "is_duplicate": True,
-            "duplicate_id": BASELINE_REPORT_ID,
+            "duplicate_id": BASELINE_DEDUPE_ID,
             "confidence": 1.0,
             "reason": "Same endpoint and root cause.",
         }
@@ -893,6 +902,10 @@ async def test_create_report_suppresses_duplicate_from_baseline_run(
         "target": BASELINE_REPORT_TARGET,
     }
     report_state.load_baseline_vulnerabilities(BASELINE_RUN_NAME, [baseline_report])
+    # This run numbers its findings from vuln-0001 too, so it can hold an
+    # unrelated finding under the baseline finding's raw id.
+    current_report = {"id": BASELINE_REPORT_ID, "title": CURRENT_REPORT_TITLE}
+    report_state.vulnerability_reports = [current_report]
 
     result = await _do_create(
         title=NEW_REPORT_TITLE,
@@ -918,9 +931,62 @@ async def test_create_report_suppresses_duplicate_from_baseline_run(
     )
 
     assert result["success"] is False
-    assert result["duplicate_of"] == BASELINE_REPORT_ID
+    assert result["duplicate_of"] == BASELINE_DEDUPE_ID
     assert result["duplicate_title"] == BASELINE_REPORT_TITLE
-    assert captured["existing"] == [baseline_report]
+    assert result["baseline_run"] == BASELINE_RUN_NAME
+    assert f"baseline run '{BASELINE_RUN_NAME}'" in result["error"]
+    assert "do not revise" in result["error"]
+    assert captured["existing"] == [{**baseline_report, "id": BASELINE_DEDUPE_ID}, current_report]
+    assert report_state.vulnerability_reports == [current_report]
+
+
+async def test_dependency_report_suppresses_duplicate_from_baseline_run(
+    report_state: ReportState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_check_duplicate(
+        _candidate: dict[str, object],
+        _existing: list[dict[str, object]],
+    ) -> dict[str, object]:
+        return {
+            "is_duplicate": True,
+            "duplicate_id": BASELINE_DEDUPE_ID,
+            "confidence": 1.0,
+            "reason": "Same dependency CVE/package identity",
+        }
+
+    monkeypatch.setattr("strix.report.dedupe.check_duplicate", fake_check_duplicate)
+    report_state.load_baseline_vulnerabilities(
+        BASELINE_RUN_NAME,
+        [{"id": BASELINE_REPORT_ID, "title": BASELINE_REPORT_TITLE}],
+    )
+
+    result = await _do_create_dependency(
+        title="CVE-2024-0001 in sample 1.0.0",
+        description="Published advisory affects the pinned version.",
+        target="repo/package.json",
+        cve="CVE-2024-0001",
+        package_name="sample",
+        installed_version="1.0.0",
+        impact="Low-impact dependency advisory.",
+        remediation_steps="Upgrade to 1.0.1.",
+        assumptions="Assumes the package is included in deployed builds.",
+        package_ecosystem="npm",
+        manifest_path="package-lock.json",
+        fixed_version="1.0.1",
+        cwe=None,
+        advisory_cvss=0.0,
+        technical_analysis=None,
+        fix_effort="low",
+        reachability="imported",
+        reachability_evidence=_DEP_EVIDENCE,
+        contextual_cvss_breakdown=_DEP_CONTEXT,
+        contextual_cvss_reasoning=_DEP_REASONING,
+    )
+
+    assert result["success"] is False
+    assert result["duplicate_of"] == BASELINE_DEDUPE_ID
+    assert result["baseline_run"] == BASELINE_RUN_NAME
     assert not report_state.vulnerability_reports
 
 

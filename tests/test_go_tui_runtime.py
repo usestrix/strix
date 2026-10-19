@@ -23,7 +23,7 @@ from strix.interface.tui import sidecar
 from strix.interface.tui.backend import server as server_module
 from strix.interface.tui.backend.protocol import PROTOCOL_CAPABILITIES
 from strix.interface.tui.runtime import GoTuiRuntime
-from strix.report.state import ReportState
+from strix.report.state import BASELINE_REPORT_ID_PREFIX, ReportState
 
 
 def args() -> argparse.Namespace:
@@ -104,7 +104,9 @@ async def test_init_run_state_hydrates_selected_baseline(
 
     runtime.init_run_state()
 
-    assert runtime.report_state.get_dedupe_vulnerabilities() == [baseline_report]
+    assert runtime.report_state.get_dedupe_vulnerabilities() == [
+        {**baseline_report, "id": f"{BASELINE_REPORT_ID_PREFIX}{baseline_report['id']}"}
+    ]
     assert runtime.report_state.get_existing_vulnerabilities() == []
 
 
