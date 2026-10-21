@@ -619,6 +619,8 @@ def _finish_tool_use_behavior(
     return ToolsToFinalOutputResult(is_final_output=False, final_output=None)
 
 
+_COVERAGE_TOOLS: tuple[Tool, ...] = (record_coverage, update_coverage, list_coverage)
+
 _BASE_TOOLS: tuple[Tool, ...] = (
     think,
     load_skill,
@@ -726,6 +728,7 @@ def build_strix_agent(
     supports_images: bool = True,
     finish_tool: Tool = finish_scan,
     report_tool: Tool = create_vulnerability_report,
+    coverage_tools: bool = True,
 ) -> SandboxAgent[Any]:
     """Build a SandboxAgent for either root or child use.
 
@@ -741,6 +744,8 @@ def build_strix_agent(
         finish_tool: The tool that ends the run, given to the root agent.
         report_tool: The tool every agent files findings with, in place of
             ``create_vulnerability_report``.
+        coverage_tools: Give the agent the coverage ledger tools and the
+            prompt rules for them.
     """
     if instructions_override is not None:
         instructions = instructions_override
@@ -756,6 +761,7 @@ def build_strix_agent(
             system_prompt_context=system_prompt_context,
             supports_images=supports_images,
             report_tool=report_tool.name,
+            coverage_tools=coverage_tools,
         )
 
     agent_tools = [*_EXTRA_TOOLS, *(extra_tools or [])]
@@ -763,6 +769,8 @@ def build_strix_agent(
         # Yielding to the user is only meaningful when one is attached.
         agent_tools.append(wait_for_user)
     base_tools = [report_tool if t is create_vulnerability_report else t for t in _BASE_TOOLS]
+    if not coverage_tools:
+        base_tools = [t for t in base_tools if t not in _COVERAGE_TOOLS]
     if is_root:
         tools: list[Tool] = [*base_tools, *agent_tools, finish_tool]
     else:
@@ -821,6 +829,7 @@ def make_child_factory(
     system_prompt_context: dict[str, Any] | None = None,
     supports_images: bool = True,
     report_tool: Tool = create_vulnerability_report,
+    coverage_tools: bool = True,
 ) -> Any:
     """Return the runner-owned builder used by ``spawn_child_agent``.
 
@@ -844,6 +853,7 @@ def make_child_factory(
             system_prompt_context=system_prompt_context,
             supports_images=supports_images,
             report_tool=report_tool,
+            coverage_tools=coverage_tools,
         )
 
     return _factory

@@ -180,6 +180,7 @@ def _compose_root_instructions_override(
     system_prompt_context: dict[str, Any],
     supports_images: bool,
     report_tool: str,
+    coverage_tools: bool,
 ) -> str | None:
     if root_instructions_override is None:
         return None
@@ -196,6 +197,7 @@ def _compose_root_instructions_override(
         include_scope=False,
         supports_images=supports_images,
         report_tool=report_tool,
+        coverage_tools=coverage_tools,
     )
     return (
         f"{base_instructions}\n\n"
@@ -229,6 +231,7 @@ async def run_strix_scan(
     mcp_status_sink: McpStatusSink | None = None,
     root_finish_tool: Tool = finish_scan,
     report_tool: Tool = create_vulnerability_report,
+    coverage_tools: bool = True,
     subagent_turn_limits: Mapping[str, int] | None = None,
 ) -> RunResultBase | None:
     """Run or resume one Strix scan against a sandbox.
@@ -255,6 +258,8 @@ async def run_strix_scan(
     ``root_finish_tool`` is the tool the root agent ends the run with.
     ``report_tool`` is the tool every agent files findings with, in place of
     ``create_vulnerability_report``.
+    ``coverage_tools=False`` drops the coverage ledger tools and their prompt
+    rules from every agent.
     ``subagent_turn_limits`` maps a skill name to a soft turn limit for sub-agents
     spawned with that skill (the largest applies). Agents are warned 10 turns
     before it and reminded past it, but never stopped.
@@ -515,6 +520,7 @@ async def run_strix_scan(
             system_prompt_context=root_context,
             supports_images=supports_images,
             report_tool=report_tool.name,
+            coverage_tools=coverage_tools,
         )
 
         root_agent = build_strix_agent(
@@ -533,6 +539,7 @@ async def run_strix_scan(
             supports_images=supports_images,
             finish_tool=root_finish_tool,
             report_tool=report_tool,
+            coverage_tools=coverage_tools,
         )
 
         if not is_resume:
@@ -555,6 +562,7 @@ async def run_strix_scan(
             system_prompt_context=scope_context,
             supports_images=supports_images,
             report_tool=report_tool,
+            coverage_tools=coverage_tools,
         )
 
         async def spawn_child_agent(**kwargs: Any) -> dict[str, Any]:

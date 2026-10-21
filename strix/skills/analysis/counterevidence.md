@@ -33,8 +33,8 @@ that sentence, you are not in `ruled_out`.
 **3. `open_proof_gap`** — the candidate is plausible, you could not
 confirm it, and you also could not name a control that rules it out. This
 is a legitimate, expected outcome. Record it with
-`record_coverage(outcome="needs_follow_up")`, carry it up in
-`agent_finish(open_items=[...])`, and reflect it in `counterevidence` /
+`record_coverage(outcome="needs_follow_up")` if you have that tool, carry
+it up in `agent_finish(open_items=[...])`, and reflect it in `counterevidence` /
 `confidence_rationale` if you file a related report. Do **not** convert
 it to `ruled_out` to tidy up your worklist.
 
@@ -99,8 +99,8 @@ do not delete it.
 
 ## Recording Closure
 
-Closure is only useful if it is written down. Every surface you assess
-gets a `record_coverage` entry:
+Closure is only useful if it is written down. If you have the coverage
+tools, every surface you assess gets a `record_coverage` entry:
 
 - `confirmed` → outcome `reported`, once the report is filed.
 - `ruled_out` → outcome `ruled_out`, with the named control in

@@ -104,6 +104,19 @@ def test_report_tool_replaces_create_vulnerability_report() -> None:
         assert "create_vulnerability_report" not in agent.instructions
 
 
+def test_coverage_tools_can_be_turned_off() -> None:
+    coverage = {"record_coverage", "update_coverage", "list_coverage"}
+    for is_root in (True, False):
+        on = factory.build_strix_agent(is_root=is_root)
+        off = factory.build_strix_agent(is_root=is_root, coverage_tools=False)
+        assert coverage <= {t.name for t in on.tools}
+        assert not coverage & {t.name for t in off.tools}
+        assert isinstance(on.instructions, str)
+        assert isinstance(off.instructions, str)
+        assert "- COVERAGE" in on.instructions
+        assert "- COVERAGE" not in off.instructions
+
+
 def test_instructions_override_is_used_verbatim() -> None:
     custom = "You are a scan agent. Follow the provided scope."
 

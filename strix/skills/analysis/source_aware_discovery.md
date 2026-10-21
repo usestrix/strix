@@ -207,5 +207,5 @@ maintainability complaints, and cosmetic variants of a candidate you
 already opened.
 
 Keep reading until no distinct plausible candidate remains — then record
-what you swept with `record_coverage`, including the families that came
-back clean.
+what you swept with `record_coverage` (if you have it), including the
+families that came back clean.

@@ -637,13 +637,13 @@ async def agent_finish(
     doing: what did you test, what did you find/confirm/rule out,
     what's still open.
 
-    **Close out honestly.** Before calling this, every surface you
-    assessed should have a ``record_coverage`` entry, and anything you
-    could neither confirm nor rule out belongs in ``open_items`` — an
-    unresolved candidate handed up to the parent is useful, a silently
-    dropped one is a missed vulnerability. Reporting nothing and
-    listing no open items asserts the area is clean; only say that if
-    you mean it.
+    **Close out honestly.** Before calling this, every surface you assessed
+    should have a ``record_coverage`` entry if you have that tool.
+    Anything you could neither confirm nor rule out belongs in
+    ``open_items`` — an unresolved candidate handed up to the parent is
+    useful, a silently dropped one is a missed vulnerability. Reporting
+    nothing and listing no open items asserts the area is clean; only
+    say that if you mean it.
 
     Args:
         result_summary: What you accomplished and discovered. Concrete
