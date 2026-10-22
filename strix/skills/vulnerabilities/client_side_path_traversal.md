@@ -41,7 +41,7 @@ Minimal shape of the primitive — a profile viewer whose id comes from the rout
 ```text
 app route:   /users/<id>
 app builds:  fetch(`/api/users/${id}`)
-attacker id: ../../admin/settings   (or ..%2f..%2fadmin%2fsettings)
+attacker id: ../admin/settings      (or ..%2fadmin%2fsettings)
 final req:   GET /api/admin/settings   <- traversal survived into the sink
 ```
 
@@ -109,7 +109,7 @@ Prove the impact-class-specific fact before calling it exploitable:
 
 File a confirmed CSPT as a vulnerability report with `finding_class="client_side_path_traversal"` and `cwe="CWE-22"`. It shares CWE-22 with server-side traversal, so the class is what keeps it a separate finding.
 
-- Give it a discriminator: `endpoint` set to the traversed target path the victim's request reached (e.g. `/api/admin/keys`) plus its `method`, or a `code_location` with a repo-relative `file` and `start_line` for the client sink.
+- Give it a discriminator: `endpoint` set to the page route that carries the attacker-controlled source (e.g. `/invoice` for `/invoice?doc=`) plus its `method`, or a `code_location` with a repo-relative `file` and `start_line` for the client sink. Keep the destination your payload reached out of `endpoint`, so the bug keeps one identity whichever destination you demonstrate.
 - Use this class when page code builds the redirected request from browser input, including a request that lands on a BFF route that forwards it. When the server builds the traversed path itself from a parameter, it is server-side traversal or SSRF: leave `finding_class` as `dynamic`.
 - Put the source value, the final request (method + path), the paired control, and the observed effect in the PoC and evidence.
 
@@ -117,7 +117,7 @@ File a confirmed CSPT as a vulnerability report with `finding_class="client_side
 
 - Decode/normalization of `../` with no request sink downstream — the value never shapes a request.
 - A sink whose redirected request has no security-relevant effect (static asset, idempotent read of already-authorized data, dead/404 path).
-- Same-origin-only redirection to an equally-authorized endpoint — the principal could already call it directly.
+- Redirection to an endpoint where the victim's session adds nothing: a public or idempotent read whose response the attacker never sees. A state-changing request sent with the victim's session is still a finding, even though the victim could call it directly.
 - A framework that re-encodes or segment-normalizes before the sink, so the traversal does not survive into the final request.
 
 ## Pro Tips

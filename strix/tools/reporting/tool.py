@@ -872,7 +872,8 @@ async def _do_create(
             errors.append(
                 "finding_class 'client_side_path_traversal' needs a discriminator SARIF "
                 "can anchor, or distinct CSPT findings collapse onto one fingerprint: set "
-                "endpoint (the traversed target path, e.g. '/admin/keys') and method, or a "
+                "endpoint (the page route that carries the attacker-controlled source, e.g. "
+                "'/invoice', not the path the payload reached) and method, or a "
                 "code_location with a repo-relative file and start line (not an absolute or "
                 "drive path, which SARIF drops)."
             )
@@ -1453,9 +1454,10 @@ async def create_vulnerability_report(
             class; setting this keeps it separated in the report
             artifacts and SARIF (do NOT use it for server-side
             traversal — leave those ``dynamic``). A CSPT report must
-            also carry a discriminator: ``endpoint`` (the traversed
-            target path) and ``method``, or a ``code_location`` for the
-            client sink. See the ``client_side_path_traversal`` skill.
+            also carry a discriminator: ``endpoint`` (the page route
+            that carries the attacker-controlled source, not the path
+            the payload reached) and ``method``, or a ``code_location``
+            for the client sink. See the ``client_side_path_traversal`` skill.
     """
     (
         http_exchange_ids,

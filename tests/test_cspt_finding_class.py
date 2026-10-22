@@ -8,6 +8,7 @@ pure-Python, no browser or network, so they run in ordinary CI.
 
 from __future__ import annotations
 
+import hashlib
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -62,7 +63,7 @@ async def _create(**overrides: Any) -> dict[str, Any]:
         "severity_change_conditions": "A CSRF token on the sink would lower it.",
         "fix_effort": "low",
         "cvss_breakdown": _CVSS,
-        "endpoint": "/api/admin/keys",
+        "endpoint": "/invoice",
         "method": "GET",
         "cve": None,
         "cwe": "CWE-22",
@@ -145,7 +146,7 @@ async def test_create_accepts_a_cspt_finding_with_an_endpoint(report_state: Repo
     assert result["success"] is True, result
     stored = report_state.vulnerability_reports[0]
     assert stored["finding_class"] == "client_side_path_traversal"
-    assert stored["endpoint"] == "/api/admin/keys"
+    assert stored["endpoint"] == "/invoice"
 
 
 async def test_create_reserves_dependency_cve_for_the_dependency_tool(
@@ -181,18 +182,18 @@ async def test_cspt_finding_takes_proof_revisions_like_a_dynamic_one(
 
     result = _do_update(
         report_id=report_id,
-        update_reason="The traversal reaches the key-rotation endpoint, not the listing.",
+        update_reason="The source is the billing invoice route, not the legacy one.",
         fields={
-            "endpoint": "/api/admin/keys/rotate",
-            "method": "POST",
-            "poc_script_code": "POST /invoice?doc=..%2Fadmin%2Fkeys%2Frotate",
+            "endpoint": "/billing/invoice",
+            "method": "GET",
+            "poc_script_code": "GET /billing/invoice?doc=..%2Fadmin%2Fkeys",
             "cvss_breakdown": {**_CVSS, "availability": "H"},
         },
     )
 
     assert result["success"] is True, result
     stored = report_state.vulnerability_reports[0]
-    assert stored["endpoint"] == "/api/admin/keys/rotate"
+    assert stored["endpoint"] == "/billing/invoice"
     assert stored["cvss_breakdown"]["availability"] == "H"
     assert stored["finding_class"] == "client_side_path_traversal"
     assert "dependency_metadata" not in stored
@@ -220,3 +221,12 @@ def test_dedupe_comparison_includes_finding_class() -> None:
     )
 
     assert cleaned.get("finding_class") == "client_side_path_traversal"
+
+
+def test_untitled_keyword_keeps_the_pre_class_synthetic_fingerprint() -> None:
+    """A titled finding whose title yields no keyword (e.g. written in Japanese)
+    keeps the fingerprint it had before finding_class existed."""
+    report = {"title": "反射型クロスサイトスクリプティング", "finding_class": "dynamic"}
+    expected = hashlib.sha256(b"rule:CWE-79|uri:SECURITY.md|synth_class:").hexdigest()
+
+    assert _primary_fingerprint("CWE-79", report, _SECURITY_MD, is_synthetic=True) == expected

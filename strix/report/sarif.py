@@ -1037,8 +1037,10 @@ def _primary_fingerprint(
         # keying on the title alone would collapse them onto one primary
         # fingerprint. _class_token resolves to the discriminating
         # structured field when present.
+        # A titled finding always carried this segment, even with an empty
+        # keyword, so keep it there to leave existing fingerprints unchanged.
         token = _class_token(report)
-        if token:
+        if token or _string_value(report.get("title")):
             parts.append(f"synth_class:{token}")
 
     composite = "|".join(parts)
