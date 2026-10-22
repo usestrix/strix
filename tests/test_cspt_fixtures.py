@@ -37,13 +37,12 @@ _MITIGATIONS = ("/^", ".test(", "allowlist", "hardcoded")
 def _reaches_sink_unguarded(text: str) -> bool:
     """True when the attacker value (``userPath``) reaches a sink-call line."""
     return any(
-        any(sink in line for sink in _SINKS) and "userPath" in line
-        for line in text.splitlines()
+        any(sink in line for sink in _SINKS) and "userPath" in line for line in text.splitlines()
     )
 
 
 def _detect_primitive(text: str) -> str:
-    """"reaches_sink" when an unguarded attacker source reaches a sink path.
+    """ "reaches_sink" when an unguarded attacker source reaches a sink path.
 
     This is the CSPT primitive, not an exploitability verdict — impact is a
     separate, out-of-band step the skill describes.

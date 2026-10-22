@@ -66,6 +66,7 @@ _INCOMPLETE_RUN_STATUSES = frozenset({"failed", "interrupted", "stopped", "runni
 #: so holding one implies no coverage obligation.
 _RISK_SKILL_CATEGORY = "vulnerabilities"
 
+
 @dataclass(frozen=True)
 class SubTopic:
     """One independently-accountable surface of a bundled skill.

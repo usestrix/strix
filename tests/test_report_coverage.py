@@ -204,9 +204,7 @@ def test_bundled_skill_with_every_surface_covered_is_clean() -> None:
     )
 
     assert not [
-        g
-        for g in doc["gaps"]
-        if g["kind"] in {"unrecorded_risk_class", "unrecorded_sub_topic"}
+        g for g in doc["gaps"] if g["kind"] in {"unrecorded_risk_class", "unrecorded_sub_topic"}
     ]
 
 
@@ -278,7 +276,7 @@ def test_updated_browser_row_keeps_its_carrier_authorship() -> None:
 
 def test_registry_backs_skill_phrasings_and_cwe() -> None:
     """_SKILL_PHRASINGS is derived from the registry, so they cannot drift."""
-    assert _SKILL_PHRASINGS == {name: v.aliases for name, v in VULN_CLASSES.items()}
+    assert {name: v.aliases for name, v in VULN_CLASSES.items()} == _SKILL_PHRASINGS
     assert cwe_for_skill("sql_injection") == ("CWE-89",)
     assert cwe_for_skill("vulnerabilities/ssrf") == ("CWE-918",)
     assert cwe_for_skill("subdomain_takeover") == ()

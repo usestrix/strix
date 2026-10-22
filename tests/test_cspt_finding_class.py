@@ -11,6 +11,7 @@ from __future__ import annotations
 from strix.report.coverage import selectable_finding_classes
 from strix.report.dedupe import _prepare_report_for_comparison
 from strix.report.sarif import _class_token, _primary_fingerprint
+from strix.tools.reporting.tool import _VALID_FINDING_CLASSES
 
 
 _SECURITY_MD = [{"physicalLocation": {"artifactLocation": {"uri": "SECURITY.md"}}}]
@@ -62,8 +63,6 @@ def test_same_class_still_reconciles_to_one_fingerprint() -> None:
 def test_valid_finding_classes_are_sourced_from_the_registry() -> None:
     """The selectable CSPT class comes from VULN_CLASSES, not a hand-maintained
     list in the reporting tool."""
-    from strix.tools.reporting.tool import _VALID_FINDING_CLASSES
-
     assert "client_side_path_traversal" in selectable_finding_classes()
     assert "client_side_path_traversal" in _VALID_FINDING_CLASSES
     assert {"dynamic", "dependency_cve"} <= _VALID_FINDING_CLASSES
