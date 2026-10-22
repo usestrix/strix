@@ -73,11 +73,15 @@ class SubTopic:
 
     ``label`` is how the surface is named back to a reader; ``phrasings`` are
     the ledger-row wordings that count as covering it (a row matches when it
-    contains every word of any one phrasing).
+    contains every word of any one phrasing). ``owner_class`` names a dedicated
+    class that also owns the surface: such a surface is matched the way that
+    class is, by any row naming it, since the scan routes it to an agent
+    carrying the dedicated skill rather than the bundled one.
     """
 
     label: str
     phrasings: tuple[str, ...]
+    owner_class: str | None = None
 
 
 @dataclass(frozen=True)
@@ -134,7 +138,8 @@ VULN_CLASSES: dict[str, VulnClass] = {
             SubTopic("postMessage", ("postmessage", "message listener", "window messaging")),
             SubTopic(
                 "client-side path traversal",
-                ("client side path traversal", "cspt", "client side path"),
+                ("client side path traversal", "cspt"),
+                owner_class="client_side_path_traversal",
             ),
             SubTopic("XS-Leaks", ("xs leak", "xs-leaks", "cross origin oracle", "cross site leak")),
             SubTopic(
@@ -156,7 +161,7 @@ VULN_CLASSES: dict[str, VulnClass] = {
     ),
     "business_logic": VulnClass(("business logic", "logic flaw"), cwe=("CWE-840",)),
     "client_side_path_traversal": VulnClass(
-        ("client side path traversal", "cspt", "client side path"),
+        ("client side path traversal", "cspt"),
         cwe=("CWE-22",),
         selectable_finding_class=True,
     ),
@@ -369,22 +374,27 @@ def _entry_authored_by(entry: dict[str, Any], owner_ids: set[str]) -> bool:
     return False
 
 
-def _topics_for(skill: str) -> list[tuple[str | None, list[list[str]]]]:
+def _topics_for(skill: str) -> list[tuple[str | None, list[list[str]], bool]]:
     """The independently-accountable topics a carried skill must cover.
 
     A *bundled* skill (one with declared ``sub_topics``) is accountable per
     surface: proving one does not imply the rest, so each sub-topic is a topic
     of its own. Every other skill has a single implicit topic — the class
     itself, matched by its aliases — which reproduces the original skill-level
-    behaviour exactly. Each topic is ``(label, wordlists)``; the label is
-    ``None`` for the single-topic case.
+    behaviour exactly. Each topic is ``(label, wordlists, carrier_scoped)``;
+    the label is ``None`` for the single-topic case, and ``carrier_scoped``
+    says only rows by the skill's carriers count (a bundled skill's surface
+    that no dedicated class owns).
     """
     vclass = VULN_CLASSES.get(skill)
     if vclass is None:
-        return [(None, _phrasing_wordlists((skill,)))]
+        return [(None, _phrasing_wordlists((skill,)), False)]
     if vclass.sub_topics:
-        return [(st.label, _phrasing_wordlists(st.phrasings)) for st in vclass.sub_topics]
-    return [(None, _phrasing_wordlists(vclass.aliases))]
+        return [
+            (st.label, _phrasing_wordlists(st.phrasings), st.owner_class is None)
+            for st in vclass.sub_topics
+        ]
+    return [(None, _phrasing_wordlists(vclass.aliases), False)]
 
 
 def skill_coverage_gaps(
@@ -426,18 +436,19 @@ def skill_coverage_gaps(
         # A bundled skill's surfaces are only covered by rows from an agent that
         # actually carried that skill. Otherwise an unrelated row that merely
         # shares a word — an open_redirect row mentioning "meta refresh" — would
-        # mask an untested browser surface. Single-topic skills keep the shared
-        # ledger semantics: any row naming the class counts, whoever wrote it.
-        vclass = VULN_CLASSES.get(skill)
-        if vclass is not None and vclass.sub_topics:
-            owner_ids = carrier_ids.get(skill, set())
-            relevant = [e for e in entries if _entry_authored_by(e, owner_ids)]
-        else:
-            relevant = entries
+        # mask an untested browser surface. Single-topic skills, and a surface a
+        # dedicated class owns (client-side path traversal, which the scan sends
+        # to its own agent), keep the shared ledger semantics: any row naming
+        # the class counts, whoever wrote it.
+        owner_ids = carrier_ids.get(skill, set())
+        carrier_rows = [e for e in entries if _entry_authored_by(e, owner_ids)]
         uncovered = [
             (label, wordlists)
-            for label, wordlists in topics
-            if not any(_entry_is_about(entry, wordlists) for entry in relevant)
+            for label, wordlists, carrier_scoped in topics
+            if not any(
+                _entry_is_about(entry, wordlists)
+                for entry in (carrier_rows if carrier_scoped else entries)
+            )
         ]
         if not uncovered:
             continue
@@ -449,7 +460,7 @@ def skill_coverage_gaps(
                 "as clean."
             )
             if len(topics) > 1:
-                surfaces = ", ".join(str(label) for label, _ in topics)
+                surfaces = ", ".join(str(label) for label, _, _ in topics)
                 detail += f" Its surfaces ({surfaces}) are each separately accountable."
             gaps.append(
                 {
