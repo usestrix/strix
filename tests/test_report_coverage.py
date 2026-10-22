@@ -499,3 +499,51 @@ def test_a_root_that_worked_alone_is_held_to_the_rule() -> None:
 
     silent = [gap for gap in doc["gaps"] if gap["kind"] == "agent_recorded_no_coverage"]
     assert [gap["agent_name"] for gap in silent] == ["Root Agent"]
+
+
+def test_inflected_class_names_still_count_as_coverage() -> None:
+    """Agents write "Open redirection", "NoSQLi" and "Information leakage"; a
+    phrasing term of four or more letters matches the start of such a word."""
+    for skill, risk_area in (
+        ("open_redirect", "Open redirection"),
+        ("nosql_injection", "NoSQLi"),
+        ("information_disclosure", "Information leakage"),
+    ):
+        doc = _document(
+            entries=[_entry(risk_area=risk_area, surface="GET /")],
+            agent_graph=_graph(metadata={"agent-1": {"skills": [skill]}}),
+        )
+        assert not [g for g in doc["gaps"] if g["kind"] == "unrecorded_risk_class"], skill
+
+
+def test_browser_surfaces_match_their_skill_headings() -> None:
+    """Rows named after browser_security's own section headings cover them."""
+    doc = _document(
+        entries=[
+            _entry(risk_area="Navigation and Redirect Control", surface="/app"),
+            _entry(risk_area="CSP and Browser Parsing", surface="/app"),
+        ],
+        agent_graph=_graph(metadata={"agent-1": {"skills": ["browser_security"]}}),
+    )
+
+    sub = {g["risk_area"] for g in doc["gaps"] if g["kind"] == "unrecorded_sub_topic"}
+    assert "navigation and redirect control" not in sub
+    assert "CSP and browser parsing" not in sub
+    assert "postMessage" in sub
+
+
+def test_generic_browser_row_names_untested_surfaces_not_nothing_recorded() -> None:
+    """A carrier's generic "Browser security" row is recorded work: the gap is
+    each unnamed surface, not "no coverage entry records this class"."""
+    doc = _document(
+        entries=[_entry(risk_area="Browser security", surface="SPA shell /app")],
+        agent_graph=_graph(metadata={"agent-1": {"skills": ["browser_security"]}}),
+    )
+
+    assert not [
+        g
+        for g in doc["gaps"]
+        if g["kind"] == "unrecorded_risk_class" and g["risk_area"] == "browser security"
+    ]
+    sub = {g["risk_area"] for g in doc["gaps"] if g["kind"] == "unrecorded_sub_topic"}
+    assert "client-side path traversal" in sub

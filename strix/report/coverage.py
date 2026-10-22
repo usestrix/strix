@@ -61,6 +61,9 @@ _INCOMPLETE_AGENT_STATUSES = frozenset({"crashed", "stopped", "running", "waitin
 #: Run statuses that mean the scan itself did not run to completion.
 _INCOMPLETE_RUN_STATUSES = frozenset({"failed", "interrupted", "stopped", "running"})
 
+#: Shortest phrasing term that may match the start of a longer ledger word.
+_MIN_PREFIX_TERM = 4
+
 #: Only this skill category names a vulnerability class. ``tooling`` and
 #: ``reconnaissance`` skills describe how an agent works, not what it hunts,
 #: so holding one implies no coverage obligation.
@@ -149,11 +152,17 @@ VULN_CLASSES: dict[str, VulnClass] = {
             SubTopic("web workers", ("web worker", "worker script")),
             SubTopic(
                 "navigation and redirect control",
-                ("client side redirect", "spa navigation", "history manipulation", "meta refresh"),
+                (
+                    "client side redirect",
+                    "spa navigation",
+                    "history manipulation",
+                    "meta refresh",
+                    "navigation redirect",
+                ),
             ),
             SubTopic(
                 "CSP and browser parsing",
-                ("content security policy", "csp bypass", "trusted types"),
+                ("content security policy", "csp", "trusted types"),
             ),
             SubTopic("local network access", ("local network", "loopback", "dns rebinding")),
             SubTopic("JavaScript gadgets", ("javascript gadget", "gadget chain", "dom gadget")),
@@ -330,8 +339,16 @@ def _term_in_words(term: str, words: set[str]) -> bool:
     unrelated XS-Leaks row would falsely mark XSS covered. A phrasing that
     needs to match a singular row carries the singular spelling as its own
     alias instead.
+
+    A term of four or more letters also matches a row word it starts, so the
+    inflections and suffixed names agents write ("Open redirection",
+    "NoSQLi", "Information leakage") still count. The match is anchored at
+    the start of the word, and short tokens such as ``rce`` and ``xs`` are
+    excluded, so ``rce`` never matches inside ``force``.
     """
-    return term in words or f"{term}s" in words
+    if term in words or f"{term}s" in words:
+        return True
+    return len(term) >= _MIN_PREFIX_TERM and any(word.startswith(term) for word in words)
 
 
 def _entry_is_about(entry: dict[str, Any], phrasings: list[list[str]]) -> bool:
@@ -452,7 +469,19 @@ def skill_coverage_gaps(
         ]
         if not uncovered:
             continue
-        if len(uncovered) == len(topics):
+        # A carrier row that names a bundled skill only generically ("Browser
+        # security") is a record of work, so the gap is its unnamed surfaces,
+        # not "nothing recorded".
+        vclass = VULN_CLASSES.get(skill)
+        named_generically = (
+            vclass is not None
+            and bool(vclass.sub_topics)
+            and any(
+                _entry_is_about(entry, _phrasing_wordlists(vclass.aliases))
+                for entry in carrier_rows
+            )
+        )
+        if len(uncovered) == len(topics) and not named_generically:
             # Nothing about this class was recorded at all — one class-level gap.
             detail = (
                 f"Agent(s) {names} were assigned the '{skill}' skill, but no coverage "
@@ -479,8 +508,8 @@ def skill_coverage_gaps(
                     "skill": skill,
                     "risk_area": str(label),
                     "detail": (
-                        f"Agent(s) {names} carried '{skill}' and recorded coverage for some "
-                        f"of its surfaces, but nothing records '{label}'. Testing one surface "
+                        f"Agent(s) {names} carried '{skill}' and recorded coverage under it, "
+                        f"but nothing records '{label}'. Testing one surface "
                         "of a multi-surface skill does not cover the others — treat "
                         f"'{label}' as unexamined."
                     ),
