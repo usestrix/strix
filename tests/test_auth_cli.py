@@ -52,6 +52,7 @@ def test_status_recommends_a_current_chatgpt_model(
     output = capsys.readouterr().out
     assert codex.SUBSCRIPTION_MODEL_EXAMPLE in output
     assert "chatgpt/gpt-5.4" not in output
+    assert "chatgpt/gpt-5.6-terra" not in output
 
 
 def test_login_rejects_unsupported_provider(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -313,7 +313,7 @@ Instead of a metered API key, you can run Strix on your ChatGPT Plus/Pro subscri
 
 ```bash
 strix auth login chatgpt             # sign in with your ChatGPT account
-export STRIX_LLM="chatgpt/gpt-5.6-terra"   # use a model available in your plan
+export STRIX_LLM="chatgpt/gpt-5.6-luna"    # use a model available in your plan
 strix auth status                    # show the active sign-in, or logout to forget it
 ```
 

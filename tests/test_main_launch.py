@@ -76,16 +76,18 @@ def test_unsupported_subscription_model_hint_uses_current_example(
     monkeypatch.setattr(
         cli_main,
         "load_settings",
-        lambda: SimpleNamespace(llm=SimpleNamespace(model="chatgpt/gpt-5.4")),
+        lambda: SimpleNamespace(llm=SimpleNamespace(model="chatgpt/gpt-5.6-terra")),
     )
 
     hint = cli_main._subscription_error_hint(
-        RuntimeError("The 'gpt-5.4' model is not supported when using Codex with a ChatGPT account")
+        RuntimeError(
+            "The 'gpt-5.6-terra' model is not supported when using Codex with a ChatGPT account"
+        )
     )
 
     assert hint is not None
-    assert "chatgpt/gpt-5.6-terra" in hint
-    assert "chatgpt/gpt-5.4" not in hint
+    assert "chatgpt/gpt-5.6-luna" in hint
+    assert "chatgpt/gpt-5.6-terra" not in hint
 
 
 def test_start_screen_launch_defers_the_model_check_to_the_tui(

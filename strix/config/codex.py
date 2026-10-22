@@ -392,7 +392,7 @@ def get_subscription_client() -> AsyncOpenAI:
 
 
 SUBSCRIPTION_PREFIX = "chatgpt/"
-SUBSCRIPTION_MODEL_EXAMPLE = "chatgpt/gpt-5.6-terra"
+SUBSCRIPTION_MODEL_EXAMPLE = "chatgpt/gpt-5.6-luna"
 
 
 def subscription_model(model_name: str | None) -> str | None:
