@@ -574,7 +574,9 @@ def _fit_revision_to_class(
     exploit onto a dependency record would leave it carrying a package pin next
     to a request against an endpoint, so the proof belongs in its own dynamic
     finding instead. A dependency finding is still re-rated, through the
-    contextual CVSS it was filed with.
+    contextual CVSS it was filed with. Every other class (``dynamic`` and the
+    registry sub-classes such as ``client_side_path_traversal``) is PoC-backed
+    and holds endpoint and request evidence like a dynamic finding.
     """
     matched = next(
         (r for r in report_state.get_existing_vulnerabilities() if r.get("id") == report_id),
@@ -584,15 +586,12 @@ def _fit_revision_to_class(
         return None
 
     matched_class = _finding_class_of(matched)
-    foreign = (
-        _DEPENDENCY_ONLY_UPDATE_FIELDS
-        if matched_class == "dynamic"
-        else _DYNAMIC_ONLY_UPDATE_FIELDS
-    )
+    is_dependency = matched_class == "dependency_cve"
+    foreign = _DYNAMIC_ONLY_UPDATE_FIELDS if is_dependency else _DEPENDENCY_ONLY_UPDATE_FIELDS
     offending = [name for name in foreign if name in changes]
     if offending:
         return _reject_cross_class_revision(report_id, matched_class, offending)
-    if matched_class == "dynamic":
+    if not is_dependency:
         return None
     return _rate_dependency_revision(report_id, matched, changes)
 
@@ -853,11 +852,11 @@ async def _do_create(
     )
     errors.extend(http_exchange_errors)
 
-    finding_class = (finding_class or "dynamic").strip().lower()
-    if finding_class not in _VALID_FINDING_CLASSES:
+    finding_class = (clean_optional(finding_class) or "dynamic").lower()
+    if finding_class not in _CREATABLE_FINDING_CLASSES:
         errors.append(
             f"Invalid finding_class: {finding_class!r}. "
-            f"Must be one of: {sorted(_VALID_FINDING_CLASSES)}"
+            f"Must be one of: {sorted(_CREATABLE_FINDING_CLASSES)}"
         )
     elif finding_class == "client_side_path_traversal":
         # CSPT findings are typically locationless (the bug is in a JS bundle,
@@ -2380,6 +2379,9 @@ _VALID_SEVERITIES = frozenset(_SEVERITY_ORDER)
 # the first registry-sourced member — machine-separable from server-side
 # path traversal / LFI / RFI, which share CWE-22.
 _VALID_FINDING_CLASSES = frozenset({"dynamic", "dependency_cve"}) | selectable_finding_classes()
+# What create_vulnerability_report accepts: ``dependency_cve`` stays reserved for
+# create_dependency_report, which files the package metadata that class needs.
+_CREATABLE_FINDING_CLASSES = _VALID_FINDING_CLASSES - {"dependency_cve"}
 _REPORT_DESCRIPTION_PREVIEW_CHARS = 280
 
 # Compact, listing-safe fields — no full bodies / PoC code / evidence.
@@ -2609,7 +2611,8 @@ async def list_reports(
     Args:
         severity: Filter to one of ``critical`` / ``high`` / ``medium`` /
             ``low`` / ``info`` / ``none``.
-        finding_class: Filter to ``dynamic`` (PoC-backed) or
+        finding_class: Filter to ``dynamic`` (PoC-backed),
+            ``client_side_path_traversal`` (PoC-backed CSPT), or
             ``dependency_cve`` (known-CVE supply-chain).
         target: Substring match against a report's target / endpoint.
         search: Substring match against title and description.
