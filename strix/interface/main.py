@@ -93,7 +93,8 @@ def _subscription_error_hint(exc: BaseException) -> str | None:
     if "not supported when using codex with a chatgpt account" in joined:
         return (
             "This model isn't available on your ChatGPT subscription. "
-            "Set STRIX_LLM to a model your plan includes (e.g. chatgpt/gpt-5.4)."
+            f"Set STRIX_LLM to a model your plan includes "
+            f"(e.g. {codex.SUBSCRIPTION_MODEL_EXAMPLE})."
         )
     if (
         "error code: 401" in joined
@@ -315,8 +316,19 @@ def _print_error_panel(title: str, message: str) -> None:
 def _print_model_connection_error(exc: BaseException) -> None:
     console = Console()
     error_text = Text()
-    sub_hint = _subscription_error_hint(exc)
-    if sub_hint is not None:
+    if codex.is_content_guardrail_error(exc):
+        border_style = "yellow"
+        error_text.append("CHATGPT CYBERSECURITY GUARDRAIL", style="bold yellow")
+        error_text.append("\n\n", style="white")
+        error_text.append(
+            "ChatGPT blocked this model request as a possible cybersecurity risk. "
+            "Strix cannot override the block. For authorized cybersecurity work, review "
+            f"OpenAI's Trusted Access for Cyber program: "
+            f"{codex.TRUSTED_ACCESS_FOR_CYBER_URL}\n",
+            style="white",
+        )
+        error_text.append(f"\nDetails: {exc}", style="dim white")
+    elif (sub_hint := _subscription_error_hint(exc)) is not None:
         border_style = "yellow"
         error_text.append("MODEL NOT AVAILABLE ON SUBSCRIPTION", style="bold yellow")
         error_text.append("\n\n", style="white")

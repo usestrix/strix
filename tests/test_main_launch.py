@@ -70,6 +70,26 @@ def test_direct_launch_verifies_the_model_before_the_tui(monkeypatch: pytest.Mon
     assert _launch(monkeypatch, needs_setup=False) == ["bootstrap", "tui"]
 
 
+def test_unsupported_subscription_model_hint_uses_current_example(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cli_main,
+        "load_settings",
+        lambda: SimpleNamespace(llm=SimpleNamespace(model="chatgpt/gpt-5.6-terra")),
+    )
+
+    hint = cli_main._subscription_error_hint(
+        RuntimeError(
+            "The 'gpt-5.6-terra' model is not supported when using Codex with a ChatGPT account"
+        )
+    )
+
+    assert hint is not None
+    assert "chatgpt/gpt-5.6-luna" in hint
+    assert "chatgpt/gpt-5.6-terra" not in hint
+
+
 def test_start_screen_launch_defers_the_model_check_to_the_tui(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

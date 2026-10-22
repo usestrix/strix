@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -35,6 +36,23 @@ def test_help_returns_zero() -> None:
 
 def test_status_not_signed_in() -> None:
     assert auth_cli.run_auth(["status"]) == 1
+
+
+def test_status_recommends_a_current_chatgpt_model(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(codex, "read_record", lambda: {"account_id": "acct"})
+    monkeypatch.setattr(
+        auth_cli,
+        "load_settings",
+        lambda: SimpleNamespace(llm=SimpleNamespace(model="openai/gpt-5")),
+    )
+
+    assert auth_cli.run_auth(["status"]) == 0
+    output = capsys.readouterr().out
+    assert codex.SUBSCRIPTION_MODEL_EXAMPLE in output
+    assert "chatgpt/gpt-5.4" not in output
+    assert "chatgpt/gpt-5.6-terra" not in output
 
 
 def test_login_rejects_unsupported_provider(monkeypatch: pytest.MonkeyPatch) -> None:
