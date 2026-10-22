@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -55,6 +55,11 @@ class LlmSettings(BaseSettings):
         alias="LLM_EXTRA_HEADERS",
         repr=False,
     )
+    extra_body: dict[str, Any] | None = Field(
+        default=None,
+        alias="LLM_EXTRA_BODY",
+        repr=False,
+    )
     reasoning_effort: ReasoningEffort = Field(default="high", alias="STRIX_REASONING_EFFORT")
     force_required_tool_choice: bool = Field(
         default=False,
@@ -79,6 +84,10 @@ class LlmSettings(BaseSettings):
     timeout: int = Field(default=300, alias="LLM_TIMEOUT")
     preflight_timeout: int = Field(default=30, ge=1, alias="LLM_PREFLIGHT_TIMEOUT")
     stream_idle_timeout: int = Field(default=300, ge=0, alias="LLM_STREAM_IDLE_TIMEOUT")
+    stream_first_event_timeout: int = Field(
+        default=120, ge=0, alias="LLM_STREAM_FIRST_EVENT_TIMEOUT"
+    )
+    stream_total_timeout: int = Field(default=600, ge=0, alias="LLM_STREAM_TOTAL_TIMEOUT")
     max_tool_calls_per_turn: int = Field(
         default=32,
         ge=0,
@@ -104,6 +113,11 @@ class DedupeSettings(BaseSettings):
     extra_headers: dict[str, str] | None = Field(
         default=None,
         alias="DEDUPE_LLM_EXTRA_HEADERS",
+        repr=False,
+    )
+    extra_body: dict[str, Any] | None = Field(
+        default=None,
+        alias="DEDUPE_LLM_EXTRA_BODY",
         repr=False,
     )
 
@@ -149,6 +163,7 @@ class TelemetrySettings(BaseSettings):
     model_config = _BASE_CONFIG
 
     enabled: bool = Field(default=True, alias="STRIX_TELEMETRY")
+    run_record_timings: bool = Field(default=False, alias="STRIX_RUN_RECORD_TIMINGS")
 
 
 WebSearchProvider = Literal["auto", "perplexity", "exa"]

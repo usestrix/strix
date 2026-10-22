@@ -21,7 +21,7 @@ from strix.core.sessions import open_agent_session
 
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable
+    from collections.abc import AsyncIterator, Awaitable, Callable
     from pathlib import Path
 
 
@@ -31,6 +31,7 @@ _CALL_LATENCY_S = 0.005
 
 class _FakeLedger:
     def __init__(self) -> None:
+        self.on_pause: Callable[[], Awaitable[None]] | None = None
         self.cost = 0.0
         self.calls: list[str] = []
         self.remaining: dict[str, int] = {}
@@ -80,6 +81,8 @@ class _FakeStream:
                 await self._hooks.on_llm_start(ctx_wrapper, self._agent, None, input_items)
             except BudgetPausedError as exc:
                 self.run_loop_exception = exc
+                if self._ledger.on_pause is not None:
+                    await self._ledger.on_pause()
                 return
             self._ledger.warned_inputs.append(input_items)
             if self._ledger.gate is not None:
@@ -150,13 +153,16 @@ class _Scan:
         monkeypatch: pytest.MonkeyPatch,
         *,
         max_budget_usd: float | None,
+        budget_policy: str = "pause",
     ) -> None:
         self.ledger = _FakeLedger()
         self.hooks = ReportUsageHooks(
-            model="test-model", max_budget_usd=max_budget_usd, budget_policy="pause"
+            model="test-model",
+            max_budget_usd=max_budget_usd,
+            budget_policy=budget_policy,  # type: ignore[arg-type]
         )
         self.coordinator = AgentCoordinator()
-        self.coordinator.set_budget_policy("pause")
+        self.coordinator.set_budget_policy(budget_policy)  # type: ignore[arg-type]
         self.coordinator.set_budget_limit_setter(self.hooks.set_max_budget_usd)
         monkeypatch.setattr(execution, "Runner", _fake_runner(self.ledger, self.coordinator))
         monkeypatch.setattr(execution, "_compact_session", _noop_compact)
@@ -538,3 +544,140 @@ async def test_stop_policy_is_unchanged() -> None:
 def test_budget_policy_is_validated() -> None:
     with pytest.raises(ValueError, match="budget_policy"):
         ReportUsageHooks(model="m", budget_policy="later")  # type: ignore[arg-type]
+
+
+def _pause_flags(coordinator: AgentCoordinator) -> tuple[bool, bool]:
+    return coordinator.budget_paused, coordinator.operator_paused
+
+
+@pytest.mark.asyncio
+async def test_operator_pause_holds_under_the_stop_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scan = _Scan(tmp_path, monkeypatch, max_budget_usd=None, budget_policy="stop")
+    agents = ("root", "child-a", "child-b")
+
+    with patch("strix.core.hooks.get_global_report_state", return_value=scan.ledger):
+        await scan.start_root(calls=6)
+        await scan.start_child("child-a", calls=6)
+        await scan.start_child("child-b", calls=6)
+
+        await _wait_until(lambda: scan.ledger.cost >= 3.0)
+        await scan.coordinator.pause_budget()
+        spent_at_pause = scan.ledger.cost
+        await _wait_until(lambda: _all_parked(scan.coordinator, *agents))
+        assert _pause_flags(scan.coordinator) == (True, True)
+        assert all(not task.done() for task in scan.tasks())
+
+        await scan.coordinator.send("child-a", {"from": "root", "content": "status?"})
+        await scan.coordinator.send("root", {"from": "user", "content": "keep going"})
+        await asyncio.sleep(0.05)
+        assert _pause_flags(scan.coordinator) == (True, True)
+        assert scan.ledger.cost == pytest.approx(spent_at_pause)
+        assert _all_parked(scan.coordinator, *agents)
+
+        woken = await scan.coordinator.resume_budget()
+        assert sorted(woken) == sorted(agents)
+        assert _pause_flags(scan.coordinator) == (False, False)
+        await asyncio.wait_for(asyncio.gather(*scan.tasks(), return_exceptions=True), timeout=5.0)
+        assert scan.ledger.cost == pytest.approx(18.0)
+        assert {aid: str(s) for aid, s in scan.coordinator.statuses.items()} == {
+            "root": "completed",
+            "child-a": "completed",
+            "child-b": "completed",
+        }
+        root_items = await scan.sessions[0].get_items()
+        assert any("keep going" in str(item) for item in root_items)
+
+    for session in scan.sessions:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_a_resume_that_lands_before_the_park_still_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scan = _Scan(tmp_path, monkeypatch, max_budget_usd=None, budget_policy="stop")
+    resumed = 0
+
+    async def resume_at_once() -> None:
+        nonlocal resumed
+        resumed += 1
+        await scan.coordinator.resume_budget()
+
+    scan.ledger.on_pause = resume_at_once
+    with patch("strix.core.hooks.get_global_report_state", return_value=scan.ledger):
+        await scan.start_root(calls=6)
+        await scan.start_child("child-a", calls=6)
+        await _wait_until(lambda: scan.ledger.cost >= 2.0)
+        await scan.coordinator.pause_budget()
+        await asyncio.wait_for(asyncio.gather(*scan.tasks(), return_exceptions=True), timeout=5.0)
+        assert resumed >= 1
+        assert _pause_flags(scan.coordinator) == (False, False)
+        assert scan.ledger.cost == pytest.approx(12.0)
+        assert {aid: str(s) for aid, s in scan.coordinator.statuses.items()} == {
+            "root": "completed",
+            "child-a": "completed",
+        }
+
+    for session in scan.sessions:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_operator_pause_gates_the_stop_policy_hooks() -> None:
+    coordinator = AgentCoordinator()
+    hooks = ReportUsageHooks(model="m", max_budget_usd=None)
+    assert hooks.budget_policy == "stop"
+
+    await coordinator.pause_budget()
+    with pytest.raises(BudgetPausedError):
+        await hooks.on_llm_start(_ctx(coordinator), MagicMock(), None, [])
+
+    await coordinator.resume_budget()
+    await hooks.on_llm_start(_ctx(coordinator), MagicMock(), None, [])
+
+
+@pytest.mark.asyncio
+async def test_a_user_message_lifts_only_the_limit_pause(tmp_path: Path) -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    session = open_agent_session("root", tmp_path / "agents.db")
+    await coordinator.attach_runtime("root", session=session)
+    extensions: list[int] = []
+    coordinator.set_budget_extender(lambda: extensions.append(1))
+
+    await coordinator.pause_budget()
+    await coordinator.park_for_budget("root")
+    assert coordinator.statuses["root"] == "budget_paused"
+    await coordinator.send("root", {"from": "user", "content": "keep going"})
+    assert _pause_flags(coordinator) == (True, True)
+    assert extensions == []
+    assert coordinator.pending_counts["root"] == 1
+
+    await coordinator.resume_budget()
+    await coordinator.pause_for_budget("root")
+    await coordinator.send("root", {"from": "user", "content": "keep going"})
+    assert _pause_flags(coordinator) == (False, False)
+    assert extensions == [1]
+    session.close()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_and_reset_keep_an_operator_pause() -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.pause_budget()
+    snap = await coordinator.snapshot()
+
+    restored = AgentCoordinator()
+    await restored.restore(snap)
+    assert _pause_flags(restored) == (True, True)
+    await restored.reset_budget_stops(budget_stopped=False, reserve_stopped=False)
+    assert _pause_flags(restored) == (True, True)
+
+    await restored.resume_budget()
+    await restored.pause_for_budget("root")
+    await restored.reset_budget_stops(budget_stopped=False, reserve_stopped=False)
+    assert _pause_flags(restored) == (False, False)
+    assert restored.statuses["root"] == "waiting"

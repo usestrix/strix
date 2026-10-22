@@ -66,7 +66,7 @@ func panelFocus(panel sidebarPanel) (focusMode, bool) {
 
 func (m Model) sidebarPanels() []panelRect {
 	statsHeight, vulnHeight, mcpHeight, agentHeight := m.sidebarHeights()
-	top := m.viewerHeight()
+	top := m.sidebarTopHeight()
 	rects := []panelRect{{panelAgents, top, agentHeight}}
 	top += agentHeight
 	if vulnHeight > 0 {
@@ -83,7 +83,7 @@ func (m Model) sidebarPanels() []panelRect {
 
 func (m Model) sidebarGap() int {
 	statsHeight, vulnHeight, mcpHeight, agentHeight := m.sidebarHeights()
-	return max(0, m.height-m.viewerHeight()-agentHeight-vulnHeight-mcpHeight-statsHeight)
+	return max(0, m.height-m.sidebarTopHeight()-agentHeight-vulnHeight-mcpHeight-statsHeight)
 }
 
 func (m Model) panelAt(y int) (panelRect, bool) {

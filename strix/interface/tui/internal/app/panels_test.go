@@ -355,3 +355,77 @@ func TestLonePanelHasNoControls(t *testing.T) {
 		t.Fatalf("controls should return once a second panel exists")
 	}
 }
+
+func TestTargetsBoxSitsUnderViewer(t *testing.T) {
+	m := panelsModel(t)
+	m.snapshot.Targets = []string{"https://example.com", "./app"}
+	m.snapshot.TargetCount = 2
+	m.resizeViewport()
+	_, sidebarWidth, _, _ := m.layout()
+	rows := strings.Split(ansi.Strip(m.sidebarView(sidebarWidth, m.height)), "\n")
+	if len(rows) != m.height {
+		t.Fatalf("sidebar renders %d rows, want %d", len(rows), m.height)
+	}
+	top := m.viewerHeight()
+	for i, want := range []string{"Targets 2", "▸ https://example.com", "▸ ./app"} {
+		if !strings.Contains(rows[top+1+i], want) {
+			t.Fatalf("row %d missing %q:\n%s", top+1+i, want, strings.Join(rows, "\n"))
+		}
+	}
+	if !strings.Contains(rows[panelRectOf(t, m, panelAgents).top+1], "Agents") {
+		t.Fatalf("agents panel not where its rect says:\n%s", strings.Join(rows, "\n"))
+	}
+}
+
+func TestTargetsBoxDropsOnShortTerminal(t *testing.T) {
+	m := panelsModel(t)
+	m.height = 19
+	m.snapshot.Targets = []string{"a", "b", "c", "d", "e"}
+	m.snapshot.TargetCount = 5
+	m.resizeViewport()
+	_, sidebarWidth, _, _ := m.layout()
+	if got := lipgloss.Height(m.sidebarView(sidebarWidth, m.height)); got > m.height {
+		t.Fatalf("sidebar renders %d rows on a %d-row terminal", got, m.height)
+	}
+}
+
+// The targets box only takes rows the agent tree would otherwise grow into, so
+// the stats panel keeps the Caido URL and the other panels keep their heights.
+func TestTargetsBoxNeverSqueezesPanels(t *testing.T) {
+	for height := 19; height <= 40; height++ {
+		m := panelsModel(t)
+		m.height = height
+		m.snapshot.Usage = map[string]any{"total_tokens": 1234, "cost": 0.5}
+		m.snapshot.CaidoURL = "http://127.0.0.1:8080"
+		m.resizeViewport()
+		stats, vuln, mcp, _ := m.sidebarHeights()
+		m.snapshot.Targets = []string{"a", "b", "c", "d", "e"}
+		m.snapshot.TargetCount = 5
+		m.resizeViewport()
+		gotStats, gotVuln, gotMcp, _ := m.sidebarHeights()
+		if gotStats != stats || gotVuln != vuln || gotMcp != mcp {
+			t.Fatalf("height %d: targets squeezed panels: stats %d->%d findings %d->%d mcp %d->%d",
+				height, stats, gotStats, vuln, gotVuln, mcp, gotMcp)
+		}
+		_, sidebarWidth, _, _ := m.layout()
+		if got := lipgloss.Height(m.sidebarView(sidebarWidth, m.height)); got != m.height {
+			t.Fatalf("height %d: sidebar renders %d rows", height, got)
+		}
+	}
+}
+
+func TestTargetsViewCountsTheTargetsItCannotShow(t *testing.T) {
+	m := panelsModel(t)
+	m.snapshot.Targets = []string{"a", "b", "c", "d", "e"}
+	m.snapshot.TargetCount = 5
+	for rows, want := range map[int]string{
+		2: "Targets 5\n+5 more",
+		3: "Targets 5\n▸ a\n+4 more",
+		6: "Targets 5\n▸ a\n▸ b\n▸ c\n▸ d\n+1 more",
+		9: "Targets 5\n▸ a\n▸ b\n▸ c\n▸ d\n+1 more",
+	} {
+		if got := ansi.Strip(m.targetsView(20, rows)); got != want {
+			t.Fatalf("%d rows:\n%s\nwant:\n%s", rows, got, want)
+		}
+	}
+}

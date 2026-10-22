@@ -28,6 +28,8 @@ from strix.telemetry import posthog, scarf
 if TYPE_CHECKING:
     from agents.usage import Usage
 
+    from strix.llm.request_log import LlmRequestEvent
+
 
 logger = logging.getLogger(__name__)
 
@@ -1017,6 +1019,47 @@ class StreamedOpenRouterCosts:
 
 
 streamed_openrouter_costs = StreamedOpenRouterCosts()
+
+
+def record_llm_request(event: "LlmRequestEvent") -> None:
+    """Request-log sink: each provider attempt's timing, kept in run.json's ``llm_requests``."""
+    report_state = get_global_report_state()
+    if report_state is None:
+        return
+    details = event.details or {}
+    report_state.run_record.setdefault("llm_requests", []).append(
+        {
+            "started_at": event.started_at.isoformat(),
+            "agent_id": event.agent_id,
+            "model": event.model,
+            "provider": details.get("upstream_provider") or event.provider,
+            "outcome": event.outcome,
+            "status": event.status_code,
+            "duration_ms": event.duration_ms,
+            "ttft_ms": event.time_to_first_token_ms,
+            "input_tokens": event.input_tokens,
+            "cached_tokens": event.cached_input_tokens,
+            "output_tokens": event.output_tokens,
+            "retry_attempt": event.retry_attempt,
+        }
+    )
+
+
+def record_tool_call(
+    *, started_at: datetime, agent_id: str | None, tool: str, duration_ms: int
+) -> None:
+    """Each tool call's timing, kept in run.json's ``tool_calls``."""
+    report_state = get_global_report_state()
+    if report_state is None:
+        return
+    report_state.run_record.setdefault("tool_calls", []).append(
+        {
+            "started_at": started_at.isoformat(),
+            "agent_id": agent_id,
+            "tool": tool,
+            "duration_ms": duration_ms,
+        }
+    )
 
 
 def record_openrouter_provider(provider: Any, usage: Any) -> None:

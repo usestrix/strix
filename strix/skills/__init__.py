@@ -17,7 +17,7 @@ _FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(?P<body>.*?)\n---\s*\n", re.DOTALL
 # Only skills with `template: jinja` in their frontmatter are rendered; the rest hold
 # literal `{{ }}` payloads.
 _SKILL_TEMPLATES = Environment(
-    autoescape=False,  # noqa: S701 - prompts, not HTML
+    autoescape=False,  # noqa: S701  # nosec B701 - prompts, not HTML
     undefined=StrictUndefined,
     trim_blocks=True,
     lstrip_blocks=True,

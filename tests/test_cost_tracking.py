@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import uuid
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, call, patch
@@ -17,11 +19,13 @@ from strix.config.models import (
     _configure_litellm_compatibility,
     _install_openrouter_stream_cost_capture,
 )
+from strix.core.hooks import ReportUsageHooks
 from strix.llm import request_log
 from strix.report.state import (
     ReportState,
     litellm_cost_callback,
     openrouter_stream_cost,
+    record_llm_request,
     set_global_report_state,
     streamed_openrouter_costs,
 )
@@ -135,6 +139,7 @@ def test_cost_callback_estimates_cost_with_provider_prefixed_model() -> None:
 
     with (
         patch("strix.report.state.get_global_report_state", return_value=report_state),
+        patch("strix.report.state.resolve_litellm_model", side_effect=lambda model: model),
         patch("litellm.completion_cost", side_effect=fake_completion_cost),
     ):
         litellm_cost_callback(kwargs, response)
@@ -389,3 +394,137 @@ def test_openrouter_request_carries_agent_session_id() -> None:
             assert body()["session_id"] == session_id
     finally:
         request_log.reset_call_context(token)
+
+
+def _openrouter_config() -> Any:
+    _install_openrouter_stream_cost_capture()
+    config = ProviderConfigManager.get_provider_chat_config(
+        model="z-ai/glm-5.3", provider=LlmProviders.OPENROUTER
+    )
+    assert config is not None
+    return config
+
+
+def test_openrouter_records_upstream_of_stream_and_mid_stream_error() -> None:
+    handler = _openrouter_config().get_model_response_iterator(
+        streaming_response=iter([]), sync_stream=True
+    )
+    reply = request_log.HttpReply()
+    token = request_log._http_reply.set(reply)
+    try:
+        handler.chunk_parser(
+            {
+                "id": "gen-a",
+                "created": 1,
+                "model": "z-ai/glm-5.3",
+                "provider": "Relace",
+                "choices": [{"index": 0, "delta": {"content": "x"}}],
+            }
+        )
+        assert reply.upstream_provider == "Relace"
+        assert reply.upstream_error_type is None
+        with pytest.raises(Exception, match="incomplete tool call"):
+            handler.chunk_parser(
+                {
+                    "id": "gen-a",
+                    "provider": "Relace",
+                    "error": {
+                        "code": 400,
+                        "message": "Generation stopped with an incomplete tool call.",
+                        "metadata": {"error_type": "invalid_request"},
+                    },
+                }
+            )
+    finally:
+        request_log._http_reply.reset(token)
+    assert reply.upstream_provider == "Relace"
+    assert reply.upstream_error_type == "invalid_request"
+
+
+def test_openrouter_records_upstream_of_pre_stream_error() -> None:
+    body = {
+        "error": {
+            "message": "Provider returned error",
+            "code": 400,
+            "metadata": {"raw": "...", "provider_name": "InferenceNet"},
+        }
+    }
+    reply = request_log.HttpReply()
+    token = request_log._http_reply.set(reply)
+    try:
+        _openrouter_config().get_error_class(json.dumps(body), 400, {})
+        _openrouter_config().get_error_class("<html>502 Bad Gateway</html>", 502, {})
+    finally:
+        request_log._http_reply.reset(token)
+    assert reply.upstream_provider == "InferenceNet"
+    assert reply.upstream_error_type is None
+
+
+def test_request_timings_land_in_run_record() -> None:
+    started = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
+    event = request_log.LlmRequestEvent(
+        call_id="call-1",
+        route="litellm",
+        provider="openrouter",
+        model="openrouter/deepseek/deepseek-v4.1-flash",
+        api_host="openrouter.ai",
+        streaming=True,
+        outcome="success",
+        status_code=200,
+        provider_request_id=None,
+        response_id="gen-1",
+        error_type=None,
+        error_message=None,
+        started_at=started,
+        finished_at=started + timedelta(milliseconds=4200),
+        duration_ms=4200,
+        input_tokens=90_000,
+        output_tokens=600,
+        cached_input_tokens=85_000,
+        agent_id="agent-1",
+        time_to_first_token_ms=900,
+        details={"upstream_provider": "Together"},
+    )
+    state = ReportState.__new__(ReportState)
+    state.run_record = {}
+    try:
+        set_global_report_state(state)
+        record_llm_request(event)
+    finally:
+        set_global_report_state(None)
+
+    assert state.run_record["llm_requests"] == [
+        {
+            "started_at": "2026-10-19T12:00:00+00:00",
+            "agent_id": "agent-1",
+            "model": "openrouter/deepseek/deepseek-v4.1-flash",
+            "provider": "Together",
+            "outcome": "success",
+            "status": 200,
+            "duration_ms": 4200,
+            "ttft_ms": 900,
+            "input_tokens": 90_000,
+            "cached_tokens": 85_000,
+            "output_tokens": 600,
+            "retry_attempt": 0,
+        }
+    ]
+
+
+async def test_tool_call_timings_land_in_run_record() -> None:
+    hooks = ReportUsageHooks(model="m", record_tool_timings=True)
+    context = SimpleNamespace(tool_call_id="call-1", context={"agent_id": "agent-1"})
+    tool = SimpleNamespace(name="terminal_execute")
+    state = ReportState.__new__(ReportState)
+    state.run_record = {}
+    try:
+        set_global_report_state(state)
+        await hooks.on_tool_start(context, MagicMock(), tool)  # type: ignore[arg-type]
+        await hooks.on_tool_end(context, MagicMock(), tool, "ok")  # type: ignore[arg-type]
+    finally:
+        set_global_report_state(None)
+
+    [entry] = state.run_record["tool_calls"]
+    assert entry["agent_id"] == "agent-1"
+    assert entry["tool"] == "terminal_execute"
+    assert entry["duration_ms"] >= 0

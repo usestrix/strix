@@ -9,9 +9,11 @@ from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
+from agents import RunConfig
 from agents.exceptions import MaxTurnsExceeded
 from agents.items import MessageOutputItem
 from agents.memory import SQLiteSession
+from agents.run_config import CallModelData, ModelInputData
 from agents.tool_context import ToolContext
 from openai.types.responses import ResponseOutputMessage, ResponseOutputRefusal, ResponseOutputText
 
@@ -128,6 +130,27 @@ async def test_reserve_stop_notifies_root_once(monkeypatch: pytest.MonkeyPatch) 
     assert target == "root"
     assert message["type"] == "budget_reserve_stop"
     assert "finish_scan" in str(message["content"])
+
+
+@pytest.mark.asyncio
+async def test_reserve_notice_names_the_root_finish_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+    coordinator = AgentCoordinator()
+    coordinator.root_finish_tool = "finish_pr_review"
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child-a", "recon", parent_id="root")
+
+    sent: list[dict[str, Any]] = []
+
+    async def _record(_target_agent_id: str, message: dict[str, Any]) -> bool:
+        sent.append(message)
+        return True
+
+    monkeypatch.setattr(coordinator, "send", _record)
+
+    await _notify_root_on_budget_reserve(coordinator)
+
+    assert "call finish_pr_review" in str(sent[0]["content"])
+    assert "finish_scan" not in str(sent[0]["content"])
 
 
 @pytest.mark.asyncio
@@ -1293,6 +1316,21 @@ async def test_interactive_nudge_offers_waiting_without_repeating() -> None:
     assert "do not repeat it" in items[0]["content"]
 
 
+@pytest.mark.asyncio
+async def test_nudge_names_the_root_finish_tool() -> None:
+    items = await execution._append_tool_required_message(
+        session=None,
+        context={"parent_id": None},
+        attempt=1,
+        limit=3,
+        interactive=False,
+        root_finish_tool="finish_pr_review",
+    )
+
+    assert "call finish_pr_review" in items[0]["content"]
+    assert "finish_scan" not in items[0]["content"]
+
+
 def _cycle_with_items(
     coordinator: AgentCoordinator,
     agent_id: str,
@@ -1531,3 +1569,32 @@ async def test_autonomous_nudge_does_not_offer_the_user() -> None:
     )
 
     assert "wait_for_user" not in items[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_text_only_filter_scrubs_images_then_chains_existing_filter() -> None:
+    run_config = RunConfig(model="m")
+    assert execution._with_image_scrub(run_config, {"supports_images": True}) is run_config
+
+    seen: list[ModelInputData] = []
+
+    def _inner(data: CallModelData[Any]) -> ModelInputData:
+        seen.append(data.model_data)
+        return data.model_data
+
+    run_config = RunConfig(model="m", call_model_input_filter=_inner)
+    scrub: Any = execution._with_image_scrub(run_config, {"supports_images": False})
+    image = {"type": "input_image", "image_url": "data:image/png;base64,aGk="}
+    output = {"type": "function_call_output", "call_id": "c1", "output": [image]}
+    data = CallModelData(
+        model_data=ModelInputData(input=[cast("Any", output)], instructions="sys"),
+        agent=MagicMock(),
+        context=None,
+    )
+
+    result = await scrub.call_model_input_filter(data)
+    assert result is seen[0]
+    assert result.input[0]["output"] == [
+        {"type": "input_text", "text": execution._TEXT_ONLY_IMAGE_TEXT}
+    ]
+    assert data.model_data.input[0]["output"] == [image]

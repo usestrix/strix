@@ -408,6 +408,165 @@ async def test_dependency_report_records_transitive_chain(report_state: ReportSt
     )
 
 
+async def test_dependency_report_persists_code_locations(report_state: ReportState) -> None:
+    """Usage-site locations file onto a dependency finding like any other."""
+    result = await _do_create_dependency(
+        title="CVE-2021-23337 in lodash 4.17.20",
+        description="Command injection via template.",
+        target="repo/package.json",
+        cve="CVE-2021-23337",
+        package_name="lodash",
+        installed_version="4.17.20",
+        impact="Arbitrary command execution.",
+        remediation_steps="Upgrade to 4.17.21.",
+        assumptions="Assumes the template sink is reachable.",
+        package_ecosystem="npm",
+        manifest_path="package-lock.json",
+        fixed_version="4.17.21",
+        cwe="CWE-94",
+        advisory_cvss=7.2,
+        technical_analysis=None,
+        fix_effort="trivial",
+        reachability="vulnerable_symbol_used",
+        reachability_evidence=_DEP_EVIDENCE,
+        code_locations=[
+            {
+                "file": "src/render.ts",
+                "start_line": 14,
+                "end_line": 14,
+                "snippet": "const merge = require('lodash').merge",
+                "label": "imports the vulnerable package",
+            }
+        ],
+        contextual_cvss_breakdown=_DEP_CONTEXT,
+        contextual_cvss_reasoning=_DEP_REASONING,
+    )
+    assert result["success"] is True
+    locs = report_state.vulnerability_reports[0]["code_locations"]
+    assert locs[0]["file"] == "src/render.ts"
+    assert locs[0]["label"] == "imports the vulnerable package"
+
+
+async def test_dependency_report_fix_locations_require_verification(
+    report_state: ReportState,
+) -> None:
+    """A location proposing a fix still requires fix_verification."""
+    result = await _do_create_dependency(
+        title="CVE-2021-23337 in lodash 4.17.20",
+        description="Command injection via template.",
+        target="repo/package.json",
+        cve="CVE-2021-23337",
+        package_name="lodash",
+        installed_version="4.17.20",
+        impact="Arbitrary command execution.",
+        remediation_steps="Upgrade to 4.17.21.",
+        assumptions="Assumes the template sink is reachable.",
+        package_ecosystem="npm",
+        manifest_path="package-lock.json",
+        fixed_version="4.17.21",
+        cwe="CWE-94",
+        advisory_cvss=7.2,
+        technical_analysis=None,
+        fix_effort="trivial",
+        reachability="imported",
+        reachability_evidence=_DEP_EVIDENCE,
+        code_locations=[
+            {
+                "file": "package-lock.json",
+                "start_line": 10,
+                "end_line": 10,
+                "fix_before": '"lodash": "4.17.20"',
+                "fix_after": '"lodash": "4.17.21"',
+            }
+        ],
+        contextual_cvss_breakdown=_DEP_CONTEXT,
+        contextual_cvss_reasoning=_DEP_REASONING,
+    )
+    assert result["success"] is False
+    assert any("fix_verification" in e for e in result["errors"])
+    assert not report_state.vulnerability_reports
+
+
+async def test_dependency_report_fix_locations_persist_with_verification(
+    report_state: ReportState,
+) -> None:
+    """A fix-pair location files when fix_verification is supplied, and both
+    fields persist on the stored report."""
+    result = await _do_create_dependency(
+        title="CVE-2021-23337 in lodash 4.17.20",
+        description="Command injection via template.",
+        target="repo/package.json",
+        cve="CVE-2021-23337",
+        package_name="lodash",
+        installed_version="4.17.20",
+        impact="Arbitrary command execution.",
+        remediation_steps="Upgrade to 4.17.21.",
+        assumptions="Assumes the template sink is reachable.",
+        package_ecosystem="npm",
+        manifest_path="package-lock.json",
+        fixed_version="4.17.21",
+        cwe="CWE-94",
+        advisory_cvss=7.2,
+        technical_analysis=None,
+        fix_effort="trivial",
+        reachability="imported",
+        reachability_evidence=_DEP_EVIDENCE,
+        code_locations=[
+            {
+                "file": "package-lock.json",
+                "start_line": 10,
+                "end_line": 10,
+                "fix_before": '"lodash": "4.17.20"',
+                "fix_after": '"lodash": "4.17.21"',
+            }
+        ],
+        fix_verification="Bump verified: lockfile parses and the sink is unreachable.",
+        contextual_cvss_breakdown=_DEP_CONTEXT,
+        contextual_cvss_reasoning=_DEP_REASONING,
+    )
+    assert result["success"] is True
+    report = report_state.vulnerability_reports[0]
+    loc = report["code_locations"][0]
+    assert loc["fix_before"] == '"lodash": "4.17.20"'
+    assert loc["fix_after"] == '"lodash": "4.17.21"'
+    assert report["fix_verification"] == (
+        "Bump verified: lockfile parses and the sink is unreachable."
+    )
+
+
+async def test_dependency_report_rejects_unusable_locations(
+    report_state: ReportState,
+) -> None:
+    """A supplied list that normalizes to nothing errors instead of filing
+    silently without the requested usage evidence."""
+    result = await _do_create_dependency(
+        title="CVE-2021-23337 in lodash 4.17.20",
+        description="Command injection via template.",
+        target="repo/package.json",
+        cve="CVE-2021-23337",
+        package_name="lodash",
+        installed_version="4.17.20",
+        impact="Arbitrary command execution.",
+        remediation_steps="Upgrade to 4.17.21.",
+        assumptions="Assumes the template sink is reachable.",
+        package_ecosystem="npm",
+        manifest_path="package-lock.json",
+        fixed_version="4.17.21",
+        cwe="CWE-94",
+        advisory_cvss=7.2,
+        technical_analysis=None,
+        fix_effort="trivial",
+        reachability="imported",
+        reachability_evidence=_DEP_EVIDENCE,
+        code_locations=[{"file": "/abs/path.ts", "snippet": "require('lodash')"}],
+        contextual_cvss_breakdown=_DEP_CONTEXT,
+        contextual_cvss_reasoning=_DEP_REASONING,
+    )
+    assert result["success"] is False
+    assert any("dropped as unusable" in e for e in result["errors"])
+    assert not report_state.vulnerability_reports
+
+
 async def test_dependency_report_omits_blank_chain_fields(report_state: ReportState) -> None:
     result = await _do_create_dependency(
         title="CVE-2024-0001 in sample 1.0.0",
@@ -504,7 +663,6 @@ async def test_dependency_report_records_reachability(report_state: ReportState)
         == "src/render.ts:14 calls `_.template()`."
     )
     assert "**Usage analysis:**" in report["evidence"]
-    assert "not a proof of exploitability or of safety" in report["evidence"]
     # The level must never influence the rating — that comes from the contextual
     # breakdown, or from advisory_cvss when no breakdown applies.
     assert report["severity"] == "high"
@@ -1482,7 +1640,7 @@ async def test_http_exchange_ids_must_exist_in_current_proxy_project(
     assert warning is None
 
 
-async def test_http_exchange_ids_are_dropped_when_proxy_cannot_be_queried(
+async def test_http_exchange_ids_are_kept_when_proxy_cannot_be_queried(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def existing_request_ids(
@@ -1498,11 +1656,10 @@ async def test_http_exchange_ids_are_dropped_when_proxy_cannot_be_queried(
         ["1042", "1042", "1088"],
     )
 
-    assert request_ids is None
+    assert request_ids == ["1042", "1088"]
     assert errors == []
     assert warning is not None
-    assert "not stored" in warning
-    assert "update_vulnerability_report" in warning
+    assert "without verification" in warning
 
 
 async def test_create_reports_persistence_failure_as_tool_error(
@@ -1521,7 +1678,7 @@ async def test_create_reports_persistence_failure_as_tool_error(
     assert report_state.vulnerability_reports == []
 
 
-async def test_evidence_only_update_reports_proxy_outage_as_retryable(
+async def test_evidence_only_update_keeps_ids_when_proxy_cannot_be_queried(
     report_state: ReportState,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1554,11 +1711,11 @@ async def test_evidence_only_update_reports_proxy_outage_as_retryable(
     )
     result = json.loads(raw)
 
-    assert result["success"] is False
-    assert "No fields to update" not in result["error"]
-    assert "update_vulnerability_report" in result["error"]
+    assert result["success"] is True
+    assert "without verification" in result["warning"]
     assert result["report_id"] == "vuln-0009"
-    assert report_state.vulnerability_reports[0] == original
+    assert report_state.vulnerability_reports[0]["http_exchange_ids"] == ["204"]
+    assert report_state.vulnerability_reports[0] != original
 
 
 def test_update_reports_persistence_failure_as_tool_error(report_state: ReportState) -> None:

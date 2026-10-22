@@ -73,6 +73,12 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 
+[tool.uv]
+# Supply-chain cooldown: resolve only distributions that have been on the index for
+# at least 5 days, so a poisoned release (litellm 1.107.0, 2026-10-21) is never
+# picked up by `uv lock` / `uv add` before it can be caught and yanked.
+exclude-newer = "5 days"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

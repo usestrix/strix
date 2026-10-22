@@ -6,6 +6,7 @@ flow through to the root agent's ``build_strix_agent`` call.
 
 from __future__ import annotations
 
+import importlib
 import os
 import types
 from typing import Any
@@ -13,6 +14,7 @@ from typing import Any
 import httpx
 import pytest
 from agents import ModelSettings
+from agents.tool_context import ToolContext
 from openai import RateLimitError
 
 import strix.tools.mcp as mcp_pkg
@@ -24,7 +26,13 @@ from strix.core import runner
 from strix.core.agents import AgentCoordinator
 from strix.core.inputs import make_model_settings
 from strix.runtime import session_manager
+from strix.tools.load_skill.tool import load_skill
 from strix.tools.mcp import BearerAuth, McpConnectionConfig, McpConnectionRequest
+from strix.tools.mcp import client as mcp_client
+
+
+_test_mcp_client = importlib.import_module("tests.test_mcp_client")
+FakeMCPServer: Any = _test_mcp_client.FakeMCPServer
 
 
 def _make_rate_limit_error() -> RateLimitError:
@@ -56,6 +64,7 @@ def _patch_engine_scaffold(
             timeout=300,
             prompt_cache=True,
             extra_headers=None,
+            extra_body=None,
         ),
         runtime=types.SimpleNamespace(max_context_images=3),
     )
@@ -82,6 +91,11 @@ def _patch_engine_scaffold(
     monkeypatch.setattr(runner, "build_root_task", lambda _scan_config: "task")
     monkeypatch.setattr(runner, "build_scope_context", lambda _scan_config: scope_context)
     monkeypatch.setattr(runner, "make_model_settings", lambda *_args, **_kwargs: ModelSettings())
+    monkeypatch.setattr(
+        mcp_client,
+        "_build_server",
+        lambda config: mcp_client.BuiltMcpServer(FakeMCPServer(config.name, []), None),
+    )
 
     captured: dict[str, Any] = {}
 
@@ -220,7 +234,12 @@ async def test_mcp_available_flag_set_when_a_connection_attaches(
     assert kwargs["system_prompt_context"]["mcp_available"] is True
     # The named inventory names each connected server for the prompt.
     assert kwargs["system_prompt_context"]["mcp_connections"] == [
-        {"name": "fs", "purpose": "local files", "tool_count": 0}
+        {
+            "name": "fs",
+            "purpose": "local files",
+            "tool_count": 0,
+            "state": "catalog_ready",
+        }
     ]
 
 
@@ -294,6 +313,20 @@ def test_text_only_prompt_drops_screenshot_guidance() -> None:
     assert "view_image" not in prompt
     assert "text-only model and cannot view images" in prompt
     assert "<!--" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_text_only_load_skill_drops_screenshot_guidance() -> None:
+    ctx = ToolContext(
+        context={"supports_images": False},
+        tool_name="load_skill",
+        tool_call_id="call-1",
+        tool_arguments="{}",
+    )
+
+    out = await load_skill.on_invoke_tool(ctx, '{"skills": ["agent_browser"]}')
+    assert "view_image" not in out
+    assert "text-only model" in out
 
 
 def test_scope_is_sent_as_its_own_system_message_on_cache_point_routes() -> None:

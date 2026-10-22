@@ -421,7 +421,7 @@ func (m Model) setupComposer(width int) string {
 	inner := max(1, width-4)
 	body := m.highlightInputSelection(m.input.View())
 	body += "\n\n" + m.setupSummaryView(inner)
-	if targets := m.setupTargetsView(inner); targets != "" {
+	if targets := m.targetsView(inner, maxTargetRows); targets != "" {
 		body += "\n" + targets
 	}
 	return lipgloss.NewStyle().Width(max(1, width-2)).Padding(0, 1).
@@ -454,15 +454,22 @@ func (m Model) setupSummaryView(width int) string {
 	return truncate(strings.Join(chips, render.Dim().Render(" · ")), max(1, width))
 }
 
-// setupTargetsView lists what the scan is pointed at, once anything is queued.
-func (m Model) setupTargetsView(width int) string {
-	if len(m.snapshot.Targets) == 0 {
+// maxTargetRows fits the header, four targets and the count of the rest.
+const maxTargetRows = 6
+
+// targetsView lists what the scan is pointed at, once anything is queued, in at
+// most maxRows rows. Targets that do not fit are counted on the last row.
+func (m Model) targetsView(width, maxRows int) string {
+	if len(m.snapshot.Targets) == 0 || maxRows < 2 {
 		return ""
 	}
-	const visible = 4
 	total := max(m.snapshot.TargetCount, len(m.snapshot.Targets))
+	visible := min(len(m.snapshot.Targets), maxTargetRows-2, maxRows-1)
+	if visible < total {
+		visible = min(visible, maxRows-2)
+	}
 	rows := []string{render.Bold(green).Render("Targets") + render.Dim().Render(fmt.Sprintf(" %d", total))}
-	for _, target := range m.snapshot.Targets[:min(visible, len(m.snapshot.Targets))] {
+	for _, target := range m.snapshot.Targets[:visible] {
 		rows = append(rows, render.Col(dim).Render("▸ ")+render.Col(white).Render(truncate(target, max(1, width-2))))
 	}
 	if hidden := total - visible; hidden > 0 {

@@ -199,13 +199,13 @@ async def enforce_image_budget(session: Session, max_images: int) -> bool:
     return await _rewrite_session(session, _transform)
 
 
-def scrub_images_from_items(items: list[Any]) -> list[Any]:
+def scrub_images_from_items(items: list[Any], *, text: str = _INHERITED_IMAGE_TEXT) -> list[Any]:
     """Return a copy of ``items`` with every image block replaced by text."""
 
     def _scrub(obj: Any) -> Any:
         if isinstance(obj, dict):
             if obj.get("type") == "input_image":
-                return {"type": "input_text", "text": _INHERITED_IMAGE_TEXT}
+                return {"type": "input_text", "text": text}
             return {k: _scrub(v) for k, v in obj.items()}
         if isinstance(obj, list):
             return [_scrub(v) for v in obj]

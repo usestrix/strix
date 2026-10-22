@@ -6,7 +6,8 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from types import UnionType
+from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
 
 from pydantic import AliasChoices, BaseModel
 
@@ -126,11 +127,34 @@ def _read_json_overrides(path: Path) -> dict[str, dict[str, Any]]:
                 continue  # env wins under some alias; skip the JSON file for this field
             for alias in aliases:
                 if alias in env_block_upper:
-                    sub_data[fname] = env_block_upper[alias]
+                    sub_data[fname] = _decode_saved_value(finfo, env_block_upper[alias])
                     break
         if sub_data:
             nested[sub_name] = sub_data
     return nested
+
+
+def _decode_saved_value(finfo: FieldInfo, value: Any) -> Any:
+    """Decode a JSON string saved for a dict field, as pydantic does for env vars.
+
+    ``persist_current`` saves env values verbatim, so a dict setting such as
+    ``LLM_EXTRA_HEADERS`` lands in the file as JSON text. Values that are
+    already objects, or aren't valid JSON, are left for validation to judge.
+    """
+    if not isinstance(value, str) or not _is_dict_field(finfo):
+        return value
+    try:
+        return json.loads(value)
+    except ValueError:
+        return value
+
+
+def _is_dict_field(finfo: FieldInfo) -> bool:
+    annotation = finfo.annotation
+    candidates = (
+        get_args(annotation) if get_origin(annotation) in (Union, UnionType) else (annotation,)
+    )
+    return any(c is dict or get_origin(c) is dict for c in candidates)
 
 
 def _first_alias_value(aliases: list[str], source: Mapping[str, Any]) -> Any | None:

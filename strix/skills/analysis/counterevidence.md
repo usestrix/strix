@@ -20,7 +20,7 @@ state, and "I moved on" is not one of them.
 
 **1. `confirmed`** — you have a working PoC or, in white-box, a complete
 source → control → sink → impact trace plus evidence the path is
-reachable. File it with `create_vulnerability_report`.
+reachable. File it as a vulnerability report.
 
 **2. `ruled_out`** — you can name the **specific control** that makes the
 code safe, at a specific location, and you have checked that the control
@@ -144,8 +144,7 @@ endpoint is broken/unreachable for unrelated reasons".
 
 ## Before You File a Report
 
-Run this pass on every finding before calling
-`create_vulnerability_report`:
+Run this pass on every finding before filing it:
 
 1. **Argue the other side.** Spend real effort building the strongest
    case that this is *not* exploitable, or not as severe as you think.

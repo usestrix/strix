@@ -224,9 +224,9 @@ def _normalize_http_exchange_ids(raw: Any) -> tuple[list[str] | None, list[str]]
     return normalized, errors
 
 
-_HTTP_EXCHANGE_DROPPED_WARNING = (
-    "http_exchange_ids were not stored: the proxy project could not be reached to verify "
-    "them. Attach them with update_vulnerability_report when the proxy responds again."
+_HTTP_EXCHANGE_UNVERIFIED_WARNING = (
+    "http_exchange_ids were stored without verification because the proxy project did "
+    "not respond in time. Ids that do not exist in the project will not render as evidence."
 )
 
 
@@ -237,9 +237,9 @@ async def _verify_http_exchange_ids(
     """Verify proxy exchange IDs against the current Caido project.
 
     IDs the project does not know are rejected. When the proxy itself cannot be
-    queried the IDs are dropped and a warning is returned instead, so a proxy
-    outage never blocks a finding and unverified IDs are never recorded as
-    evidence.
+    queried the IDs are kept and a warning is returned instead: a slow or
+    unreachable proxy must never strip evidence from a finding, and consumers
+    resolve each id against the recorded traffic before rendering it.
     """
     request_ids, errors = _normalize_http_exchange_ids(raw)
     if request_ids is None or errors or not request_ids:
@@ -252,7 +252,7 @@ async def _verify_http_exchange_ids(
             "Could not verify HTTP exchange IDs against the current Caido project",
             exc_info=True,
         )
-        return None, [], _HTTP_EXCHANGE_DROPPED_WARNING
+        return request_ids, [], _HTTP_EXCHANGE_UNVERIFIED_WARNING
 
     missing_ids = [request_id for request_id in request_ids if request_id not in existing_ids]
     if missing_ids:
@@ -1924,14 +1924,10 @@ def _build_dependency_evidence(
         evidence += f"\n\n**Usage analysis:** {label}."
         if reachability_evidence and reachability_evidence.strip():
             evidence += f" {reachability_evidence.strip()}"
-        evidence += (
-            " This is a prioritization signal from static analysis, not a"
-            " proof of exploitability or of safety."
-        )
     return evidence
 
 
-async def _do_create_dependency(  # noqa: PLR0912
+async def _do_create_dependency(  # noqa: PLR0912, PLR0915
     *,
     title: str,
     description: str,
@@ -1953,6 +1949,8 @@ async def _do_create_dependency(  # noqa: PLR0912
     manifest_path: str | None = None,
     reachability: str = "unknown",
     reachability_evidence: str | None = None,
+    code_locations: list[dict[str, Any]] | None = None,
+    fix_verification: str | None = None,
     contextual_cvss_breakdown: dict[str, str] | None = None,
     contextual_cvss_reasoning: str | None = None,
     agent_id: str | None = None,
@@ -1994,6 +1992,16 @@ async def _do_create_dependency(  # noqa: PLR0912
     manifest_err = _validate_manifest_path(manifest_path)
     if manifest_err:
         errors.append(manifest_err)
+
+    parsed_locations = _normalize_code_locations(code_locations)
+    if parsed_locations:
+        errors.extend(_validate_code_locations(parsed_locations))
+    elif code_locations:
+        errors.append(
+            "code_locations were dropped as unusable - every location needs a relative "
+            "'file' and an integer 'start_line'"
+        )
+    errors.extend(_validate_fix_verification(parsed_locations, fix_verification))
 
     reachability = (reachability or "unknown").strip().lower()
     if reachability not in _VALID_REACHABILITY:
@@ -2101,6 +2109,8 @@ async def _do_create_dependency(  # noqa: PLR0912
             cvss=cvss_score if advisory_cvss is not None else None,
             cve=parsed_cve,
             cwe=cwe,
+            code_locations=parsed_locations,
+            fix_verification=fix_verification,
             finding_class="dependency_cve",
             dependency_metadata=dependency_metadata,
             agent_id=agent_id if isinstance(agent_id, str) else None,
@@ -2155,6 +2165,8 @@ async def create_dependency_report(
     dependency_path: str | None = None,
     reachability: str = "unknown",
     reachability_evidence: str | None = None,
+    code_locations: list[dict[str, Any]] | None = None,
+    fix_verification: str | None = None,
     contextual_cvss_breakdown: dict[str, str] | None = None,
     contextual_cvss_reasoning: str | None = None,
 ) -> str:
@@ -2265,6 +2277,23 @@ async def create_dependency_report(
             is off in production), and say who controls the input. State
             it plainly when no entry point reaches the sink — that is the
             most useful result a reader can get.
+        code_locations: Where application code imports or calls the package —
+            the evidence behind your ``reachability`` claim. List of dicts,
+            same shape as ``create_vulnerability_report``::
+
+                {"file": "src/api/client.ts", "start_line": 14, "end_line": 14,
+                 "snippet": "const x = require('pkg')", "label": "imports it"}
+
+            Cite the repo-relative ``file`` and the exact 1-based
+            ``start_line`` where ``snippet`` actually sits — verify against
+            the real file, never guess. A location may also propose
+            the fix itself: ``fix_before`` (verbatim current code, e.g. the
+            manifest pin line) + ``fix_after`` (same lines with the fixed
+            version) — that combination requires ``fix_verification``.
+        fix_verification: Required whenever any ``code_locations`` entry
+            carries ``fix_after``. Same bar as a normal finding: security
+            closure, bypass review, preserved behavior, and how each was
+            checked.
         contextual_cvss_breakdown: **Required.** Full CVSS v3.1 rating of this
             CVE **in this codebase** — the same 8-metric object as
             ``create_vulnerability_report``'s ``cvss_breakdown``:
@@ -2325,6 +2354,8 @@ async def create_dependency_report(
         manifest_path=manifest_path,
         reachability=reachability,
         reachability_evidence=reachability_evidence,
+        code_locations=code_locations,
+        fix_verification=fix_verification,
         contextual_cvss_breakdown=contextual_cvss_breakdown,
         contextual_cvss_reasoning=contextual_cvss_reasoning,
         agent_id=agent_id,

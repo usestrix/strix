@@ -432,19 +432,19 @@ class McpRegistry:
             entry.set_status_sink(sink)
 
     def start_warmup(self, *, max_concurrency: int = 6) -> asyncio.Task[None]:
-        """Connect every configured entry in the background with a fixed bound."""
+        """Connect and list every configured entry with a fixed concurrency bound."""
         if self._warmup_task is not None:
             return self._warmup_task
 
         async def warm() -> None:
             semaphore = asyncio.Semaphore(max(1, max_concurrency))
 
-            async def connect(entry: McpConnectionEntry) -> None:
+            async def load_catalog(entry: McpConnectionEntry) -> None:
                 async with semaphore:
-                    with contextlib.suppress(McpConnectionUnavailableError):
-                        await entry.ensure_connected()
+                    with contextlib.suppress(Exception):
+                        await entry.ensure_catalog()
 
-            await asyncio.gather(*(connect(entry) for entry in self._entries.values()))
+            await asyncio.gather(*(load_catalog(entry) for entry in self._entries.values()))
 
         self._warmup_task = asyncio.create_task(warm(), name="mcp-warmup")
         return self._warmup_task

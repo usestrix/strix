@@ -159,9 +159,31 @@ class HttpReply:
 
     status_code: int | None = None
     headers: dict[str, str] | None = None
+    upstream_provider: str | None = None
+    upstream_error_type: str | None = None
 
 
 _http_reply: ContextVar[HttpReply | None] = ContextVar("strix_llm_http_reply", default=None)
+
+
+def record_upstream_provider(provider: object, error_type: object = None) -> None:
+    """Remember which provider behind a gateway served the attempt in flight."""
+    reply = _http_reply.get()
+    if reply is None:
+        return
+    if isinstance(provider, str) and provider:
+        reply.upstream_provider = provider
+    if isinstance(error_type, str) and error_type:
+        reply.upstream_error_type = error_type
+
+
+def _upstream_details(reply: HttpReply | None) -> list[tuple[str, object]]:
+    if reply is None:
+        return []
+    return [
+        ("upstream_provider", reply.upstream_provider),
+        ("upstream_error_type", reply.upstream_error_type),
+    ]
 
 
 async def record_http_reply(response: Response) -> None:
@@ -772,6 +794,7 @@ def _litellm_success(
             ("request", _litellm_request_details(kwargs)),
             ("response", _litellm_response_details(response)),
             ("litellm", _litellm_hidden_details(hidden, slo)),
+            *_upstream_details(_http_reply.get()),
         ),
     )
 
@@ -821,6 +844,7 @@ def _litellm_failure(
             ("request", _litellm_request_details(kwargs)),
             ("error", error or None),
             ("litellm", _litellm_hidden_details(hidden, slo)),
+            *_upstream_details(_http_reply.get()),
         ),
     )
 
@@ -894,15 +918,18 @@ def _observe_sdk_shared_http_client() -> None:
 
 
 def _log_line_sink(event: LlmRequestEvent) -> None:
+    details = event.details or {}
     level = logging.DEBUG if event.outcome == "success" else logging.WARNING
     logger.log(
         level,
-        "llm_request route=%s provider=%s model=%s host=%s outcome=%s status=%s "
-        "request_id=%s response_id=%s stream=%s duration_ms=%d ttft_ms=%s "
+        "llm_request route=%s provider=%s upstream=%s upstream_error=%s model=%s host=%s "
+        "outcome=%s status=%s request_id=%s response_id=%s stream=%s duration_ms=%d ttft_ms=%s "
         "req_bytes=%s res_bytes=%s finish=%s "
         "in=%s out=%s cached=%s cost=%s agent=%s attempt=%d%s",
         event.route,
         event.provider or "-",
+        details.get("upstream_provider") or "-",
+        details.get("upstream_error_type") or "-",
         event.model,
         event.api_host or "-",
         event.outcome,
@@ -1070,6 +1097,7 @@ class RequestLoggingModel(Model):
                 details=merge_details(
                     ("request", request.details),
                     ("response", _openai_response_details(response, raw_response)),
+                    *_upstream_details(reply),
                 ),
             )
         status, request_id = _openai_error_fields(exc)
@@ -1082,13 +1110,14 @@ class RequestLoggingModel(Model):
             outcome="error",
             status_code=status,
             provider_request_id=request_id or base.provider_request_id,
-            error_type=type(exc).__name__,
+            error_type=_cancel_reason(exc) or type(exc).__name__,
             error_message=_abandonment_message(exc) or clean_error_message(exc),
             response_bytes=_exception_body_size(exc, status),
             response_headers=headers_from_response(error_headers) or base.response_headers,
             details=merge_details(
                 ("request", request.details),
                 ("error", _exception_details(exc)),
+                *_upstream_details(reply),
             ),
         )
 
@@ -1318,9 +1347,23 @@ def _is_abandonment(exc: BaseException | None) -> bool:
     return isinstance(exc, asyncio.CancelledError | GeneratorExit)
 
 
+# Prefixes the reason a stream timeout gives when it cancels an attempt.
+CANCEL_REASON_PREFIX = "strix:"
+
+
+def _cancel_reason(exc: BaseException) -> str | None:
+    """The stream timeout that cancelled the attempt, e.g. ``stream_idle_timeout``."""
+    if isinstance(exc, asyncio.CancelledError) and exc.args:
+        message = str(exc.args[0])
+        if message.startswith(CANCEL_REASON_PREFIX):
+            return message.removeprefix(CANCEL_REASON_PREFIX)
+    return None
+
+
 def _abandonment_message(exc: BaseException) -> str | None:
     if isinstance(exc, asyncio.CancelledError):
-        return "attempt cancelled before the reply was consumed (stream idle timeout or shutdown)"
+        reason = f": {exc.args[0]}" if exc.args else ""
+        return f"attempt cancelled before the reply was consumed{reason}"
     if isinstance(exc, GeneratorExit):
         return "stream closed by the caller before it finished"
     return None

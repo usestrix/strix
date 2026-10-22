@@ -59,6 +59,15 @@ def test_registered_tools_appear_before_lifecycle_tool() -> None:
     assert child_names[-2:] == ["extra", "agent_finish"]
 
 
+def test_root_ends_with_the_given_finish_tool() -> None:
+    root = factory.build_strix_agent(is_root=True, finish_tool=_tool("finish_pr_review"))
+
+    root_names = [t.name for t in root.tools]
+
+    assert root_names[-1] == "finish_pr_review"
+    assert "finish_scan" not in root_names
+
+
 def test_per_call_extra_tools_stack_with_registry() -> None:
     factory.register_agent_tools(_tool("registered"))
 
@@ -82,6 +91,17 @@ def test_per_call_extra_tools_reject_duplicate_registered_names() -> None:
 
     with pytest.raises(ValueError, match="same_name"):
         factory.build_strix_agent(is_root=True, extra_tools=[_tool("same_name")])
+
+
+def test_report_tool_replaces_create_vulnerability_report() -> None:
+    for is_root in (True, False):
+        agent = factory.build_strix_agent(is_root=is_root, report_tool=_tool("file_pr_finding"))
+        names = [t.name for t in agent.tools]
+        assert "file_pr_finding" in names
+        assert "create_vulnerability_report" not in names
+        assert isinstance(agent.instructions, str)
+        assert "file_pr_finding" in agent.instructions
+        assert "create_vulnerability_report" not in agent.instructions
 
 
 def test_instructions_override_is_used_verbatim() -> None:

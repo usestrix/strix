@@ -33,6 +33,18 @@ Configure Strix using environment variables or a config file.
   the LiteLLM and native OpenAI routing paths.
 </ParamField>
 
+<ParamField path="LLM_EXTRA_BODY" type="string">
+  Extra fields merged into the JSON body of every request to the main model, as a JSON object
+  (e.g. `{"service_tier":"flex","safety_identifier":"9f86d081..."}`). Use it
+  for provider parameters Strix doesn't expose, such as OpenAI's `service_tier`
+  or `safety_identifier`. Applies to both the LiteLLM and native OpenAI routing
+  paths. Fields are not validated, so the provider or gateway must accept them;
+  unknown fields are usually rejected. Extra fields can override fields Strix
+  sends and break requests, so don't set request-shaping fields such as `model`, `messages`, `input`,
+  `tools` or `stream`, and use `STRIX_REASONING_EFFORT` rather than
+  `reasoning_effort`.
+</ParamField>
+
 <ParamField path="LLM_TIMEOUT" default="300" type="integer">
   Request timeout in seconds for LLM calls.
 </ParamField>
@@ -88,6 +100,12 @@ affecting the agents that do the actual testing.
   inherits `LLM_EXTRA_HEADERS`; set this when its endpoint needs custom headers.
 </ParamField>
 
+<ParamField path="DEDUPE_LLM_EXTRA_BODY" type="string">
+  Optional JSON object of extra request-body fields sent on every
+  deduplication-model request. A dedicated dedupe model never inherits
+  `LLM_EXTRA_BODY`; set this when its endpoint needs them too.
+</ParamField>
+
 <ParamField path="STRIX_DEDUPE_REASONING_EFFORT" type="string">
   Reasoning effort for the deduplication model. Defaults to the model's own
   baseline when unset.
@@ -121,6 +139,10 @@ affecting the agents that do the actual testing.
 
 <ParamField path="STRIX_TELEMETRY" default="1" type="string">
   Telemetry toggle. Set to `0`, `false`, `no`, or `off` to disable telemetry (PostHog, Scarf, OTEL).
+</ParamField>
+
+<ParamField path="STRIX_RUN_RECORD_TIMINGS" default="false" type="boolean">
+  Record every LLM request's and tool call's timing in `run.json`, under `llm_requests` and `tool_calls`. Adds about 0.5 MB to a typical scan's `run.json`.
 </ParamField>
 
 <ParamField path="TRACELOOP_BASE_URL" type="string">

@@ -94,6 +94,18 @@ strix --target ./app-directory
 > [!NOTE]
 > First run automatically pulls the sandbox Docker image. Results are saved to `strix_runs/<run-name>`
 
+### Updating
+
+```bash
+# Self-update the standalone binary to the latest release
+strix --update
+
+# ...or re-run the installer
+curl -sSL https://strix.ai/install | bash
+```
+
+Installed with pipx, uv, or pip? `strix --update` prints the matching upgrade command instead (`pipx upgrade strix-agent`, `uv tool upgrade strix-agent`, `pip install --upgrade strix-agent`). Strix also shows a notice with the right command when a new version is available.
+
 ---
 
 ## Ways to Run Strix
