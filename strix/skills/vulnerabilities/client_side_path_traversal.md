@@ -11,11 +11,11 @@ Client-Side Path Traversal (CSPT) is a traversal where the attacker-controlled s
 
 CSPT is a finding only when ALL THREE hold:
 
-1. **Controlled source survives.** A browser-controlled source — a URL path segment, query value, or hash — is decoded/normalized so that path syntax (`../`, `%2f`, `%2e`, backslash, double-encoded forms) still carries into the next stage instead of being stripped or re-encoded.
+1. **Controlled source survives.** A browser-controlled source — a URL path segment, query value, or hash (or `document.referrer`, `postMessage` data, or browser storage the attacker can seed) — is decoded/normalized so that path syntax (`../`, `%2f`, `%2e`, backslash, double-encoded forms) still carries into the next stage instead of being stripped or re-encoded.
 2. **Reaches a request sink.** That value reaches a request-construction sink in the page: `fetch`/XHR/axios/another HTTP client, OR a client-router navigation, OR a server-side/BFF fetch whose path the client controls.
-3. **Produces real impact.** The resulting request has a security-relevant effect: a state change (CSRF-like), a response rendered/executed in an unsafe sink (XSS), a server-side fetch reaching an internal/privileged target (SSRF), an authorization/permission bypass, or disclosure of another user's or tenant's data.
+3. **Produces real impact.** The resulting request has a security-relevant effect: a state change (CSRF-like), a response rendered in an unsafe sink (XSS, or scriptless HTML injection when script cannot run), a server-side fetch reaching an internal/privileged target (SSRF), an authorization/permission bypass, or disclosure of another user's or tenant's data.
 
-**False-positive rule:** a router or framework that merely decodes `../` with NO request sink, or a sink whose redirected request has NO security-relevant effect, is a FALSE POSITIVE — do not report it. This mirrors the repo-wide closure discipline (`confirmed` / `ruled_out` / `open_proof_gap`) and the `counterevidence` pass: no proven sink and impact means `open_proof_gap`, not a finding.
+**False-positive rule:** a router or framework that merely decodes `../` with NO request sink, or a sink whose redirected request has NO security-relevant effect, is a FALSE POSITIVE — do not report it. This mirrors the repo-wide closure discipline (`confirmed` / `ruled_out` / `open_proof_gap`) and the `counterevidence` pass: when you checked and the sink or impact is absent, close it `ruled_out` and name the control; use `open_proof_gap` only when you could not decide either way.
 
 ## Source -> Sink -> Impact
 
@@ -30,7 +30,7 @@ Each decode or re-encode along that chain is a decision point: confirm the trave
 Sink taxonomy and the impact it maps to:
 
 - **State-changing API call** (`POST`/`PUT`/`PATCH`/`DELETE` built from the source) -> CSRF-like unintended action on a different resource.
-- **Response rendered/executed in the DOM** (traversed response body into `innerHTML`, template, `eval`, script/JSON-driven render) -> XSS.
+- **Response rendered/executed in the DOM** (traversed response body into `innerHTML`, template, `eval`, script/JSON-driven render) -> XSS, or HTML injection when script cannot run.
 - **Server-side / BFF fetch** keyed on a client-supplied path segment -> SSRF toward internal/metadata/privileged targets.
 - **Authorization/permission check keyed on the path** (resource id, tenant slug, role segment) -> authz bypass or cross-tenant disclosure of another user's/tenant's data.
 
@@ -55,7 +55,7 @@ Instrument in a controlled browser session to capture the FINAL request shape (m
 const realFetch = window.fetch;
 window.fetch = (...args) => {
   const input = args[0];
-  const raw = typeof input === 'string' ? input : input.url;
+  const raw = input instanceof Request ? input.url : String(input);
   const u = new URL(raw, location.href);
   const method = args[1]?.method || input?.method || 'GET';
   console.log('fetch', {method, origin: u.origin, path: u.pathname});
@@ -94,6 +94,7 @@ Prove the impact-class-specific fact before calling it exploitable:
 
 - **CSRF-like:** show the redirected request hit a *different*, state-changing endpoint and the state change occurred (not merely a 404/redirect). Include a benign-path control.
 - **XSS:** show the traversed response body reached an unsafe render sink AND executed (script ran / handler fired) — a reflected string that never executes is not XSS.
+- **HTML injection:** when CSP or the sink stops script, show the attacker markup was created and had a concrete effect (base/form-target change, dangling markup, DOM clobbering, an external request). Report it as HTML injection per `xss`, not as XSS.
 - **SSRF:** show the server-side/BFF fetch reached an internal or metadata target (e.g. a controlled internal canary or `169.254.169.254`) and returned or acted on that response; a same-origin public redirect is not SSRF.
 - **Authz bypass / cross-tenant:** show the request returned or mutated a resource the current principal must not access (another user/tenant id), with a paired same-principal control that is denied or scoped correctly.
 
@@ -102,7 +103,15 @@ Prove the impact-class-specific fact before calling it exploitable:
 1. Capture the final network request (method + origin + path) AND the security-relevant response or action it caused.
 2. Run a paired control: a benign path next to the traversed path, same session and state, so the difference is attributable to the traversal and not to unrelated behavior.
 3. Provide a minimal PoC — the smallest source value that redirects the request and the single observed effect. Do not paste large payload catalogs.
-4. Close under the repo discipline: a proven source+sink+impact is `confirmed`; a decode with no reachable sink, or a sink with no security-relevant effect, is `ruled_out` (name the control) or `open_proof_gap` (name the missing proof). Run the `counterevidence` pass before reporting.
+4. Close under the repo discipline: a proven source+sink+impact is `confirmed`; a decode you checked and found has no reachable sink, or a sink with no security-relevant effect, is `ruled_out` (name the control); a sink or impact you could not decide is `open_proof_gap` (name the missing proof). Run the `counterevidence` pass before reporting.
+
+## Reporting
+
+File a confirmed CSPT as a vulnerability report with `finding_class="client_side_path_traversal"` and `cwe="CWE-22"`. It shares CWE-22 with server-side traversal, so the class is what keeps it a separate finding.
+
+- Give it a discriminator: `endpoint` set to the traversed target path the victim's request reached (e.g. `/api/admin/keys`) plus its `method`, or a `code_location` with a repo-relative `file` and `start_line` for the client sink.
+- Use this class when page code builds the redirected request from browser input, including a request that lands on a BFF route that forwards it. When the server builds the traversed path itself from a parameter, it is server-side traversal or SSRF: leave `finding_class` as `dynamic`.
+- Put the source value, the final request (method + path), the paired control, and the observed effect in the PoC and evidence.
 
 ## False Positives
 
@@ -117,7 +126,7 @@ Prove the impact-class-specific fact before calling it exploitable:
 2. Query and hash values are usually decoded automatically; path segments vary by router and by execution context. Test each source separately.
 3. Double-encoding (`%252f`) often survives one decode layer that strips single-encoded forms — probe it whenever a single `%2f` is removed.
 4. A BFF/route-handler hop is the difference between a same-origin dead end and SSRF; trace whether the server fetch inherits the client-supplied segment.
-5. No sink and no impact is `open_proof_gap`, never a finding. Name the missing proof instead of reporting the decode.
+5. No sink and no impact is never a finding: close it `ruled_out` with the control you observed, or `open_proof_gap` with the missing proof if you could not decide.
 6. Prefer a one-line minimal PoC and a paired control over a payload catalog; the reusable unit is the source-to-sink pipeline, not the string.
 
 ## Cross-links

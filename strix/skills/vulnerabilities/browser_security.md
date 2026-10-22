@@ -129,7 +129,7 @@ Instrument in a controlled browser session:
 const realFetch = window.fetch;
 window.fetch = (...args) => {
   const input = args[0];
-  const rawUrl = typeof input === 'string' ? input : input.url;
+  const rawUrl = input instanceof Request ? input.url : String(input);
   const url = new URL(rawUrl, location.href);
   const method = args[1]?.method || input?.method || 'GET';
   console.log('fetch', {method, origin: url.origin, path: url.pathname});

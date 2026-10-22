@@ -81,7 +81,7 @@ Follow stored values into previews, administrative pages, email, exports, and hy
 
 **Sources**
 - `location.*` (hash/search), `document.referrer`, postMessage, storage, service worker messages
-- A URL path/query/hash segment used to build a fetch/navigation URL whose response is rendered in an unsafe sink (client-side path traversal → XSS) — see `client_side_path_traversal`
+- A URL path/query/hash segment used to build a fetch/navigation URL whose response is rendered in an unsafe sink (client-side path traversal → XSS or HTML injection) — see `client_side_path_traversal`
 
 **Sinks**
 - `innerHTML`/`outerHTML`/`insertAdjacentHTML`, `document.write`
