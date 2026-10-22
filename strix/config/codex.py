@@ -133,6 +133,11 @@ class CodexAuthError(Exception):
         super().__init__(message or code)
 
 
+TRUSTED_ACCESS_FOR_CYBER_URL = (
+    "https://help.openai.com/en/articles/20001258-trusted-access-for-cyber"
+)
+
+
 class CodexContentGuardrailError(Exception):
     """The ChatGPT backend refused a request via its content guardrail.
     Terminal — retrying identical content never clears the block."""
@@ -142,8 +147,10 @@ class CodexContentGuardrailError(Exception):
         self.original = original
         super().__init__(
             f"'{model}' was blocked by ChatGPT's content guardrails "
-            f"(flagged as a possible cybersecurity risk). "
-            f"Set STRIX_LLM to a model that isn't blocked and re-run."
+            f"(flagged as a possible cybersecurity risk). Strix cannot override this decision. "
+            "Changing STRIX_LLM may not remove the block. "
+            "For authorized cybersecurity work, request access through OpenAI's Trusted Access "
+            f"for Cyber program: {TRUSTED_ACCESS_FOR_CYBER_URL}"
         )
 
 
