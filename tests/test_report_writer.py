@@ -11,6 +11,7 @@ import pytest
 from strix.report.writer import (
     atomic_write_text,
     read_run_record,
+    read_vulnerabilities,
     render_vulnerability_md,
     write_executive_report,
     write_run_record,
@@ -60,6 +61,27 @@ def test_write_and_read_run_record_round_trip(tmp_path: Path) -> None:
     payload = {"scan_id": "scan-abc", "status": "completed"}
     write_run_record(tmp_path, payload)
     assert read_run_record(tmp_path) == payload
+
+
+def test_read_vulnerabilities_filters_non_object_entries(tmp_path: Path) -> None:
+    (tmp_path / "vulnerabilities.json").write_text(
+        json.dumps([_sample_report(), "invalid"]),
+        encoding="utf-8",
+    )
+
+    assert read_vulnerabilities(tmp_path) == [_sample_report()]
+
+
+def test_read_vulnerabilities_missing_file_raises(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="unreadable"):
+        read_vulnerabilities(tmp_path)
+
+
+def test_read_vulnerabilities_non_list_raises(tmp_path: Path) -> None:
+    (tmp_path / "vulnerabilities.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(TypeError, match="not a list"):
+        read_vulnerabilities(tmp_path)
 
 
 def test_render_vulnerability_md_includes_core_sections() -> None:

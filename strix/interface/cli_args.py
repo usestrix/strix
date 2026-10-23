@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from strix.config import apply_config_override
 from strix.config.settings import DEFAULT_MAX_TURNS
@@ -23,6 +23,10 @@ from strix.report.runs import list_run_summaries
 
 # Severities ``--fail-on`` accepts, most severe first.
 FAIL_ON_SEVERITIES = ("critical", "high", "medium", "low", "info")
+
+
+BASELINE_RUN_ARG = "--baseline-run"
+RUN_NAME_PATH_SEPARATORS = ("/", "\\")
 
 
 def get_version() -> str:
@@ -313,6 +317,16 @@ Strix Cloud:
         ),
     )
 
+    parser.add_argument(
+        BASELINE_RUN_ARG,
+        type=str,
+        metavar="RUN_NAME",
+        help=(
+            "Use vulnerabilities.json from a prior run under ./strix_runs/ as a "
+            "known-findings baseline for cross-run duplicate suppression."
+        ),
+    )
+
     args = parser.parse_args()
     # Startup-resolved state lives alongside the parsed flags. The full schema
     # is established here so downstream code reads attributes directly.
@@ -375,11 +389,11 @@ Strix Cloud:
     args.user_instruction = args.instruction or None
 
     if args.resume is not None:
-        if args.target or args.target_list:
+        if args.target or args.target_list or args.baseline_run is not None:
             parser.error(
-                "Cannot combine --resume with --target/--target-list. "
+                "Cannot combine --resume with --target/--target-list/--baseline-run. "
                 "--resume picks up where the prior run left off, including the "
-                "original target list."
+                "original target list and baseline."
             )
         if not args.resume.strip():
             # A bare --resume: main() opens the inline picker of prior runs
@@ -397,6 +411,12 @@ Strix Cloud:
         except ResumeError as exc:
             parser.error(str(exc))
     else:
+        if args.baseline_run is not None:
+            try:
+                _validate_baseline_run(args.baseline_run)
+            except (TypeError, ValueError) as exc:
+                parser.error(str(exc))
+
         if not args.target and not args.target_list:
             if args.non_interactive:
                 parser.error(
@@ -415,6 +435,28 @@ Strix Cloud:
             parser.error(str(e))
 
     return args
+
+
+def _validate_baseline_run(baseline_run: object) -> None:
+    """Raise ``TypeError``/``ValueError`` unless ``baseline_run`` names a readable prior run."""
+    from strix.report.writer import read_vulnerabilities
+
+    if not isinstance(baseline_run, str):
+        raise TypeError(f"{BASELINE_RUN_ARG} must be a run name")
+    if not baseline_run:
+        raise ValueError(f"{BASELINE_RUN_ARG} must be a non-empty run name")
+    if (
+        Path(baseline_run).is_absolute()
+        or PureWindowsPath(baseline_run).drive
+        or baseline_run in {".", ".."}
+        or any(separator in baseline_run for separator in RUN_NAME_PATH_SEPARATORS)
+    ):
+        raise ValueError(f"{BASELINE_RUN_ARG} must be a run name, not a path")
+    baseline_run_dir = run_dir_for(baseline_run)
+    try:
+        read_vulnerabilities(baseline_run_dir)
+    except (RuntimeError, TypeError) as exc:
+        raise ValueError(f"{BASELINE_RUN_ARG} {baseline_run}: {exc}") from exc
 
 
 def terminal_attached() -> bool:
@@ -529,6 +571,13 @@ def load_resume_state(args: argparse.Namespace) -> None:
         attach_workspace_mount(args)
     if state.get("diff_scope"):
         args.diff_scope = state.get("diff_scope")
+    baseline_run = state.get("baseline_run")
+    if baseline_run is not None:
+        try:
+            _validate_baseline_run(baseline_run)
+        except (TypeError, ValueError) as exc:
+            raise ResumeError(f"--resume {args.resume}: {exc}") from exc
+    args.baseline_run = baseline_run
     persisted_scan_mode = state.get("scan_mode")
     if persisted_scan_mode and args.scan_mode == "deep":
         args.scan_mode = persisted_scan_mode
