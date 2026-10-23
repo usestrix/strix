@@ -166,7 +166,7 @@ class TelemetrySettings(BaseSettings):
     run_record_timings: bool = Field(default=False, alias="STRIX_RUN_RECORD_TIMINGS")
 
 
-WebSearchProvider = Literal["auto", "perplexity", "exa"]
+WebSearchProvider = Literal["auto", "perplexity", "exa", "parallel"]
 ExaSearchType = Literal["auto", "fast", "instant", "deep-lite", "deep", "deep-reasoning"]
 
 
@@ -181,6 +181,11 @@ class IntegrationSettings(BaseSettings):
     exa_api_key: str | None = Field(
         default=None,
         alias="EXA_API_KEY",
+        repr=False,
+    )
+    parallel_api_key: str | None = Field(
+        default=None,
+        alias="PARALLEL_API_KEY",
         repr=False,
     )
     web_search_provider: WebSearchProvider = Field(
