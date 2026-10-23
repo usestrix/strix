@@ -106,6 +106,9 @@ curl -sSL https://strix.ai/install | bash
 
 Installed with pipx, uv, or pip? `strix --update` prints the matching upgrade command instead (`pipx upgrade strix-agent`, `uv tool upgrade strix-agent`, `pip install --upgrade strix-agent`). Strix also shows a notice with the right command when a new version is available.
 
+> [!WARNING]
+> `litellm==1.107.0` on PyPI (2026-10-21, ~11:40–13:20 UTC) contained a credential stealer ([BerriAI/litellm#47826](https://github.com/BerriAI/litellm/issues/47826)). If you installed or upgraded `strix-agent` with pip, pipx, or uv in that window, check `site-packages` for `cook.pth` and follow the remediation in that issue. The standalone binary from `strix.ai/install` was never affected.
+
 ---
 
 ## Ways to Run Strix
