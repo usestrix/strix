@@ -1167,6 +1167,103 @@ async def test_noninteractive_recovery_exhaustion_crashes(
     assert coordinator.statuses["root"] == "crashed"
 
 
+def _text_cycle(
+    coordinator: AgentCoordinator,
+    agent_id: str,
+    text: str,
+    calls: list[Any],
+) -> Any:
+    """Fake run cycle whose turn ends in ``text`` with no lifecycle tool call."""
+
+    async def _cycle(*_args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs.get("input_data"))
+        await coordinator.set_status(agent_id, "running")
+        return MagicMock(final_output=text)
+
+    return _cycle
+
+
+@pytest.mark.asyncio
+async def test_noninteractive_text_refusal_fails_without_retrying(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refusal never becomes a tool call, so nudging it only burns the budget."""
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "recon", parent_id="root")
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        execution,
+        "_run_cycle",
+        _text_cycle(coordinator, "child", "I can't help with testing this target.", calls),
+    )
+
+    await _drive(coordinator, "child", interactive=False, max_turns=50)
+
+    assert len(calls) == 1
+    assert coordinator.statuses["child"] == "failed"
+    pending, _ = await coordinator.consume_pending("root")
+    assert pending == 1
+
+
+@pytest.mark.asyncio
+async def test_noninteractive_ordinary_text_is_still_nudged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Text that merely contains "cannot" keeps the normal recovery path."""
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        execution,
+        "_run_cycle",
+        _text_cycle(coordinator, "root", "I cannot reproduce the issue yet.", calls),
+    )
+
+    with pytest.raises(MaxTurnsExceeded):
+        await _drive(coordinator, "root", interactive=False, max_turns=2)
+
+    assert len(calls) == 2
+    assert coordinator.statuses["root"] == "crashed"
+
+
+@pytest.mark.asyncio
+async def test_interactive_text_refusal_is_nudged_not_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Interactive agents talk to the user in plain text, declining included."""
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        execution,
+        "_run_cycle_parked",
+        _text_cycle(coordinator, "root", "I can't help with scanning that host.", calls),
+    )
+
+    await _drive(coordinator, "root", interactive=True)
+
+    assert len(calls) == execution._INTERACTIVE_TOOL_RECOVERY_LIMIT
+    assert coordinator.statuses["root"] == "waiting"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("I can't help with that request.", True),
+        ("I must decline to attack this system.", True),
+        ("I apologize, but I'm unable to continue with this.", True),
+        ("As an AI, I cannot perform intrusive testing.", True),
+        ("I cannot reproduce the issue on the staging host.", False),
+        ("The page says: 'As an AI language model...'", False),
+        ("I apologize for the noise; the scan finished.", False),
+        ("Found 3 open ports on 10.0.0.5.", False),
+    ],
+)
+def test_is_text_refusal(text: str, expected: bool) -> None:
+    assert execution._is_text_refusal(text) is expected
+
+
 @pytest.mark.asyncio
 async def test_tool_required_message_is_persisted_to_the_session(tmp_path: Any) -> None:
     session = SQLiteSession("root", tmp_path / "agents.db")
