@@ -24,6 +24,8 @@ from openai import (
 
 from strix.config import codex
 from strix.core.hooks import (
+    SUBAGENT_TURN_LIMITS_KEY,
+    TURN_LIMIT_KEY,
     BudgetExceededError,
     BudgetPausedError,
     SubagentBudgetReservedError,
@@ -39,6 +41,7 @@ from strix.core.sessions import (
 )
 from strix.llm import request_log
 from strix.llm.compaction import is_context_overflow, maybe_compact
+from strix.skills import skill_turn_limit
 
 
 if TYPE_CHECKING:
@@ -427,6 +430,7 @@ async def spawn_child_agent(
         name=name,
         parent_id=parent_id,
         task=task,
+        skills=skills,
         initial_input=child_initial_input(
             name=name,
             child_id=child_id,
@@ -510,6 +514,7 @@ async def respawn_subagents(
                 name=name,
                 parent_id=parent_id,
                 task=str(md.get("task", "")),
+                skills=child_skills,
                 initial_input=[],
                 start_parked=start_parked,
                 event_sink=event_sink,
@@ -1161,6 +1166,7 @@ async def _start_child_runner(
     name: str,
     parent_id: str | None,
     task: str,
+    skills: list[str],
     initial_input: Any,
     start_parked: bool = False,
     event_sink: StreamEventSink | None = None,
@@ -1174,6 +1180,9 @@ async def _start_child_runner(
     child_ctx["agent_id"] = child_id
     child_ctx["parent_id"] = parent_id
     child_ctx["task"] = task
+    child_ctx[TURN_LIMIT_KEY] = skill_turn_limit(
+        skills, parent_ctx.get(SUBAGENT_TURN_LIMITS_KEY) or {}
+    )
 
     async def _child_loop() -> None:
         # A budget stop is a clean scan-wide shutdown, not a child failure: the

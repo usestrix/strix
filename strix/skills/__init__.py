@@ -1,7 +1,7 @@
 import logging
 import re
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import TypeGuard
 
@@ -268,6 +268,19 @@ def _candidate_skill_files(skill_name: str) -> list[Path]:
     if "/" in skill_name:
         return _qualified_skill_files(skill_name)
     return _bare_skill_files(skill_name)
+
+
+def skill_turn_limit(skill_names: list[str], turn_limits: Mapping[str, int]) -> int | None:
+    """Largest of ``turn_limits`` (keyed by skill name) among these skills, if any."""
+    files = {path for name in skill_names for path in _candidate_skill_files(name)}
+    return max(
+        (
+            limit
+            for name, limit in turn_limits.items()
+            if files.intersection(_candidate_skill_files(name))
+        ),
+        default=None,
+    )
 
 
 def load_skills(skill_names: list[str], *, supports_images: bool = True) -> dict[str, str]:
