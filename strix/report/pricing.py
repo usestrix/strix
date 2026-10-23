@@ -6,6 +6,29 @@ from functools import lru_cache
 from typing import Any, cast
 
 
+def _preferred_route(
+    matches: list[str],
+    model_cost: dict[str, dict[str, Any]],
+    name: str,
+) -> str:
+    """Pick the provider's own route when several equally priced ones match.
+
+    LiteLLM lists the same model under its native provider (``xai/grok-4.5``) and
+    under the aggregators that resell it (``openrouter/x-ai/grok-4.5``,
+    ``perplexity/xai/grok-4.5``). Alphabetical order would hand back an
+    aggregator; the canonical route is the one shaped exactly
+    ``{litellm_provider}/{name}``.
+    """
+    for key in matches:
+        entry = model_cost.get(key)
+        if not isinstance(entry, dict):
+            continue
+        provider = entry.get("litellm_provider")
+        if isinstance(provider, str) and key == f"{provider}/{name}":
+            return key
+    return matches[0]
+
+
 @lru_cache(maxsize=512)
 def resolve_litellm_model(model: str) -> str | None:
     """Return a provider-qualified model name that LiteLLM can price."""
@@ -48,7 +71,7 @@ def resolve_litellm_model(model: str) -> str | None:
                 if isinstance(model_cost.get(key), dict)
             }
             if len(matches) == 1 or len(prices) == 1:
-                return matches[0]
+                return _preferred_route(matches, model_cost, name)
         return None  # noqa: TRY300
     except Exception:  # noqa: BLE001
         return None
