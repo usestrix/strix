@@ -61,6 +61,7 @@ def _patch_engine_scaffold(
             model="openai/gpt-4o",
             reasoning_effort="high",
             force_required_tool_choice=False,
+            parallel_tool_calls=False,
             timeout=300,
             prompt_cache=True,
             extra_headers=None,
@@ -283,6 +284,19 @@ async def test_unknown_tool_calls_are_returned_to_the_model(
     )
 
     assert captured["run_config"].tool_not_found_behavior == "return_error_to_model"
+
+
+@pytest.mark.parametrize("interactive", [False, True])
+def test_parallel_tool_calls_prompt_is_opt_in(interactive: bool) -> None:
+    default = render_system_prompt(include_scope=False, interactive=interactive)
+    parallel = render_system_prompt(
+        include_scope=False, interactive=interactive, parallel_tool_calls=True
+    )
+
+    assert "Read-only calls can go together" not in default
+    assert ("Read-only calls can go together" in parallel) is not interactive
+    assert ("exactly one tool call" in default) is interactive
+    assert "exactly one tool call" not in parallel
 
 
 def test_scope_is_rendered_once_at_the_end_of_the_prompt() -> None:

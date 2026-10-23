@@ -314,6 +314,12 @@ def test_make_model_settings_disables_parallel_tool_calls_by_default() -> None:
     assert make_model_settings("none", model_name="gpt-4o").parallel_tool_calls is False
 
 
+def test_make_model_settings_enables_parallel_tool_calls_when_requested() -> None:
+    settings = make_model_settings("none", model_name="gpt-4o", parallel_tool_calls=True)
+
+    assert settings.parallel_tool_calls is True
+
+
 def test_make_model_settings_omits_parallel_tool_calls_without_tools() -> None:
     settings = make_model_settings("none", model_name="gpt-4o", has_tools=False)
 

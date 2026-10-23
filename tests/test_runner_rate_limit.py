@@ -39,6 +39,7 @@ async def test_persistent_rate_limit_stops_gracefully(
             model="openai/gpt-4o",
             reasoning_effort="high",
             force_required_tool_choice=False,
+            parallel_tool_calls=False,
             timeout=300,
             prompt_cache=True,
             extra_headers=None,
