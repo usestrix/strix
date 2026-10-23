@@ -1,0 +1,37 @@
+rules:
+  - id: github-owned-action-not-pinned-to-commit-sha
+    patterns:
+      - pattern-inside: "{steps: ...}"
+      - pattern: |
+          uses: "$USES"
+      - metavariable-regex:
+          metavariable: $USES
+          regex: '^(actions|github)/'
+      - metavariable-pattern:
+          metavariable: $USES
+          language: generic
+          patterns:
+            - pattern-not-regex: "@[0-9a-f]{40}$"
+    message: >-
+      GitHub-owned action `$USES` is referenced by a mutable tag or branch
+      instead of a full-length commit SHA. Tags can be moved, so a compromised
+      or force-pushed release changes what this workflow runs. Pin to the
+      commit SHA of the release you reviewed and let a bot keep it current.
+    languages:
+      - yaml
+    severity: WARNING
+    metadata:
+      cwe:
+        - "CWE-1357: Reliance on Insufficiently Trustworthy Component"
+        - "CWE-353: Missing Support for Integrity Check"
+      owasp: A06:2021 - Vulnerable and Outdated Components
+      references:
+        - https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions#using-third-party-actions
+      category: security
+      technology:
+        - github-actions
+      subcategory:
+        - vuln
+      likelihood: LOW
+      impact: LOW
+      confidence: HIGH

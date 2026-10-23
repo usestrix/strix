@@ -13,7 +13,7 @@ Canonical syntax:
 `opengrep scan [flags] [targets]`
 
 Bundled rules:
-- `/opt/opengrep-rules` holds the full ruleset, one directory per language (`python`, `javascript`, `typescript`, `go`, `java`, `php`, `ruby`, …) plus `generic/secrets`, `dockerfile`, `terraform`, `yaml`
+- `/opt/opengrep-rules` holds the full ruleset, one directory per language (`python`, `javascript`, `typescript`, `go`, `java`, `php`, `ruby`, …) plus `generic/secrets`, `dockerfile`, `terraform`, `yaml`, and `strix` (Strix-authored rules, e.g. GitHub-owned actions not pinned to a commit SHA)
 - Framework rules sit under the language (`python/django`, `python/flask`, `javascript/express`, …)
 
 High-signal flags:

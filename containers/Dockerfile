@@ -227,6 +227,10 @@ RUN set -eux; \
     find . -type d -empty -delete; \
     chmod -R a+rX /opt/opengrep-rules
 
+# Strix-authored rules that close gaps in the community ruleset.
+COPY containers/opengrep-rules/ /opt/opengrep-rules/strix/
+RUN chmod -R a+rX /opt/opengrep-rules/strix
+
 USER pentester
 
 RUN pipx install bandit
