@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import time
+import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -75,9 +76,36 @@ def _login_as_guest() -> str:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310  # nosec B310
-        payload = json.loads(resp.read())
-    return str(payload["data"]["loginAsGuest"]["token"]["accessToken"])
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310  # nosec B310
+            raw_resp = resp.read()
+    except urllib.error.HTTPError as err:
+        body = err.read()
+        try:
+            payload = json.loads(body)
+        except (json.JSONDecodeError, TypeError):
+            payload = body.decode("utf-8", errors="replace")[:200].strip() or err.reason
+        raise RuntimeError(f"Caido loginAsGuest returned HTTP {err.code}: {payload}") from err
+    except urllib.error.URLError as err:
+        raise RuntimeError(f"Failed to connect to Caido at {_graphql_url()}: {err}") from err
+
+    try:
+        payload = json.loads(raw_resp)
+    except (json.JSONDecodeError, TypeError) as err:
+        raise RuntimeError(f"Unparseable response from Caido: {raw_resp!r}") from err
+
+    token = None
+    if isinstance(payload, dict):
+        data = payload.get("data")
+        if isinstance(data, dict):
+            login = data.get("loginAsGuest")
+            if isinstance(login, dict):
+                token_obj = login.get("token")
+                if isinstance(token_obj, dict):
+                    token = token_obj.get("accessToken")
+    if not token or not isinstance(token, str) or not token.strip():
+        raise RuntimeError(f"loginAsGuest returned no token: {payload}")
+    return token.strip()
 
 
 async def _new_client() -> Client:
