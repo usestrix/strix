@@ -99,33 +99,52 @@ print_message() {
     echo -e "${color}${message}${NC}"
 }
 
+pipx_owns() {
+    # Ask pipx instead of guessing from the path. A uv-managed or hand-placed
+    # strix can sit in ~/.local/bin too, and telling the user to
+    # "pipx uninstall strix-agent" would then either do nothing or uninstall a
+    # different package than the one winning PATH resolution.
+    local path=$1
+    local bin_dir
+
+    command -v pipx >/dev/null 2>&1 || return 1
+    bin_dir=$(pipx environment --value PIPX_BIN_DIR 2>/dev/null) || return 1
+    [[ -n "$bin_dir" ]] || return 1
+    [[ "$(dirname "$path")" == "${bin_dir%/}" ]] || return 1
+    pipx list --short 2>/dev/null | grep -q "^strix-agent "
+}
+
+describe_removal() {
+    local path=$1
+
+    if pipx_owns "$path"; then
+        echo -e "${MUTED}  pipx installed it. To remove it: ${NC}pipx uninstall strix-agent"
+    else
+        # Quote the path: a copied "rm" of a path with spaces or globbing
+        # characters would otherwise split or expand.
+        echo -e "${MUTED}  To remove it: ${NC}rm $(printf '%q' "$path")"
+    fi
+}
+
 check_existing_installation() {
+    UNMANAGED_INSTALLATIONS=()
+
     local found_paths=()
     while IFS= read -r -d '' path; do
         found_paths+=("$path")
     done < <(which -a strix 2>/dev/null | tr '\n' '\0' || true)
 
-    if [ ${#found_paths[@]} -gt 0 ]; then
-        for path in "${found_paths[@]}"; do
-            if [[ ! -e "$path" ]] || [[ "$path" == "$INSTALL_DIR/strix"* ]]; then
-                continue
-            fi
+    for path in "${found_paths[@]:-}"; do
+        if [[ -z "$path" ]] || [[ ! -e "$path" ]] || [[ "$path" == "$INSTALL_DIR/strix"* ]]; then
+            continue
+        fi
 
-            if [[ -n "$path" ]]; then
-                echo -e "${MUTED}Found existing strix at: ${NC}$path"
+        UNMANAGED_INSTALLATIONS+=("$path")
+        echo -e "${MUTED}Found another strix at: ${NC}$path"
+    done
 
-                if [[ "$path" == *".local/bin"* ]]; then
-                    echo -e "${MUTED}Removing old pipx installation...${NC}"
-                    if command -v pipx >/dev/null 2>&1; then
-                        pipx uninstall strix-agent 2>/dev/null || true
-                    fi
-                    rm -f "$path" 2>/dev/null || true
-                elif [[ -L "$path" || -f "$path" ]]; then
-                    echo -e "${MUTED}Removing old installation...${NC}"
-                    rm -f "$path" 2>/dev/null || true
-                fi
-            fi
-        done
+    if [ ${#UNMANAGED_INSTALLATIONS[@]} -gt 0 ]; then
+        echo -e "${MUTED}This installer only manages ${NC}$INSTALL_DIR${MUTED}, so it is left alone.${NC}"
     fi
 }
 
@@ -296,15 +315,10 @@ verify_installation() {
 
     if [[ "$which_strix" != "$INSTALL_DIR/strix" && "$which_strix" != "$INSTALL_DIR/strix.exe" ]]; then
         if [[ -n "$which_strix" ]]; then
-            echo -e "${YELLOW}⚠ Found conflicting strix at: ${NC}$which_strix"
-            echo -e "${MUTED}Attempting to remove...${NC}"
-
-            if rm -f "$which_strix" 2>/dev/null; then
-                echo -e "${GREEN}✓ Removed conflicting installation${NC}"
-            else
-                echo -e "${YELLOW}Could not remove automatically.${NC}"
-                echo -e "${MUTED}Please remove manually: ${NC}rm $which_strix"
-            fi
+            echo -e "${YELLOW}⚠ Another strix wins PATH resolution: ${NC}$which_strix"
+            echo -e "${MUTED}The version just installed lives in ${NC}$INSTALL_DIR${MUTED} and will not run until that changes.${NC}"
+            echo -e "${MUTED}Put ${NC}$INSTALL_DIR${MUTED} earlier on your PATH, or remove the other executable yourself.${NC}"
+            describe_removal "$which_strix"
         fi
     fi
 
