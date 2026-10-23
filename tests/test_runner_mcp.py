@@ -45,6 +45,7 @@ def _settings() -> Any:
             prompt_cache=True,
             extra_headers=None,
             extra_body=None,
+            max_tokens=None,
         ),
         runtime=types.SimpleNamespace(max_context_images=3),
     )

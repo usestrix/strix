@@ -81,6 +81,7 @@ class LlmSettings(BaseSettings):
         default=False,
         alias="LLM_DISABLE_STREAMING",
     )
+    max_tokens: int | None = Field(default=None, gt=0, alias="STRIX_LLM_MAX_TOKENS")
     timeout: int = Field(default=300, alias="LLM_TIMEOUT")
     preflight_timeout: int = Field(default=30, ge=1, alias="LLM_PREFLIGHT_TIMEOUT")
     stream_idle_timeout: int = Field(default=300, ge=0, alias="LLM_STREAM_IDLE_TIMEOUT")
