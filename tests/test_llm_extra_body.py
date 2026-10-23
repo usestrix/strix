@@ -42,11 +42,20 @@ def test_extra_body_parsed_from_json_env(monkeypatch: pytest.MonkeyPatch) -> Non
     assert load_settings().llm.extra_body == {"service_tier": "flex", "n": 1}
 
 
-async def _send(model: Model) -> None:
+async def _send(
+    model: Model,
+    *,
+    model_name: str = "gpt-5",
+    reasoning_effort: str | None = None,
+) -> None:
     await model.get_response(
         system_instructions=None,
         input="Reply with just 'OK'.",
-        model_settings=make_model_settings(None, model_name="gpt-5", extra_body=_EXTRA_BODY),
+        model_settings=make_model_settings(
+            reasoning_effort,
+            model_name=model_name,
+            extra_body=_EXTRA_BODY,
+        ),
         tools=[],
         output_schema=None,
         handoffs=[],
@@ -59,6 +68,7 @@ async def _send(model: Model) -> None:
 
 def _capturing_client(captured: dict[str, Any]) -> openai.AsyncOpenAI:
     def handler(request: httpx.Request) -> httpx.Response:
+        captured["__path"] = request.url.path
         captured.update(json.loads(request.content))
         return httpx.Response(400, json={"error": {"message": "captured"}})
 
@@ -79,6 +89,23 @@ async def test_extra_body_reaches_native_openai_request_body(model_cls: type) ->
         await _send(model_cls(model="gpt-5", openai_client=_capturing_client(captured)))
 
     assert {k: captured.get(k) for k in _EXTRA_BODY} == _EXTRA_BODY
+
+
+@pytest.mark.asyncio
+async def test_minimax_flash_default_responses_payload_reaches_mock_transport() -> None:
+    captured: dict[str, Any] = {}
+    client = _capturing_client(captured)
+
+    with pytest.raises(openai.BadRequestError):
+        await _send(
+            OpenAIResponsesModel(model="openai/MiniMax-M3.1-Flash", openai_client=client),
+            model_name="openai/MiniMax-M3.1-Flash",
+            reasoning_effort="max",
+        )
+
+    assert captured["__path"] == "/v1/responses"
+    assert captured["model"] == "openai/MiniMax-M3.1-Flash"
+    assert captured["reasoning_effort"] == "max"
 
 
 @pytest.mark.asyncio

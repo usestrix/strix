@@ -41,6 +41,7 @@ from openai.types.shared import Reasoning
 from strix.agents.prompt import CACHE_POINT
 from strix.config import codex
 from strix.config.loader import load_settings
+from strix.config.model_catalog import local_model_entry
 from strix.config.tool_call_arguments import repair_input
 from strix.config.tool_call_ids import TurnCallIdRewriter, dedupe_input
 from strix.config.tool_call_limits import TurnToolCallLimiter
@@ -1003,7 +1004,7 @@ def model_supports_reasoning(model_name: str) -> bool:
 def model_supports_images(model_name: str) -> bool:
     """Return whether the model accepts image input. Assume yes until proven otherwise."""
     entry = _catalog_entry(model_name)
-    return entry is None or bool(entry.get("supports_vision"))
+    return entry is None or "supports_vision" not in entry or bool(entry.get("supports_vision"))
 
 
 def _bare_openai_name(model_name: str) -> str:
@@ -1015,7 +1016,11 @@ def _bare_openai_name(model_name: str) -> str:
 
 
 def _catalog_entry(model_name: str) -> dict[str, Any] | None:
-    """LiteLLM's cost-map entry for the model, looked up as it would route it."""
+    """Resolve local contract metadata before LiteLLM's dynamic cost map."""
+    local_entry = local_model_entry(model_name)
+    if local_entry is not None:
+        return local_entry
+
     import litellm
 
     name = _bare_openai_name(model_name)
