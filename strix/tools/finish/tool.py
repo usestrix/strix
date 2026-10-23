@@ -62,6 +62,7 @@ def _do_finish(
             methodology=methodology.strip(),
             technical_analysis=technical_analysis.strip(),
             recommendations=recommendations.strip(),
+            mark_complete=False,
         )
         vuln_count = len(report_state.vulnerability_reports)
         coverage_summary = _coverage_summary(agent_graph)
@@ -70,7 +71,7 @@ def _do_finish(
         return {"success": False, "error": f"Failed to complete scan: {e!s}"}
     else:
         logger.info(
-            "finish_scan: completed scan with %d vulnerability report(s)",
+            "finish_scan: prepared summary with %d vulnerability report(s)",
             vuln_count,
         )
         result: dict[str, Any] = {
@@ -81,6 +82,14 @@ def _do_finish(
         }
         result.update(coverage_summary)
         return result
+
+
+def _commit_finish() -> None:
+    from strix.report.state import get_global_report_state
+
+    report_state = get_global_report_state()
+    if report_state is not None:
+        report_state.complete_scan()
 
 
 def _coverage_summary(agent_graph: dict[str, Any]) -> dict[str, Any]:
@@ -334,6 +343,14 @@ async def finish_scan(
             default=str,
         )
 
+    pending_error = {
+        "success": False,
+        "scan_completed": False,
+        "error": "Cannot finish with pending messages. Review them before finishing the scan.",
+    }
+    if coordinator is not None and isinstance(me, str) and await coordinator.has_pending(me):
+        return json.dumps(pending_error)
+
     result = await asyncio.to_thread(
         _do_finish,
         parent_id=parent_id,
@@ -349,5 +366,11 @@ async def finish_scan(
         and coordinator is not None
         and isinstance(me, str)
     ):
-        await coordinator.set_status(me, "completed")
+        completed, _ = await coordinator.complete_if_no_pending(me)
+        if not completed:
+            # A message arrived while the draft summary was being persisted.
+            # Keep running so the root can reconcile it and finalize again.
+            return json.dumps(pending_error)
+    if result.get("success") and result.get("scan_completed"):
+        await asyncio.to_thread(_commit_finish)
     return json.dumps(result, ensure_ascii=False, default=str)

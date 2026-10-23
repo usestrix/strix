@@ -176,8 +176,10 @@ async def send_message_to_agent(
 ) -> str:
     """Send a message to another agent's inbox — sparingly.
 
-    Inter-agent messages are appended to the target's SDK session and
-    interrupt any active target turn so the next run cycle sees them.
+    Messages are queued for the target. In headless runs they enter its
+    context before the next model request; interactive runs also interrupt
+    the active turn. A successful send acknowledges queuing, not that the
+    target has already read or acted on the message.
     Use only when essential:
 
     - Sharing a discovered finding/credential another agent needs.
@@ -263,7 +265,7 @@ async def send_message_to_agent(
             "success": True,
             "message_id": msg_id,
             "target_agent_id": target_agent_id,
-            "delivery_status": "delivered",
+            "delivery_status": "queued",
         },
         ensure_ascii=False,
         default=str,
@@ -693,39 +695,45 @@ async def agent_finish(
 
     filed_reports = _filed_reports_by(me)
     filed_report_ids = [str(r.get("id")) for r in filed_reports]
-
-    parent_notified = False
-    if report_to_parent and await coordinator.claim_parent_notice(me):
-        async with coordinator._lock:
-            agent_name = coordinator.names.get(me, me)
-        report = _render_completion_report(
-            agent_name=agent_name,
-            agent_id=me,
-            task=str(inner.get("task", "")),
-            success=success,
-            result_summary=result_summary,
-            findings=list(findings or []),
-            recommendations=list(final_recommendations or []),
-            open_items=list(open_items or []),
-            filed_reports=filed_reports,
-        )
-        await coordinator.send(
-            parent_id,
+    async with coordinator._lock:
+        agent_name = coordinator.names.get(me, me)
+    report = _render_completion_report(
+        agent_name=agent_name,
+        agent_id=me,
+        task=str(inner.get("task", "")),
+        success=success,
+        result_summary=result_summary,
+        findings=list(findings or []),
+        recommendations=list(final_recommendations or []),
+        open_items=list(open_items or []),
+        filed_reports=filed_reports,
+    )
+    # Even a child that opts out of a full report owes its parent a terminal
+    # notice. Queue it atomically with completion, before the parent can finish.
+    parent_message = {
+        "id": f"report_{uuid.uuid4().hex[:8]}",
+        "from": me,
+        "content": report
+        if report_to_parent
+        else (f"[Agent completed] {agent_name} ({me}) finished without a completion report."),
+        "type": "completion" if report_to_parent else "completed",
+        "priority": "high",
+        "filed_report_ids": filed_report_ids,
+    }
+    completed, parent_notified = await coordinator.complete_if_no_pending(
+        me, parent_message=parent_message
+    )
+    if not completed:
+        return json.dumps(
             {
-                "id": f"report_{uuid.uuid4().hex[:8]}",
-                "from": me,
-                "content": report,
-                "type": "completion",
-                "priority": "high",
-                "filed_report_ids": filed_report_ids,
-            },
+                "success": False,
+                "agent_completed": False,
+                "error": (
+                    "Cannot finish with pending messages. Review the incoming instructions "
+                    "before calling agent_finish again."
+                ),
+            }
         )
-        parent_notified = True
-
-    await coordinator.set_status(me, "completed")
-    if not parent_notified:
-        # Silence here would leave a parent waiting on a report that is never coming.
-        await notify_parent_on_terminal(coordinator, me, "completed")
 
     logger.info(
         "agent_finish: %s success=%s findings=%d filed_reports=%d parent_notified=%s",

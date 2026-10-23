@@ -9,6 +9,7 @@ import logging
 import re
 import uuid
 from collections.abc import Callable
+from copy import copy
 from dataclasses import replace
 from functools import cache
 from typing import TYPE_CHECKING, Any, cast
@@ -157,6 +158,32 @@ def _with_image_scrub(run_config: RunConfig, context: dict[str, Any]) -> RunConf
         return await result if inspect.isawaitable(result) else result
 
     return replace(run_config, call_model_input_filter=_scrub)
+
+
+class _PendingMessagesError(Exception):
+    """Yield at an SDK model boundary to reload the persisted conversation."""
+
+
+def _with_mailbox_checkpoint(
+    run_config: RunConfig, coordinator: AgentCoordinator, agent_id: str
+) -> RunConfig:
+    # A streamed SDK run can contain many model/tool turns. Updating only its
+    # session does not update the in-memory input for the next model request.
+    # Restart at this boundary, after preceding tool results have been saved,
+    # rather than cancelling an in-flight tool or injecting one ephemeral turn.
+    inner = run_config.call_model_input_filter
+
+    async def _checkpoint(data: CallModelData[Any]) -> ModelInputData:
+        if await coordinator.has_pending(agent_id):
+            raise _PendingMessagesError
+        if inner is None:
+            return data.model_data
+        result = inner(data)
+        return await result if inspect.isawaitable(result) else result
+
+    configured = copy(run_config)
+    configured.call_model_input_filter = _checkpoint
+    return configured
 
 
 _MAX_TRANSIENT_MODEL_RETRIES = 5
@@ -366,13 +393,19 @@ async def _run_agent_loop(
                 interrupt=False,
             )
 
-        await coordinator.consume_pending(agent_id)
+        _, items = await coordinator.consume_pending(agent_id, include_items=True)
+        history = (
+            result.to_input_list() if result is not None and session is None else first_cycle_input
+        )
+        next_input = (
+            [] if session is not None else ItemHelpers.input_to_new_input_list(history) + items
+        )
         with contextlib.suppress(BudgetPausedError):
             result = await _run_until_lifecycle(
                 agent,
                 coordinator,
                 agent_id,
-                initial_input=[],
+                initial_input=next_input,
                 run_config=run_config,
                 context=context,
                 max_turns=max_turns,
@@ -771,6 +804,8 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
     compactions = 0
     model_retries = 0
     request_log.set_retry_attempt(0)
+    if not interactive:
+        run_config = _with_mailbox_checkpoint(run_config, coordinator, agent_id)
     while True:
         stream: Any = None
         pre_run_items: list[Any] = []
@@ -830,6 +865,18 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     )
             finally:
                 await coordinator.detach_stream(agent_id, stream)
+        except _PendingMessagesError:
+            # No request was sent at this checkpoint. Keep the original turn
+            # allowance across restarts, and never replay completed tool calls.
+            max_turns -= len(stream.raw_responses)
+            count, items = await coordinator.consume_pending(agent_id, include_items=True)
+            if count == 0 and await coordinator.has_pending(agent_id):
+                error = "Cannot persist pending agent messages"
+                await coordinator.set_status(agent_id, "failed", error=error)
+                await notify_parent_on_terminal(coordinator, agent_id, "failed")
+                raise RuntimeError(error) from None
+            input_data = [] if session is not None else stream.to_input_list() + items
+            continue
         except BudgetPausedError as exc:
             logger.info("agent %s paused at the scan budget limit: %s", agent_id, exc)
             if coordinator.budget_policy == "pause" or exc.operator_pause:
