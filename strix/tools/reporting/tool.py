@@ -872,7 +872,6 @@ async def _do_create(
 
         from strix.report.dedupe import check_duplicate
 
-        existing = report_state.get_existing_vulnerabilities()
         candidate = {
             "title": title,
             "description": description,
@@ -913,30 +912,35 @@ async def _do_create(
             "http_exchange_ids": normalized_http_exchange_ids,
         }
 
-        dedupe = await check_duplicate(candidate, existing)
-        if dedupe.get("is_duplicate"):
-            duplicate_id = str(dedupe.get("duplicate_id") or "")
-            duplicate_title = next(
-                (r.get("title", "Unknown") for r in existing if r.get("id") == duplicate_id),
-                "",
-            )
-            return {
-                "success": False,
-                "error": (
-                    f"Potential duplicate of '{duplicate_title}' "
-                    f"(id={duplicate_id[:8]}...) — do not re-report the same vulnerability"
-                ),
-                "duplicate_of": duplicate_id,
-                "duplicate_title": duplicate_title,
-                "confidence": dedupe.get("confidence", 0.0),
-                "reason": dedupe.get("reason", ""),
-            }
+        # The duplicate check awaits an LLM call. Without a lock, two agents filing
+        # the same finding at once each compare against a list the other has not
+        # joined yet and both store it, so read, check and store as one step.
+        async with report_state.dedupe_lock:
+            existing = report_state.get_existing_vulnerabilities()
+            dedupe = await check_duplicate(candidate, existing)
+            if dedupe.get("is_duplicate"):
+                duplicate_id = str(dedupe.get("duplicate_id") or "")
+                duplicate_title = next(
+                    (r.get("title", "Unknown") for r in existing if r.get("id") == duplicate_id),
+                    "",
+                )
+                return {
+                    "success": False,
+                    "error": (
+                        f"Potential duplicate of '{duplicate_title}' "
+                        f"(id={duplicate_id[:8]}...) — do not re-report the same vulnerability"
+                    ),
+                    "duplicate_of": duplicate_id,
+                    "duplicate_title": duplicate_title,
+                    "confidence": dedupe.get("confidence", 0.0),
+                    "reason": dedupe.get("reason", ""),
+                }
 
-        report_id = report_state.add_vulnerability_report(
-            **report_fields,
-            agent_id=agent_id if isinstance(agent_id, str) else None,
-            agent_name=agent_name if isinstance(agent_name, str) else None,
-        )
+            report_id = report_state.add_vulnerability_report(
+                **report_fields,
+                agent_id=agent_id if isinstance(agent_id, str) else None,
+                agent_name=agent_name if isinstance(agent_name, str) else None,
+            )
     except Exception as e:
         logger.exception("create_vulnerability_report persistence failed")
         return {
