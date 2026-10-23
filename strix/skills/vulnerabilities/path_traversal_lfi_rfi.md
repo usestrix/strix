@@ -1,5 +1,5 @@
 ---
-name: path-traversal-lfi-rfi
+name: path_traversal_lfi_rfi
 description: Path traversal and file inclusion testing for local/remote file access and code execution
 ---
 

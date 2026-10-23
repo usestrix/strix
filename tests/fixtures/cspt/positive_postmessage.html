@@ -1,0 +1,29 @@
+<!doctype html>
+<!--
+  CSPT POSITIVE — postMessage source
+  Source: postMessage event.data (NO event.origin check)
+  Sink:   fetch()
+  A message handler trusts any window's message and joins the supplied path
+  into the request. An attacker page/iframe posts {path: "../../admin/keys"}.
+-->
+<html lang="en">
+<head><meta charset="utf-8" /><title>Widget host</title></head>
+<body>
+<h1>Widget host</h1>
+<pre id="out">waiting for message…</pre>
+<script>
+  // SOURCE: cross-window message, origin unchecked — attacker-controlled.
+  window.addEventListener("message", (event) => {
+    // MISSING: if (event.origin !== TRUSTED) return;
+    const path = event.data && event.data.path;
+    if (!path) return;
+
+    // SINK: message-supplied value joined directly into the request path — CSPT.
+    fetch("/api/widgets/" + path, { credentials: "include" })
+      .then((r) => r.text())
+      .then((t) => { document.getElementById("out").textContent = t; })
+      .catch((e) => { document.getElementById("out").textContent = String(e); });
+  });
+</script>
+</body>
+</html>
