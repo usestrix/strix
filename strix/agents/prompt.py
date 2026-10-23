@@ -123,7 +123,9 @@ def render_system_prompt(
             is_root=is_root,
             is_diff_scoped=is_diff_scoped,
         )
-        skill_content = load_skills(skills_to_load, supports_images=supports_images)
+        skill_content = load_skills(
+            skills_to_load, supports_images=supports_images, coverage_tools=coverage_tools
+        )
         env.globals["get_skill"] = lambda name: skill_content.get(name, "")
 
         # Skills every agent of this kind loads come first, so siblings share them

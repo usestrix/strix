@@ -591,6 +591,7 @@ async def run_strix_scan(
             "scan_targets": build_scan_targets(scan_config),
             "max_context_images": settings.runtime.max_context_images,
             "supports_images": supports_images,
+            "coverage_tools": coverage_tools,
             SUBAGENT_TURN_LIMITS_KEY: dict(subagent_turn_limits or {}),
         }
 

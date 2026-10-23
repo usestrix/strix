@@ -21,6 +21,7 @@ _SKILL_TEMPLATES = Environment(
     undefined=StrictUndefined,
     trim_blocks=True,
     lstrip_blocks=True,
+    keep_trailing_newline=True,
 )
 
 _INTERNAL_SKILL_CATEGORIES: frozenset[str] = frozenset({"scan_modes", "coordination", "analysis"})
@@ -283,7 +284,9 @@ def skill_turn_limit(skill_names: list[str], turn_limits: Mapping[str, int]) -> 
     )
 
 
-def load_skills(skill_names: list[str], *, supports_images: bool = True) -> dict[str, str]:
+def load_skills(
+    skill_names: list[str], *, supports_images: bool = True, coverage_tools: bool = True
+) -> dict[str, str]:
     """Load skill markdown bodies (frontmatter stripped) by name.
 
     Skill files live at ``strix/skills/<category>/<name>.md`` (or any
@@ -316,7 +319,7 @@ def load_skills(skill_names: list[str], *, supports_images: bool = True) -> dict
         metadata, skill_body = _parse_skill_content(content, file_path)
         if metadata.get("template") == "jinja":
             skill_body = _SKILL_TEMPLATES.from_string(skill_body).render(
-                supports_images=supports_images
+                supports_images=supports_images, coverage_tools=coverage_tools
             )
         skill_content[var_name] = skill_body
         logger.debug("Loaded skill: %s -> %s", skill_name, var_name)

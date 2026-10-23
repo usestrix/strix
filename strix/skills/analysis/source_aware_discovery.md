@@ -1,6 +1,7 @@
 ---
 name: source_aware_discovery
 description: Enumeration discipline for reading code — which locations to keep as separate candidates, which safe siblings prove nothing, and the per-family sweeps that are routinely missed
+template: jinja
 ---
 
 # Source-Aware Discovery
@@ -206,6 +207,6 @@ Not worth it: "this could use more validation" with no path, style and
 maintainability complaints, and cosmetic variants of a candidate you
 already opened.
 
-Keep reading until no distinct plausible candidate remains — then record
-what you swept with `record_coverage` (if you have it), including the
-families that came back clean.
+Keep reading until no distinct plausible candidate remains{% if coverage_tools %} — then record
+what you swept with `record_coverage`, including the families that came
+back clean{% endif %}.
