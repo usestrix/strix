@@ -119,7 +119,13 @@ echo "✅ System-wide proxy configuration complete"
 
 echo "Adding CA to browser trust store..."
 sudo -u pentester mkdir -p /home/pentester/.pki/nssdb
-sudo -u pentester certutil -N -d sql:/home/pentester/.pki/nssdb --empty-password
+# certutil -N only skips its password prompt when it creates a fresh database.
+# Against an already-initialized one it asks for the existing password, which —
+# with no TTY attached — spins forever in an "Invalid password. Try again."
+# loop and blocks the rest of the entrypoint on container restarts.
+if [ ! -f /home/pentester/.pki/nssdb/cert9.db ]; then
+  sudo -u pentester certutil -N -d sql:/home/pentester/.pki/nssdb --empty-password
+fi
 sudo -u pentester certutil -A -n "Testing Root CA" -t "C,," -i /app/certs/ca.crt -d sql:/home/pentester/.pki/nssdb
 echo "✅ CA added to browser trust store"
 
