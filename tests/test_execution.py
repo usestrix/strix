@@ -22,6 +22,7 @@ from strix.core.agents import AgentCoordinator, WaitKind
 from strix.core.execution import (
     _notify_root_on_budget_reserve,
     notify_parent_on_terminal,
+    spawn_child_agent,
 )
 from strix.core.sessions import seed_initial_input
 from strix.tools.agents_graph.tools import agent_finish, stop_agent
@@ -151,6 +152,140 @@ async def test_reserve_notice_names_the_root_finish_tool(monkeypatch: pytest.Mon
 
     assert "call finish_pr_review" in str(sent[0]["content"])
     assert "finish_scan" not in str(sent[0]["content"])
+
+
+@pytest.mark.asyncio
+async def test_spawn_child_agent_respects_child_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child-1", "recon", parent_id="root")
+
+    def _unexpected_factory(**_kwargs: Any) -> object:
+        raise AssertionError("child factory should not be called at the child limit")
+
+    async def _unexpected_start(**_kwargs: Any) -> None:
+        raise AssertionError("child runner should not start at the child limit")
+
+    monkeypatch.setattr("strix.core.execution._start_child_runner", _unexpected_start)
+
+    result = await spawn_child_agent(
+        coordinator=coordinator,
+        factory=_unexpected_factory,
+        agents_db_path=tmp_path / "agents.db",
+        sessions_to_close=[],
+        run_config=cast("Any", object()),
+        max_turns=1,
+        interactive=False,
+        parent_ctx={"agent_id": "root"},
+        name="extra",
+        task="do more recon",
+        skills=[],
+        parent_history=[],
+        max_child_agents=1,
+    )
+
+    assert result["success"] is False
+    assert "child agent limit" in result["error"]
+    assert set(coordinator.parent_of) == {"root", "child-1"}
+
+
+@pytest.mark.asyncio
+async def test_concurrent_spawn_child_agent_reserves_limit_atomically(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+
+    async def _noop_start(**_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr("strix.core.execution._start_child_runner", _noop_start)
+
+    def _factory(**_kwargs: Any) -> object:
+        return object()
+
+    async def _spawn(name: str) -> dict[str, Any]:
+        return await spawn_child_agent(
+            coordinator=coordinator,
+            factory=_factory,
+            agents_db_path=tmp_path / "agents.db",
+            sessions_to_close=[],
+            run_config=cast("Any", object()),
+            max_turns=1,
+            interactive=False,
+            parent_ctx={"agent_id": "root"},
+            name=name,
+            task="do more recon",
+            skills=[],
+            parent_history=[],
+            max_child_agents=1,
+        )
+
+    async with coordinator._lock:
+        tasks = [
+            asyncio.create_task(_spawn("extra-a")),
+            asyncio.create_task(_spawn("extra-b")),
+        ]
+        await asyncio.sleep(0)
+
+    results = await asyncio.gather(*tasks)
+
+    assert [result["success"] for result in results].count(True) == 1
+    assert _child_count(coordinator) == 1
+
+
+@pytest.mark.asyncio
+async def test_spawn_child_agent_releases_reservation_when_factory_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    started: list[str] = []
+
+    async def _record_start(**kwargs: Any) -> None:
+        started.append(kwargs["name"])
+
+    monkeypatch.setattr("strix.core.execution._start_child_runner", _record_start)
+
+    def _failing_factory(**_kwargs: Any) -> object:
+        raise RuntimeError("agent build failed")
+
+    def _factory(**_kwargs: Any) -> object:
+        return object()
+
+    async def _spawn(name: str, factory: Any) -> dict[str, Any]:
+        return await spawn_child_agent(
+            coordinator=coordinator,
+            factory=factory,
+            agents_db_path=tmp_path / "agents.db",
+            sessions_to_close=[],
+            run_config=cast("Any", object()),
+            max_turns=1,
+            interactive=False,
+            parent_ctx={"agent_id": "root"},
+            name=name,
+            task="do more recon",
+            skills=[],
+            parent_history=[],
+            max_child_agents=1,
+        )
+
+    with pytest.raises(RuntimeError, match="agent build failed"):
+        await _spawn("broken", _failing_factory)
+
+    assert set(coordinator.parent_of) == {"root"}
+    assert set(coordinator.statuses) == {"root"}
+
+    result = await _spawn("retry", _factory)
+
+    assert result["success"] is True
+    assert started == ["retry"]
+
+
+def _child_count(coordinator: AgentCoordinator) -> int:
+    return sum(parent_id is not None for parent_id in coordinator.parent_of.values())
 
 
 @pytest.mark.asyncio
