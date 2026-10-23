@@ -33,8 +33,12 @@ that sentence, you are not in `ruled_out`.
 
 **3. `open_proof_gap`** — the candidate is plausible, you could not
 confirm it, and you also could not name a control that rules it out. This
-is a legitimate, expected outcome. {% if coverage_tools %}Record it with
-`record_coverage(outcome="needs_follow_up")`, carry{% else %}Carry{% endif %} it up in
+{% if coverage_tools %}
+is a legitimate, expected outcome. Record it with
+`record_coverage(outcome="needs_follow_up")`, carry it up in
+{% else %}
+is a legitimate, expected outcome. Carry it up in
+{% endif %}
 `agent_finish(open_items=[...])`, and reflect it in `counterevidence` /
 `confidence_rationale` if you file a related report. Do **not** convert
 it to `ruled_out` to tidy up your worklist.

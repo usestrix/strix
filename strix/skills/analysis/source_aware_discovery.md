@@ -207,6 +207,10 @@ Not worth it: "this could use more validation" with no path, style and
 maintainability complaints, and cosmetic variants of a candidate you
 already opened.
 
-Keep reading until no distinct plausible candidate remains{% if coverage_tools %} — then record
+{% if coverage_tools %}
+Keep reading until no distinct plausible candidate remains — then record
 what you swept with `record_coverage`, including the families that came
-back clean{% endif %}.
+back clean.
+{% else %}
+Keep reading until no distinct plausible candidate remains.
+{% endif %}
