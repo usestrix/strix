@@ -24,8 +24,8 @@ A browser sign-in creates one reusable credential for each CLI installation. A s
 The default **Recommended** preset covers normal scan work, local source uploads, workspace switching, and user-approved credit top-ups. It excludes credential creation, so request `tokens:write` when you need it.
 
 ```bash
-strix cloud login --scopes scans:read scans:write uploads:write billing:read
-strix cloud login --scope-profile minimal   # also accepts recommended or full
+strix cloud login --scope-profile recommended  # also accepts minimal or full
+strix cloud login --scopes scans:read scans:write uploads:write billing:read billing:write  # custom set; keep billing:write to buy credits from the CLI
 strix cloud session scopes                  # granted scopes and the login ceiling
 strix cloud session scopes set minimal      # narrow without another browser sign-in
 ```
