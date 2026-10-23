@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ---------------------------------------------------------------------------
@@ -83,10 +84,7 @@ func cleanShellOutput(output string) string {
 }
 
 func truncateShellLine(line string) string {
-	if len(line) > maxLineLength {
-		return line[:maxLineLength-3] + "..."
-	}
-	return line
+	return ansi.Truncate(line, maxLineLength, "...")
 }
 
 // formatShellOutput ports _format_output (head/tail truncation with a middle marker).
