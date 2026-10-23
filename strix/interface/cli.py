@@ -97,7 +97,9 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         "workspace_files": getattr(args, "workspace_files", None) or [],
         "scope_mode": getattr(args, "scope_mode", "auto"),
         "diff_base": getattr(args, "diff_base", None),
-        "resume_instruction": getattr(args, "user_explicit_instruction", None) or "",
+        "resume_instruction": getattr(args, "resume_instruction", None)
+        or getattr(args, "user_explicit_instruction", None)
+        or "",
     }
 
     report_state = ReportState(args.run_name)

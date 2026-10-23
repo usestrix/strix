@@ -99,7 +99,9 @@ class GoTuiRuntime:
             "workspace_files": getattr(self.args, "workspace_files", None) or [],
             "scope_mode": self.args.scope_mode,
             "diff_base": self.args.diff_base,
-            "resume_instruction": self.args.user_explicit_instruction or "",
+            "resume_instruction": getattr(self.args, "resume_instruction", None)
+            or getattr(self.args, "user_explicit_instruction", None)
+            or "",
             "workspace_mount": getattr(self.args, "workspace_mount", None) or "",
             "workspace_subdir": getattr(self.args, "workspace_subdir", None) or "",
         }
