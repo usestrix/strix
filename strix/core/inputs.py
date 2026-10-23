@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import TYPE_CHECKING, Any
 
 from agents.model_settings import ModelSettings
@@ -25,6 +26,18 @@ from strix.core.sessions import scrub_images_from_items
 
 if TYPE_CHECKING:
     from strix.config.settings import ReasoningEffort
+
+
+def _mount_read_only() -> bool:
+    """Mirror of STRIX_MOUNT_READONLY in strix.interface.utils, for the prompt text."""
+    return os.environ.get("STRIX_MOUNT_READONLY", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _local_access(details: dict[str, Any]) -> str:
+    """How a local target is mounted, as the agent is told it."""
+    if details.get("read_only") or _mount_read_only():
+        return "mounted live and read-only: report on it, do not modify it"
+    return "mounted live and writable — .git/.agents/.codex are read-only"
 
 
 def _accepts_required_tool_choice(model_name: str | None) -> bool:
@@ -134,8 +147,7 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
             path = details.get("target_path", "unknown")
             sections["Local Codebases"].append(
                 f"- {path} (available at: {workspace_path}; "
-                "this is the user's real directory, mounted live and writable — "
-                ".git/.agents/.codex are read-only)"
+                f"this is the user's real directory, {_local_access(details)})"
             )
         elif ttype == "web_application":
             sections["URLs"].append(f"- {details.get('target_url', '')}")
