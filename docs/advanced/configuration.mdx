@@ -74,6 +74,46 @@ Configure Strix using environment variables or a config file.
   Token block size that providers cache prompts in. A turn counts as a cache miss in the run report only when the cached tokens fall at least this many tokens short of the previous prompt and the prompt did not shrink. Lower it for providers with smaller blocks (DeepSeek and GLM use 64; vLLM defaults to 16).
 </ParamField>
 
+### Anthropic Workload Identity Federation
+
+Authenticate to Anthropic with short-lived tokens from your identity provider instead of `LLM_API_KEY`, which must be unset or empty. See [Anthropic](/llm-providers/anthropic#workload-identity-federation-no-api-key) and [Anthropic via Microsoft Entra ID](/llm-providers/anthropic-entra-id).
+
+<ParamField path="ANTHROPIC_FEDERATION_RULE_ID" type="string">
+  Federation rule to exchange against (`fdrl_…`). Required, with `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID`, and an identity token source.
+</ParamField>
+
+<ParamField path="ANTHROPIC_ORGANIZATION_ID" type="string">
+  Anthropic organization ID (a UUID).
+</ParamField>
+
+<ParamField path="ANTHROPIC_SERVICE_ACCOUNT_ID" type="string">
+  Service account the rule maps to (`svac_…`).
+</ParamField>
+
+<ParamField path="ANTHROPIC_WORKSPACE_ID" type="string">
+  Workspace to act in (`wrkspc_…`). Required when the rule covers several workspaces.
+</ParamField>
+
+<ParamField path="ANTHROPIC_IDENTITY_TOKEN_FILE" type="string">
+  File holding the identity token (JWT), read again on every exchange. Takes precedence over the other sources.
+</ParamField>
+
+<ParamField path="ANTHROPIC_IDENTITY_TOKEN_COMMAND" type="string">
+  Command run on every exchange whose stdout is the JWT (Strix only). Run without a shell; use `sh -c '…'` for pipelines.
+</ParamField>
+
+<ParamField path="ANTHROPIC_IDENTITY_TOKEN" type="string">
+  A literal JWT, for short runs. Never saved to the config file.
+</ParamField>
+
+<ParamField path="STRIX_ENTRA_TENANT_ID" type="string">
+  Default Entra tenant for `strix auth login entra`.
+</ParamField>
+
+<ParamField path="STRIX_ENTRA_APP_ID" type="string">
+  Default Entra app registration for `strix auth login entra`: the app that is both the OAuth client and the token audience.
+</ParamField>
+
 ### Dedicated deduplication model
 
 Finding deduplication is a cheap, structured classification task. By default it

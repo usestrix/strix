@@ -22,3 +22,85 @@ export LLM_API_KEY="sk-ant-..."
 1. Go to [console.anthropic.com](https://console.anthropic.com)
 2. Navigate to API Keys
 3. Create a new key
+
+## Workload Identity Federation (no API key)
+
+Strix can authenticate to Anthropic with [Workload Identity Federation](https://platform.claude.com/docs/en/manage-claude/workload-identity-federation) instead of a static key. It exchanges a JWT from your identity provider for a short-lived access token and re-exchanges it before it expires, so long scans keep running. The token is held in memory only.
+
+Set the same variables the Anthropic SDKs read, and set `LLM_API_KEY` to empty (an API key always wins, including one saved in the Strix config file; an empty value also deletes that):
+
+```bash
+export STRIX_LLM="anthropic/claude-sonnet-4-6"
+export ANTHROPIC_FEDERATION_RULE_ID="fdrl_..."
+export ANTHROPIC_ORGANIZATION_ID="00000000-0000-0000-0000-000000000000"
+export ANTHROPIC_SERVICE_ACCOUNT_ID="svac_..."
+export ANTHROPIC_WORKSPACE_ID="wrkspc_..."        # required if the rule covers several workspaces
+export ANTHROPIC_IDENTITY_TOKEN_FILE="/var/run/secrets/anthropic.com/token"
+export LLM_API_KEY=
+```
+
+Then check the setup with `strix auth test`: it runs one exchange with the same settings and token source a scan would use, and reports the source, the identity token's claims and the result, never a token. Like other settings, these are saved to the Strix config file when a scan starts.
+
+Strix re-reads `ANTHROPIC_IDENTITY_TOKEN_FILE` on every exchange, so the file must hold an unexpired JWT each time. `ANTHROPIC_IDENTITY_TOKEN` (a literal JWT) also works for short runs.
+
+Federation applies only to models that call Anthropic's API directly (`anthropic/...`). A bare `claude-...` name isn't routed to Anthropic, so it doesn't federate either. Claude through Bedrock, Vertex AI, or OpenRouter keeps that provider's authentication.
+
+### Other identity providers
+
+Strix doesn't care which identity provider signed the JWT. Anthropic checks the issuer, signature, and claims against your federation rule. Strix takes the JWT from the first of these that is set:
+
+1. `ANTHROPIC_IDENTITY_TOKEN_FILE`: a file, read again on every exchange.
+2. `ANTHROPIC_IDENTITY_TOKEN_COMMAND` (Strix only, not an SDK variable): a command run on every exchange. It must print a single JWT on stdout.
+3. `ANTHROPIC_IDENTITY_TOKEN`: a literal JWT.
+4. A Microsoft Entra ID user sign-in made with `strix auth login entra` (see [Anthropic via Microsoft Entra ID](/llm-providers/anthropic-entra-id)).
+5. The GitHub Actions OIDC token, when running in a job with `id-token: write`.
+
+| Where the token comes from | Configure |
+|---|---|
+| Kubernetes, EKS, or AKS projected service-account token; SPIFFE JWT-SVID file | `ANTHROPIC_IDENTITY_TOKEN_FILE` = the mounted token path |
+| Google Cloud | `ANTHROPIC_IDENTITY_TOKEN_COMMAND="gcloud auth print-identity-token --audiences=https://api.anthropic.com"` |
+| Microsoft Entra ID user, on any host | `strix auth login entra` ([guide](/llm-providers/anthropic-entra-id)) |
+| Azure VM managed identity (IMDS) | `ANTHROPIC_IDENTITY_TOKEN_COMMAND`, see the example below and the [Entra ID guide](/llm-providers/anthropic-entra-id) |
+| Any CLI or script that prints a JWT | `ANTHROPIC_IDENTITY_TOKEN_COMMAND="/path/to/issue-token --flag"` |
+| GitHub Actions | Nothing extra (see below) |
+
+On an Azure VM, where `<APP_ID>` is the app registration your federation rule expects as the audience:
+
+```bash
+export ANTHROPIC_IDENTITY_TOKEN_COMMAND="sh -c 'curl -sSf -H Metadata:true \"http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=api://<APP_ID>\" | jq -r .access_token'"
+```
+
+How the command runs:
+
+- It's split like a shell command line, but run **without** a shell. For pipes or redirection, wrap it in `sh -c '…'`, as in the Azure example.
+- A leading `~` in the program path is expanded. It has no stdin and 30 seconds to finish.
+- It inherits Strix's environment. Under `uv run`, that environment puts Strix's virtualenv first on `PATH`, so give a script its interpreter explicitly (for example `#!/usr/bin/python3` rather than `#!/usr/bin/env python3`) if it needs packages from outside that virtualenv.
+- On failure, Strix reports the exit status and the last line of stderr, never stdout.
+- Like the other `ANTHROPIC_*` settings, it's saved to the Strix config file when a scan starts and reused by later scans. To stop using it, run once with `ANTHROPIC_IDENTITY_TOKEN_COMMAND=` (empty), or remove it from the config file. The literal `ANTHROPIC_IDENTITY_TOKEN` is never saved.
+
+**Single-use JWTs (`jti`).** By default Anthropic accepts a JWT that carries a `jti` claim only once. Strix exchanges again about 2 minutes before each Anthropic token expires (about every 8 minutes with a 600-second rule lifetime), and each exchange must present a JWT it hasn't presented before. A token command gets a fresh token on every exchange. A token file must have rotated by then, or the exchange fails with `jti_reused` in the Console's authentication history. Kubernetes rotates projected tokens well before they expire, but not necessarily every few minutes. If a file source can't keep up, use a token command, give the rule a longer `token_lifetime_seconds`, or, as a last resort, disable `check_jti` on that issuer. Entra ID tokens carry no `jti`, so they're not affected.
+
+### GitHub Actions
+
+Inside a job with `id-token: write` and no token file configured, Strix fetches a fresh GitHub OIDC token (audience `https://api.anthropic.com`) for each exchange:
+
+```yaml
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  strix:
+    runs-on: ubuntu-latest
+    env:
+      STRIX_LLM: anthropic/claude-sonnet-4-6
+      ANTHROPIC_FEDERATION_RULE_ID: fdrl_...
+      ANTHROPIC_ORGANIZATION_ID: 00000000-0000-0000-0000-000000000000
+      ANTHROPIC_SERVICE_ACCOUNT_ID: svac_...
+      ANTHROPIC_WORKSPACE_ID: wrkspc_...
+    steps:
+      - uses: actions/checkout@v5
+      - run: strix -n -t ./ --scan-mode quick
+```
+
+`run.json` records `auth_mode: workload_identity` for federated runs. If an exchange is denied, the response is an opaque `401`; the reason is listed on the Console's **Settings → Workload identity → Authentication history** page.
