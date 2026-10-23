@@ -446,35 +446,29 @@ _EXEC_YIELD_CAP_S = PTY_YIELD_TIME_MS_MAX // 1000
 
 _EXEC_COMMAND_DESCRIPTION_NOTE = (
     f"The wait for output is capped at {_EXEC_YIELD_CAP_S} s whatever yield_time_ms says. "
-    "A non-TTY command still running at the yield cannot be read later (write_stdin fails "
-    "on it and its output is lost): run anything longer in the background with its output "
-    "redirected to a file (`cmd > /tmp/out.log 2>&1 &`, then read the log), or start it with "
-    'tty=true and poll with write_stdin(session_id=<id>, chars="").'
-)
-
-_RUNNING_NON_TTY_NOTICE = (
-    "Note: this non-TTY process cannot be polled and its later output is lost. Rerun it in "
-    "the background (`cmd > /tmp/out.log 2>&1 &`, then read the log) or with tty=true."
+    "A command still running at the yield keeps running: read the rest of its output and "
+    'its exit code with write_stdin(session_id=<id>, chars="").'
 )
 
 _PROCESS_RUNNING_RE = re.compile(r"^Process running with session ID \d+$", re.MULTILINE)
 _OUTPUT_HEADER_RE = re.compile(r"^Output:\n", re.MULTILINE)
 
 
-def _annotate_running_non_tty(parsed: dict[str, Any], result: Any) -> Any:
-    if parsed.get("tty") or not isinstance(result, str):
+def _annotate_capped_yield(parsed: dict[str, Any], result: Any) -> Any:
+    requested = parsed.get("yield_time_ms")
+    if not isinstance(result, str) or not isinstance(requested, int | float):
+        return result
+    if requested <= PTY_YIELD_TIME_MS_MAX:
         return result
     header = _OUTPUT_HEADER_RE.search(result)
     head_end = len(result) if header is None else header.start()
     if _PROCESS_RUNNING_RE.search(result, 0, head_end) is None:
         return result
-    notice = _RUNNING_NON_TTY_NOTICE
-    requested = parsed.get("yield_time_ms")
-    if isinstance(requested, int | float) and requested > PTY_YIELD_TIME_MS_MAX:
-        notice = (
-            f"Note: yield_time_ms={int(requested)} was capped at {PTY_YIELD_TIME_MS_MAX} "
-            f"({_EXEC_YIELD_CAP_S} s). " + notice.removeprefix("Note: ")
-        )
+    notice = (
+        f"Note: yield_time_ms={int(requested)} was capped at {PTY_YIELD_TIME_MS_MAX} "
+        f"({_EXEC_YIELD_CAP_S} s); the command is still running, read it with "
+        'write_stdin(session_id=<id>, chars="").'
+    )
     if header is None:
         return f"{result}\n{notice}"
     return f"{result[: header.end()]}{notice}\n{result[header.end() :]}"
@@ -506,7 +500,7 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
                 f"Got: {rel!r}."
             )
         if isinstance(parsed, dict):
-            return _annotate_running_non_tty(parsed, result)
+            return _annotate_capped_yield(parsed, result)
         return result
 
     tool.on_invoke_tool = invoke
