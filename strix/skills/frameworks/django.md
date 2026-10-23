@@ -205,10 +205,10 @@ Jinja2 backend without autoescape: `{{7*7}}`, RCE gadgets if sandbox misconfigur
 
 ## Tooling
 
-Static analysis is the fastest way to reach the sinks above in white-box scope. The sandbox ships `python`/`pipx`, `semgrep`, `bandit`, `ast-grep`, and `ripgrep`.
+Static analysis is the fastest way to reach the sinks above in white-box scope. The sandbox ships `python`/`pipx`, `opengrep`, `bandit`, `ast-grep`, and `ripgrep`.
 
 - **bandit** (preinstalled) — Python security linter; flags `mark_safe`, `extra()`, `RawSQL`, `subprocess`, weak crypto, hardcoded secrets: `bandit -r . -ll`
-- **semgrep** (preinstalled) with the Django ruleset — higher-signal than bandit for framework-specific bugs (`.extra()`, `RawSQL`, `|safe`, `csrf_exempt`, `ALLOWED_HOSTS=['*']`): `semgrep --config p/django .`
+- **opengrep** (preinstalled) with the bundled Django rules — higher-signal than bandit for framework-specific bugs (`.extra()`, `RawSQL`, `|safe`, `csrf_exempt`, `ALLOWED_HOSTS=['*']`): `opengrep scan --config /opt/opengrep-rules/python/django .`
 - **pip-audit** (PyPA) — dependency CVE scanner for known-vuln Django/DRF/simplejwt versions: `pipx install pip-audit && pip-audit -r requirements.txt`
 - **ast-grep** (preinstalled) — quick structural grep for risky calls without a full SAST run: `ast-grep run -p 'mark_safe($X)' -l python`
 
