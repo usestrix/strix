@@ -212,7 +212,8 @@ RUN set -eux; \
     opengrep --version
 
 # Opengrep ships no rule registry of its own; bake the community ruleset so
-# scans run offline. Keep only rule YAML (drop tests, fixtures, tooling).
+# scans run offline. Keep only rule YAML and LICENSE; drop tests, fixtures,
+# tooling, and rules marked with a proprietary license.
 ARG OPENGREP_RULES_REF=f1d2b562b414783763fd02a6ed2736eaed622efa
 RUN set -eux; \
     mkdir -p /opt/opengrep-rules; \
@@ -220,8 +221,9 @@ RUN set -eux; \
         | tar -xz --strip-components=1 -C /opt/opengrep-rules; \
     cd /opt/opengrep-rules; \
     rm -rf .github scripts stats; \
-    find . -maxdepth 1 -type f -delete; \
-    find . -type f \( ! \( -name '*.yaml' -o -name '*.yml' \) -o -name '*.test.yaml' -o -name '*.test.yml' -o -name '.*' \) -delete; \
+    find . -maxdepth 1 -type f ! -name LICENSE -delete; \
+    find . -mindepth 2 -type f \( ! \( -name '*.yaml' -o -name '*.yml' \) -o -name '*.test.yaml' -o -name '*.test.yml' -o -name '.*' \) -delete; \
+    grep -rlZ 'license: proprietary' . | xargs -0 -r rm -f; \
     find . -type d -empty -delete; \
     chmod -R a+rX /opt/opengrep-rules
 
