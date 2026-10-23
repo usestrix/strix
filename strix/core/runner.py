@@ -671,6 +671,30 @@ async def run_strix_scan(
             with contextlib.suppress(Exception):
                 await coordinator.set_status(root_id, "running")
         raise
+    except Exception as exc:
+        # A LiteLLM-routed provider can surface an exhausted usage window as a
+        # non-RateLimitError type (OpenAI's RateLimitError is handled above).
+        # Both retry layers already stop retrying it (see
+        # codex.is_usage_limit_error), so route it to the same resumable stop
+        # instead of the generic failure path.
+        if codex.is_usage_limit_error(exc):
+            logger.warning(
+                "Scan %s stopped: persistent usage limit from the LLM provider (%s). "
+                "Resume with 'strix --resume %s' once the limit clears.",
+                scan_id,
+                exc,
+                scan_id,
+            )
+            _note_exit_reason("rate_limited")
+            if root_id is not None:
+                with contextlib.suppress(Exception):
+                    await coordinator.set_status(root_id, "stopped")
+            return None
+        logger.exception("Strix scan %s failed", scan_id)
+        if root_id is not None:
+            with contextlib.suppress(Exception):
+                await coordinator.set_status(root_id, "failed")
+        raise
     except BaseException:
         logger.exception("Strix scan %s failed", scan_id)
         if root_id is not None:

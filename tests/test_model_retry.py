@@ -88,3 +88,12 @@ def test_policy_helper_matches_statusless_only() -> None:
         )
         is False
     )
+
+
+def test_usage_limit_error_is_not_retried() -> None:
+    # A usage-limit rejection carries a 429, but the window will not clear for
+    # hours; retrying only burns more of the same quota, so it must be terminal
+    # even though an ordinary 429 is retried.
+    usage_limited = RuntimeError("Error code: 429 - {'error': {'type': 'usage_limit_reached'}}")
+    assert codex.is_usage_limit_error(usage_limited) is True
+    assert _retries(ModelRetryNormalizedError(status_code=429), error=usage_limited) is False
