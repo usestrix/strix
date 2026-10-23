@@ -292,6 +292,12 @@ def _update_impl(
             superseded["evidence"] = existing["evidence"]
         if existing.get("agent_name"):
             superseded["agent_name"] = existing["agent_name"]
+        # Preserve the superseded author's id, not just their name: a later
+        # update by a different agent overwrites ``agent_id``, and coverage
+        # accounting attributes a bundled skill's surface to the agent that
+        # actually assessed it, so the earlier authorship has to survive.
+        if existing.get("agent_id"):
+            superseded["agent_id"] = existing["agent_id"]
         history = existing.get("history")
         existing["history"] = [*history, superseded] if isinstance(history, list) else [superseded]
 

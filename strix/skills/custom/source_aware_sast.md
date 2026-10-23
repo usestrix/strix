@@ -176,6 +176,35 @@ lighter syntax/anti-pattern check when ESLint is over-eager. The
 `JS-Snooper` / `jsniper.sh` tools (in `katana.md`) are the right next
 step to mine those bundles for endpoint candidates.
 
+### Route-Param-Into-Request (Client-Side Path Traversal)
+
+`eslint --rule no-eval` and `retire` will NOT surface this — neither
+flags tainted-path flow or framework routing. Grep the router inputs and
+the request sinks, then pair them by hand:
+
+```bash
+# Router / query / hash inputs
+grep -rnE 'useParams|useSearchParams|useLocation|useRouter|usePathname' src/   # React/Next
+grep -rnE 'route\.params|route\.query|\$route|ActivatedRoute|paramMap' src/     # Vue, Angular
+
+# Request sinks that may consume a tainted path
+grep -rnE 'fetch\(|axios\.|\.get\(|\.post\(|new URL\(' src/
+```
+
+Pair the source with the sink structurally with ast-grep:
+
+```bash
+sg run --pattern 'fetch($URL)'
+sg run --pattern 'axios.get($URL)'
+```
+
+A route/query/hash value that reaches the URL argument (directly or via a
+string-interpolated URL) without re-encoding is a candidate. Include
+Next.js route handlers (`app/api/**/route.ts`) that forward a
+client-supplied path segment into a server-side `fetch` — the traversal
+then runs server-side (SSRF / internal reach). Point to
+`client_side_path_traversal`.
+
 ## Converting Static Signals Into Exploits
 
 When source contains model-provider SDKs, prompt templates, retrieval/vector stores, tool/function calling, model loading, training/feedback pipelines, or token/agent-loop accounting, load `llm_applications`. Use its OWASP 2026 LLM01-LLM10 map to trace data provenance, model output, retrieval authorization, tool authority, and resource multipliers rather than treating the provider call as the sink.

@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any
 
 from agents import RunContextWrapper, function_tool
 
+from strix.report.coverage import selectable_finding_classes
+from strix.report.sarif import _build_physical_locations
 from strix.tools.nullish import clean_optional
 from strix.tools.proxy.tools import existing_request_ids
 
@@ -572,7 +574,9 @@ def _fit_revision_to_class(
     exploit onto a dependency record would leave it carrying a package pin next
     to a request against an endpoint, so the proof belongs in its own dynamic
     finding instead. A dependency finding is still re-rated, through the
-    contextual CVSS it was filed with.
+    contextual CVSS it was filed with. Every other class (``dynamic`` and the
+    registry sub-classes such as ``client_side_path_traversal``) is PoC-backed
+    and holds endpoint and request evidence like a dynamic finding.
     """
     matched = next(
         (r for r in report_state.get_existing_vulnerabilities() if r.get("id") == report_id),
@@ -582,15 +586,12 @@ def _fit_revision_to_class(
         return None
 
     matched_class = _finding_class_of(matched)
-    foreign = (
-        _DEPENDENCY_ONLY_UPDATE_FIELDS
-        if matched_class == "dynamic"
-        else _DYNAMIC_ONLY_UPDATE_FIELDS
-    )
+    is_dependency = matched_class == "dependency_cve"
+    foreign = _DYNAMIC_ONLY_UPDATE_FIELDS if is_dependency else _DEPENDENCY_ONLY_UPDATE_FIELDS
     offending = [name for name in foreign if name in changes]
     if offending:
         return _reject_cross_class_revision(report_id, matched_class, offending)
-    if matched_class == "dynamic":
+    if not is_dependency:
         return None
     return _rate_dependency_revision(report_id, matched, changes)
 
@@ -803,6 +804,7 @@ async def _do_create(
     confidence_rationale: str | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
+    finding_class: str | None = None,
     agent_id: str | None = None,
     agent_name: str | None = None,
 ) -> dict[str, Any]:
@@ -850,6 +852,32 @@ async def _do_create(
     )
     errors.extend(http_exchange_errors)
 
+    finding_class = (clean_optional(finding_class) or "dynamic").lower()
+    if finding_class not in _CREATABLE_FINDING_CLASSES:
+        errors.append(
+            f"Invalid finding_class: {finding_class!r}. "
+            f"Must be one of: {sorted(_CREATABLE_FINDING_CLASSES)}"
+        )
+    elif finding_class == "client_side_path_traversal":
+        # CSPT findings are typically locationless (the bug is in a JS bundle,
+        # not a server route), so without a discriminator multiple distinct CSPT
+        # findings collapse onto one synthetic SARIF fingerprint. The anchor has
+        # to be one SARIF can actually use: an endpoint (→ route), or a
+        # code_location that survives _build_physical_locations (a repo-relative
+        # file with a real start line — an absolute or drive path is dropped and
+        # would leave the finding synthetic and collapsed).
+        has_endpoint = bool(str(endpoint or "").strip())
+        physical_locations, _dropped = _build_physical_locations(parsed_locations)
+        if not (has_endpoint or physical_locations):
+            errors.append(
+                "finding_class 'client_side_path_traversal' needs a discriminator SARIF "
+                "can anchor, or distinct CSPT findings collapse onto one fingerprint: set "
+                "endpoint (the page route that carries the attacker-controlled source, e.g. "
+                "'/invoice', not the path the payload reached) and method, or a "
+                "code_location with a repo-relative file and start line (not an absolute or "
+                "drive path, which SARIF drops)."
+            )
+
     if errors:
         return {"success": False, "error": "Validation failed", "errors": errors}
 
@@ -883,6 +911,7 @@ async def _do_create(
             "poc_script_code": poc_script_code,
             "endpoint": endpoint,
             "method": method,
+            "finding_class": finding_class,
         }
         report_fields: dict[str, Any] = {
             "title": title,
@@ -911,6 +940,7 @@ async def _do_create(
             "fix_verification": fix_verification,
             "fix_pr_body": fix_pr_body,
             "http_exchange_ids": normalized_http_exchange_ids,
+            "finding_class": finding_class,
         }
 
         dedupe = await check_duplicate(candidate, existing)
@@ -1005,6 +1035,7 @@ async def create_vulnerability_report(
     confidence_rationale: str | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
+    finding_class: str | None = None,
 ) -> str:
     """File a vulnerability report — one report per fully-verified finding.
 
@@ -1410,6 +1441,23 @@ async def create_vulnerability_report(
             fix (summary + rationale). Prose/markdown only — the code
             change itself belongs in ``code_locations``. Omit for
             black-box findings.
+        finding_class: Optional machine-readable sub-class, default
+            ``"dynamic"``. Set ``"client_side_path_traversal"`` for a
+            confirmed CSPT finding — attacker-controlled client input
+            (URL path/query/fragment, ``document.referrer``,
+            ``postMessage`` data, browser storage) reaching a browser
+            request sink (``fetch`` / ``XMLHttpRequest`` / ``axios`` /
+            ``EventSource`` / ``WebSocket``) so the victim's own
+            authenticated browser is steered to an unintended
+            same-origin endpoint. CSPT shares ``CWE-22`` with
+            server-side path traversal / LFI / RFI but is a distinct
+            class; setting this keeps it separated in the report
+            artifacts and SARIF (do NOT use it for server-side
+            traversal — leave those ``dynamic``). A CSPT report must
+            also carry a discriminator: ``endpoint`` (the page route
+            that carries the attacker-controlled source, not the path
+            the payload reached) and ``method``, or a ``code_location``
+            for the client sink. See the ``client_side_path_traversal`` skill.
     """
     (
         http_exchange_ids,
@@ -1454,6 +1502,7 @@ async def create_vulnerability_report(
         http_exchange_ids=http_exchange_ids,
         fix_verification=fix_verification,
         fix_pr_body=fix_pr_body,
+        finding_class=finding_class,
         agent_id=agent_id,
         agent_name=agent_name,
     )
@@ -2325,7 +2374,16 @@ _SEVERITY_ORDER = {
     "none": 5,
 }
 _VALID_SEVERITIES = frozenset(_SEVERITY_ORDER)
-_VALID_FINDING_CLASSES = frozenset({"dynamic", "dependency_cve"})
+# ``dynamic`` (the PoC-backed default) and ``dependency_cve`` (reserved for
+# create_dependency_report) are report-type markers; the remaining selectable
+# classes come from the canonical vulnerability-class registry so this set
+# never drifts from the class definitions. ``client_side_path_traversal`` is
+# the first registry-sourced member — machine-separable from server-side
+# path traversal / LFI / RFI, which share CWE-22.
+_VALID_FINDING_CLASSES = frozenset({"dynamic", "dependency_cve"}) | selectable_finding_classes()
+# What create_vulnerability_report accepts: ``dependency_cve`` stays reserved for
+# create_dependency_report, which files the package metadata that class needs.
+_CREATABLE_FINDING_CLASSES = _VALID_FINDING_CLASSES - {"dependency_cve"}
 _REPORT_DESCRIPTION_PREVIEW_CHARS = 280
 
 # Compact, listing-safe fields — no full bodies / PoC code / evidence.
@@ -2555,7 +2613,8 @@ async def list_reports(
     Args:
         severity: Filter to one of ``critical`` / ``high`` / ``medium`` /
             ``low`` / ``info`` / ``none``.
-        finding_class: Filter to ``dynamic`` (PoC-backed) or
+        finding_class: Filter to ``dynamic`` (PoC-backed),
+            ``client_side_path_traversal`` (PoC-backed CSPT), or
             ``dependency_cve`` (known-CVE supply-chain).
         target: Substring match against a report's target / endpoint.
         search: Substring match against title and description.
