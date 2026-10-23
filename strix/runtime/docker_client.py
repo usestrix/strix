@@ -196,6 +196,13 @@ class StrixDockerSandboxClient(DockerSandboxClient):
             "command": ["tail", "-f", "/dev/null"],
             "environment": environment,
         }
+        # Fix for system service accounts: ensure HOME is set to a writable directory
+        # when STRIX_HOST_UID is set (i.e., when running as a system account).
+        if environment is None:
+            environment = {}
+        if "STRIX_HOST_UID" in environment and environment["STRIX_HOST_UID"]:
+            environment["HOME"] = "/root"
+        create_kwargs["environment"] = environment
         if manifest is not None:
             docker_mounts = _build_docker_volume_mounts(
                 manifest,
