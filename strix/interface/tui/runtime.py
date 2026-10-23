@@ -13,7 +13,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TextIO
 
-from strix.config import load_settings, persist_current
+from strix.config import claude_quota, load_settings, persist_current
 from strix.core.agents import AgentCoordinator
 from strix.core.hooks import BudgetExceededError
 from strix.core.runner import run_strix_scan
@@ -150,6 +150,13 @@ class GoTuiRuntime:
             return
         try:
             await self._preflight_model()
+        except claude_quota.QuotaExhaustedError as exc:
+            # Fail fast with a clear message — do NOT wait. An interactive setup
+            # screen hanging for hours until the window resets is the wrong UX; the
+            # headless path (main.py) is where a queued/unattended scan waits.
+            logger.info("Go TUI setup model preflight: subscription usage limit reached")
+            report_error("model_connection_failed", exc)
+            raise RuntimeError(claude_quota.describe_exhaustion(exc.resets_at)) from exc
         except Exception as exc:
             logger.exception("Go TUI setup model preflight failed")
             report_error("model_connection_failed", exc)

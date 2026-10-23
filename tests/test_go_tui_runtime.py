@@ -9,12 +9,14 @@ import socket
 import struct
 import sys
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
+from strix.config import claude_quota
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui import runtime as go_tui
 from strix.interface.tui import sidecar
@@ -1056,3 +1058,29 @@ def test_sync_fingerprint_tracks_report_revisions(tmp_path: Path) -> None:
     report["update_history"].append({"timestamp": timestamp, "fields": ["title"]})
 
     assert runtime._runtime_sync_fingerprint() != first_revision
+
+
+@pytest.mark.asyncio
+async def test_ensure_model_verified_fails_fast_on_quota(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A spent subscription window at the interactive setup screen must fail fast with
+    # a clear quota message, NOT wait for the reset (that is the headless path's job).
+    runtime = GoTuiRuntime(args())
+    reset_at = time.time() + 3600
+
+    async def _raise() -> None:
+        raise claude_quota.QuotaExhaustedError("session limit", resets_at=reset_at)
+
+    reported: list[str] = []
+    monkeypatch.setattr(runtime, "_preflight_model", _raise)
+    monkeypatch.setattr(go_tui, "report_error", lambda kind, _exc: reported.append(kind))
+
+    with pytest.raises(RuntimeError, match="usage limit reached") as excinfo:
+        await runtime.ensure_model_verified()
+
+    # The clear quota message, not the generic "Model connection failed: ..." wrapper.
+    assert "Model connection failed" not in str(excinfo.value)
+    assert "resets at" in str(excinfo.value)
+    assert reported == ["model_connection_failed"]
+    assert runtime.model_verified is False

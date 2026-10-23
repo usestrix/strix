@@ -18,11 +18,16 @@ logger = logging.getLogger(__name__)
 _STRIPPABLE_PREFIXES = (
     "openai/",
     "chatgpt/",
+    "claude-code/",
     "litellm/",
     "any-llm/",
     "ollama/",
     "ollama_chat/",
 )
+
+# Subscription prefixes wrap a bare model slug LiteLLM already knows; looking up
+# the wrapped name first only makes LiteLLM print its "Provider List" noise.
+_SLUG_ONLY_PREFIXES = ("chatgpt/", "claude-code/")
 
 _DEFAULT_OUTPUT_TOKENS = 8_192
 
@@ -47,8 +52,9 @@ def _safe_get_model_info(model: str) -> dict[str, Any] | None:
 def _model_info(model: str) -> dict[str, int]:
     lookup_key = _lookup_key(model)
     # Provider-qualified ChatGPT lookups may start a synchronous device-login
-    # poll. LiteLLM keys the metadata by the underlying model slug.
-    candidates = (lookup_key,) if model.startswith("chatgpt/") else (model, lookup_key)
+    # poll, and subscription-prefixed names aren't LiteLLM providers. LiteLLM
+    # keys the metadata by the underlying model slug, so look that up directly.
+    candidates = (lookup_key,) if model.startswith(_SLUG_ONLY_PREFIXES) else (model, lookup_key)
     for candidate in candidates:
         info = _safe_get_model_info(candidate)
         if info is not None:

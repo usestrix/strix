@@ -2,7 +2,42 @@
 
 from __future__ import annotations
 
+import os
+from typing import TYPE_CHECKING
+
+
+# LiteLLM fetches its cost map from GitHub at import unless told otherwise, so
+# pricing tests would follow upstream edits to that map. Pin the copy bundled
+# with the locked litellm version. Must be set before anything imports litellm.
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
 import pytest
+
+from strix.config import loader
+
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+
+@pytest.fixture(autouse=True)
+def _isolate_cli_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> Iterator[None]:
+    """Keep the whole suite from reading the developer's real cli-config.json.
+
+    Strix persists the last ``STRIX_LLM`` into ``~/.strix/cli-config.json``, so a
+    developer who has run any subscription backend once has a config that changes
+    what ``load_settings()`` resolves, and with it what a ``ReportState`` built in
+    a test believes about auth mode and cost. Point the loader at a path that does
+    not exist. ``load_settings`` memoizes into ``loader._cached`` by direct
+    assignment, which monkeypatch cannot track, so that is reset on both sides.
+    """
+    missing = tmp_path_factory.mktemp("cli-config-isolation") / "cli-config.json"
+    monkeypatch.setattr(loader, "_override", missing)
+    loader._cached = None
+    yield
+    loader._cached = None
 
 
 @pytest.fixture(autouse=True)
