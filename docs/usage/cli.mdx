@@ -168,6 +168,20 @@ strix --target ./my-project --workspace-file ./wordlist.txt
 strix --target https://app.com --workspace-file ./openapi.yaml:specs/openapi.yaml
 ```
 
+## Sign-in (`strix auth`)
+
+`strix auth` stores sign-ins that replace an API key.
+
+| Command | What it does |
+|---------|--------------|
+| `strix auth login chatgpt [--manual]` | Sign in with a ChatGPT subscription; a `chatgpt/…` `STRIX_LLM` then runs on it |
+| `strix auth login entra [--manual] [--tenant ID] [--app ID]` | Sign in as a Microsoft Entra ID user for [Anthropic Workload Identity Federation](/llm-providers/anthropic-entra-id) |
+| `strix auth status` | Show every provider's sign-in; exits `0` if any is signed in |
+| `strix auth logout` | Remove every stored sign-in from this host |
+| `strix auth test [--config PATH]` | Run one Anthropic federation exchange with the token source a scan would use, and report the result (never prints a token) |
+
+`--manual` skips the local callback server: open the printed URL in any browser, sign in, and paste the URL it redirects to back into Strix. Use it over SSH.
+
 ## Exit Codes
 
 | Code | Meaning |
