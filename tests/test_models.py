@@ -17,6 +17,7 @@ from strix.config.models import (
     _TurnGuardModel,
     configure_sdk_model_defaults,
     model_supports_images,
+    model_supports_reasoning,
     request_timeout_extra_args,
     resolve_api_type,
     routes_through_litellm,
@@ -211,3 +212,23 @@ def test_image_support_follows_the_catalog(monkeypatch: pytest.MonkeyPatch) -> N
     assert model_supports_images("acme-text") is False
     assert model_supports_images("litellm/openai/acme-vision") is True
     assert model_supports_images("acme-unknown-model") is True
+
+
+def test_minimax_flash_uses_local_contract_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _settings(monkeypatch, "openai/MiniMax-M3.1-Flash", "https://api.minimax.io/v1")
+
+    assert resolve_api_type("openai/MiniMax-M3.1-Flash", settings) == "responses"
+    assert model_supports_reasoning("openai/MiniMax-M3.1-Flash") is True
+    assert model_supports_images("openai/MiniMax-M3.1-Flash") is True
+
+
+def test_minimax_gateway_ids_keep_chat_completions_and_custom_models_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(monkeypatch, "openrouter/minimax/minimax-m3.1-flash:free", None)
+
+    assert resolve_api_type("openrouter/minimax/minimax-m3.1-flash:free", settings) == (
+        "chat_completions"
+    )
+    assert resolve_api_type("user-owned-model", settings) == "chat_completions"
+    assert model_supports_images("user-owned-model") is True

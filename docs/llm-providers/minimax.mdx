@@ -1,0 +1,47 @@
+---
+title: "MiniMax"
+description: "Use MiniMax text models with Strix"
+---
+
+Strix recommends **MiniMax-M3.1-Flash** for ordinary MiniMax text runs, with **MiniMax-M3** as the fallback. Set the model explicitly so saved or custom model IDs are never changed by a catalog update.
+
+## Direct MiniMax API
+
+The direct OpenAI-compatible route uses the international API endpoint:
+
+```bash
+export STRIX_LLM="openai/MiniMax-M3.1-Flash"
+export LLM_API_KEY="your-minimax-api-key"
+export LLM_API_BASE="https://api.minimax.io/v1"
+```
+
+The direct Flash contract supports up to 1,000,000 input tokens and 524,288 output tokens. Strix selects the native Responses route when this model is used. Chat Completions remains available with `STRIX_API_TYPE=chat_completions`.
+
+For the fallback:
+
+```bash
+export STRIX_LLM="openai/MiniMax-M3"
+```
+
+## Verified gateway IDs
+
+Use the gateway's exact model ID. These routes use Chat Completions:
+
+```bash
+# OpenRouter's free Flash route
+export STRIX_LLM="openrouter/minimax/minimax-m3.1-flash:free"
+
+# OpenCode's free Flash route
+export STRIX_LLM="opencode/minimax-m3.1-flash-free"
+
+# MiniMax M3 through a compatible gateway
+export STRIX_LLM="openrouter/minimax/minimax-m3"
+```
+
+Gateway context, output limits, pricing, and regional availability follow the gateway contract. Strix does not infer direct MiniMax API capabilities for a gateway route.
+
+## Thinking
+
+MiniMax-M3.1-Flash uses adaptive thinking. The supported OpenAI control is `reasoning_effort` with `low`, `medium`, `high`, `xhigh`, or `max`; `none` is not sent for this model. MiniMax-M3 supports adaptive or disabled thinking according to the selected endpoint.
+
+See the [official MiniMax model guide](https://platform.minimax.io/docs/guides/models-intro.md) and [Responses API reference](https://platform.minimax.io/docs/api-reference/responses-create.md) for the current provider contract.

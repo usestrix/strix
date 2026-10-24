@@ -9,6 +9,7 @@ from functools import lru_cache
 from typing import Any
 
 from strix.config import load_settings
+from strix.config.model_catalog import local_model_info
 
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,10 @@ def _safe_get_model_info(model: str) -> dict[str, Any] | None:
 
 @lru_cache(maxsize=128)
 def _model_info(model: str) -> dict[str, int]:
+    local_info = local_model_info(model)
+    if local_info is not None:
+        return local_info
+
     lookup_key = _lookup_key(model)
     # Provider-qualified ChatGPT lookups may start a synchronous device-login
     # poll. LiteLLM keys the metadata by the underlying model slug.

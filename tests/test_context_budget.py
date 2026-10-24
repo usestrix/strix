@@ -21,6 +21,26 @@ def test_context_window_strips_provider_prefix() -> None:
     assert context_budget.context_window("openai/gpt-4o") == 128_000
 
 
+def test_context_window_uses_verified_minimax_flash_contract() -> None:
+    context_budget._model_info.cache_clear()
+    assert context_budget.context_window("openai/MiniMax-M3.1-Flash") == 1_000_000
+    assert context_budget.output_limit("openai/MiniMax-M3.1-Flash") == 524_288
+    context_budget._model_info.cache_clear()
+
+
+def test_gateway_context_stays_with_dynamic_provider_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context_budget._model_info.cache_clear()
+    monkeypatch.setattr(
+        "litellm.get_model_info",
+        lambda _model: {"max_input_tokens": 200_000, "max_output_tokens": 16_384},
+    )
+    assert context_budget.context_window("openrouter/minimax/minimax-m3.1-flash:free") == 200_000
+    assert context_budget.output_limit("openrouter/minimax/minimax-m3.1-flash:free") == 16_384
+    context_budget._model_info.cache_clear()
+
+
 def test_context_window_chatgpt_prefix_skips_provider_auth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
