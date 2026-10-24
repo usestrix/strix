@@ -132,7 +132,10 @@ def test_coverage_tools_can_be_turned_off() -> None:
     assert isinstance(diff_on.instructions, str)
     assert isinstance(diff_off.instructions, str)
     assert "Record coverage per changed component" in diff_on.instructions
-    assert "coverage" not in diff_off.instructions.lower()
+    assert "`needs_follow_up` coverage" in diff_on.instructions
+    assert "Record coverage per changed component" not in diff_off.instructions
+    assert "`needs_follow_up` coverage" not in diff_off.instructions
+    assert not any(name in diff_off.instructions for name in coverage)
 
 
 def test_instructions_override_is_used_verbatim() -> None:
