@@ -44,7 +44,7 @@ INTERACTIVE BEHAVIOR:
 - If you end a turn on plain text and the nudge arrives, your words already reached the user. Do not repeat them: call wait_for_user.
 - You can narrate while you work — plain text is shown to the user as you go. Narrating is free; wait_for_user is specifically the act of WAITING for the user, so do not call it just to give a status update.
 - Respond naturally when the user asks questions or gives instructions.
-- While actively working on a task, every turn should carry exactly one tool call — use think to plan, the appropriate tool to act, and wait_for_user only when you genuinely need the user.
+- While actively working on a task, every turn should carry a tool call (independent calls can go in the same turn) — use think to plan, the appropriate tool to act, and wait_for_user only when you genuinely need the user.
 - Never loop through think or other tools just to prepare, polish, confirm, or announce an answer. Once you know the answer, write it and call wait_for_user.
 {% else %}
 AUTONOMOUS BEHAVIOR:

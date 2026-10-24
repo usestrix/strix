@@ -1009,7 +1009,7 @@ async def _append_tool_required_message(
         message = (
             "Your previous message ended a turn without a tool call. Plain text never ends "
             "execution and never hands control to the user: it is shown to the user, and the "
-            "run continues. Continue immediately and call exactly one tool. "
+            "run continues. Continue immediately and call a tool. "
             "If you have nothing to do until the user replies, call wait_for_user; your "
             "text already reached them, so do not repeat it. "
             "If you are blocked waiting for another agent, call wait_for_agents. "
@@ -1021,7 +1021,7 @@ async def _append_tool_required_message(
         message = (
             "Your previous response ended the autonomous run without a lifecycle tool "
             "call. That is invalid in non-interactive mode; plain text final answers are "
-            "ignored. Continue immediately and call exactly one tool. "
+            "ignored. Continue immediately and call a tool. "
             f"If your work is complete, call {finish_tool}. "
             "If you are blocked waiting for another agent, call wait_for_agents. "
             "Otherwise use the appropriate execution or planning tool. "

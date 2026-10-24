@@ -255,7 +255,7 @@ def make_model_settings(
 ) -> ModelSettings:
     headers = _request_headers(model_name, extra_headers)
     model_settings = ModelSettings(
-        parallel_tool_calls=False if has_tools else None,
+        parallel_tool_calls=True if has_tools else None,
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
         extra_args=request_timeout_extra_args(request_timeout),
