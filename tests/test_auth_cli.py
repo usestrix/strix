@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from strix.config import codex
+from strix.config import claude_code, codex
 from strix.interface import auth_cli
 
 
@@ -33,7 +33,9 @@ def test_help_returns_zero() -> None:
     assert auth_cli.run_auth(["--help"]) == 0
 
 
-def test_status_not_signed_in() -> None:
+def test_status_not_signed_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Isolate from the host's real Claude Code sign-in state.
+    monkeypatch.setattr(claude_code, "session_state", lambda: "signed_out")
     assert auth_cli.run_auth(["status"]) == 1
 
 

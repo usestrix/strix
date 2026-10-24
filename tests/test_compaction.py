@@ -10,6 +10,7 @@ from litellm.exceptions import BadRequestError, ContextWindowExceededError, Rate
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
 from strix.config import ContextSettings
+from strix.config.claude_bridge import ClaudeStreamError
 from strix.llm import compaction
 
 
@@ -249,6 +250,36 @@ async def test_summarize_routes_through_provider_with_settings(
     assert settings.max_tokens == 64
 
 
+@pytest.mark.asyncio
+async def test_summarize_enforces_output_cap_when_backend_overruns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A backend that cannot honor ModelSettings.max_tokens (e.g. the claude -p CLI,
+    # which has no output-token flag) can return a summary larger than the budget
+    # _summary_input_budget already reserved. _summarize must enforce the cap itself so
+    # the compacted context still fits the window; count_tokens == len under _patch_budget.
+    _patch_budget(monkeypatch, keep_tokens=30, window=4_000)
+    _patch_summary(monkeypatch, "S" * 2_000)  # 2000 "tokens", well over the cap below
+
+    result = await compaction._summarize("claude-code/claude-opus-4-8", "p", 200)
+
+    assert result is not None
+    assert len(result) <= 200
+    assert compaction._HEAD_TRUNCATED_MARKER in result
+
+
+@pytest.mark.asyncio
+async def test_summarize_leaves_within_budget_summary_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_budget(monkeypatch, keep_tokens=30, window=4_000)
+    _patch_summary(monkeypatch, "a short summary")
+
+    # Under the cap, the summary is returned verbatim (no spurious truncation marker).
+    result = await compaction._summarize("claude-code/claude-opus-4-8", "p", 64)
+    assert result == "a short summary"
+
+
 def test_fit_to_tokens_truncates_oversized_text(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(compaction, "count_tokens", lambda _m, t: len(t))
     text = "x" * 10_000
@@ -338,3 +369,25 @@ async def test_maybe_compact_skips_when_no_room_to_summarise(
     assert await compaction.maybe_compact(session, model="m", force=True) is False
     assert not captured
     assert await session.get_items() == before
+
+
+def test_claude_code_overflow_reaches_the_compaction_recovery() -> None:
+    # The Claude Code backend never touches LiteLLM, so its overflow arrives as a
+    # ClaudeStreamError rather than a typed BadRequestError. Without matching it
+    # the reactive compact-and-retry path is simply dead on that route.
+    overflow = ClaudeStreamError("API Error: prompt is too long: 1050000 tokens", status_code=400)
+    assert compaction.is_context_overflow(overflow) is True
+
+    untagged = ClaudeStreamError("input is too long for the context window")
+    assert compaction.is_context_overflow(untagged) is True
+
+    # A rate limit on the same transport must not be mistaken for overflow, and
+    # neither must an unrelated status.
+    assert (
+        compaction.is_context_overflow(ClaudeStreamError("API Error: rate limit", status_code=429))
+        is False
+    )
+    assert (
+        compaction.is_context_overflow(ClaudeStreamError("prompt is too long", status_code=500))
+        is False
+    )

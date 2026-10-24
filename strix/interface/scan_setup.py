@@ -15,7 +15,7 @@ import unicodedata
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from strix.config import Settings, codex, load_settings
+from strix.config import Settings, claude_code, claude_quota, codex, load_settings, subscription
 from strix.core.paths import run_dir_for
 from strix.interface.utils import (
     assign_workspace_subdirs,
@@ -72,7 +72,7 @@ def _header_candidates(
     prefix: str, model: str | None, api_key: str | None, extra_headers: dict[str, str] | None
 ) -> list[tuple[str, str]]:
     candidates: list[tuple[str, str]] = []
-    if api_key and not codex.subscription_model(model):
+    if api_key and not (codex.subscription_model(model) or claude_code.claude_code_model(model)):
         candidates.append((f"{prefix}LLM_API_KEY", api_key))
     for header, value in (extra_headers or {}).items():
         candidates.append((f"{prefix}LLM_EXTRA_HEADERS header name {header!r}", header))
@@ -150,21 +150,24 @@ async def preflight_request(
         has_tools=False,
     )
     try:
-        await asyncio.wait_for(
-            model.get_response(
-                system_instructions="You are a helpful assistant.",
-                input="Reply with just 'OK'.",
-                model_settings=request_settings,
-                tools=[],
-                output_schema=None,
-                handoffs=[],
-                tracing=ModelTracing.DISABLED,
-                previous_response_id=None,
-                conversation_id=None,
-                prompt=None,
-            ),
-            timeout=timeout,
-        )
+        # A refused preflight raises at once rather than waiting silently under
+        # the timeout; the warm-up reports the reset and waits for it itself.
+        with claude_quota.no_waiting():
+            await asyncio.wait_for(
+                model.get_response(
+                    system_instructions="You are a helpful assistant.",
+                    input="Reply with just 'OK'.",
+                    model_settings=request_settings,
+                    tools=[],
+                    output_schema=None,
+                    handoffs=[],
+                    tracing=ModelTracing.DISABLED,
+                    previous_response_id=None,
+                    conversation_id=None,
+                    prompt=None,
+                ),
+                timeout=timeout,
+            )
     except TimeoutError:
         raise TimeoutError(
             f"{model_name} did not answer within {timeout}s (LLM_PREFLIGHT_TIMEOUT). "
@@ -301,7 +304,7 @@ def telemetry_start(args: argparse.Namespace) -> None:
     model = load_settings().llm.model
     kwargs = {
         "model": model,
-        "auth_mode": codex.auth_mode(model),
+        "auth_mode": subscription.auth_mode(model),
         "scan_mode": args.scan_mode,
         "is_whitebox": is_whitebox_scan(args.targets_info),
         "interactive": not args.non_interactive,
@@ -322,7 +325,7 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         "status": "running",
         "start_time": datetime.now(UTC).isoformat(),
         "end_time": None,
-        "auth_mode": codex.auth_mode(load_settings().llm.model),
+        "auth_mode": subscription.auth_mode(load_settings().llm.model),
         "targets_info": args.targets_info,
         "scan_mode": args.scan_mode,
         "instruction": args.instruction,
