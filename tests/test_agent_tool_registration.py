@@ -127,6 +127,13 @@ def test_coverage_tools_can_be_turned_off() -> None:
             assert "Coverage reconciliation" not in off_descriptions
         assert not any(name in off_descriptions for name in coverage)
 
+    diff_on = factory.build_strix_agent(is_root=True, is_diff_scoped=True)
+    diff_off = factory.build_strix_agent(is_root=True, is_diff_scoped=True, coverage_tools=False)
+    assert isinstance(diff_on.instructions, str)
+    assert isinstance(diff_off.instructions, str)
+    assert "Record coverage per changed component" in diff_on.instructions
+    assert "coverage" not in diff_off.instructions.lower()
+
 
 def test_instructions_override_is_used_verbatim() -> None:
     custom = "You are a scan agent. Follow the provided scope."
