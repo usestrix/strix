@@ -104,6 +104,10 @@ def test_report_tool_replaces_create_vulnerability_report() -> None:
         assert "create_vulnerability_report" not in agent.instructions
 
 
+def _descriptions(tools: list[Any]) -> list[str]:
+    return [t.description for t in tools if isinstance(t, FunctionTool)]
+
+
 def test_coverage_tools_can_be_turned_off() -> None:
     coverage = {"record_coverage", "update_coverage", "list_coverage"}
     for is_root in (True, False):
@@ -116,6 +120,12 @@ def test_coverage_tools_can_be_turned_off() -> None:
         assert "- COVERAGE" in on.instructions
         assert "## Recording Closure" in on.instructions
         assert not any(name in off.instructions for name in coverage)
+        on_descriptions = "\n".join(_descriptions(on.tools))
+        off_descriptions = "\n".join(_descriptions(off.tools))
+        if is_root:
+            assert "Coverage reconciliation" in on_descriptions
+            assert "Coverage reconciliation" not in off_descriptions
+        assert not any(name in off_descriptions for name in coverage)
 
 
 def test_instructions_override_is_used_verbatim() -> None:

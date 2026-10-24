@@ -620,6 +620,15 @@ def _finish_tool_use_behavior(
 
 
 _COVERAGE_TOOLS: tuple[Tool, ...] = (record_coverage, update_coverage, list_coverage)
+_FINISH_SCAN_COVERAGE_STEP = re.compile(
+    r"\n5\. \*\*Coverage reconciliation\.\*\*.*?(?=\n\n)", re.DOTALL
+)
+
+
+def _without_coverage_step(tool: FunctionTool) -> FunctionTool:
+    description = _FINISH_SCAN_COVERAGE_STEP.sub("", tool.description)
+    return dataclasses.replace(tool, description=description)
+
 
 _BASE_TOOLS: tuple[Tool, ...] = (
     think,
@@ -771,6 +780,8 @@ def build_strix_agent(
     base_tools = [report_tool if t is create_vulnerability_report else t for t in _BASE_TOOLS]
     if not coverage_tools:
         base_tools = [t for t in base_tools if t not in _COVERAGE_TOOLS]
+        if finish_tool is finish_scan:
+            finish_tool = _without_coverage_step(finish_scan)
     if is_root:
         tools: list[Tool] = [*base_tools, *agent_tools, finish_tool]
     else:
