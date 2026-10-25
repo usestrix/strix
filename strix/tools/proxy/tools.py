@@ -69,6 +69,15 @@ async def _call[T](client: Client, fn: Callable[[Client], Awaitable[T]]) -> T:
         return await fn(client)
 
 
+_REQUEST_EXISTS_QUERY = "query RequestExists($id: ID!) { request(id: $id) { id } }"
+_REQUEST_EXISTS_ATTEMPTS = 2
+
+
+async def _request_exists(client: Client, request_id: str) -> bool:
+    data = await client.graphql.query(_REQUEST_EXISTS_QUERY, {"id": request_id})
+    return bool(data) and data.get("request") is not None
+
+
 async def existing_request_ids(
     ctx: RunContextWrapper,
     request_ids: list[str],
@@ -81,16 +90,24 @@ async def existing_request_ids(
     if client is None:
         raise RuntimeError("Caido client is not available")
 
-    # Request IDs are not an HTTPQL field. Resolve each ID through the same
-    # project-bound lookup as view_request rather than constructing a filter.
+    # Request IDs are not an HTTPQL field, so each one is resolved by id. Only
+    # the id is selected: pulling the raw request and response bodies just to
+    # learn whether a row exists is what made this time out on busy projects.
     existing: set[str] = set()
     for request_id in request_ids:
-        result = await _call(
-            client,
-            functools.partial(caido_api.get_request_with_client, request_id=request_id),
-        )
-        if result is not None:
-            existing.add(str(result.request.id))
+        for attempt in range(1, _REQUEST_EXISTS_ATTEMPTS + 1):
+            try:
+                exists = await _call(
+                    client,
+                    functools.partial(_request_exists, request_id=request_id),
+                )
+            except Exception:
+                if attempt == _REQUEST_EXISTS_ATTEMPTS:
+                    raise
+                continue
+            if exists:
+                existing.add(request_id)
+            break
     return existing
 
 

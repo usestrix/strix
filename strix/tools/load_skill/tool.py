@@ -29,7 +29,11 @@ async def load_skill(ctx: RunContextWrapper, skills: list[str]) -> str:
     if err:
         return f"load_skill: {err}"
     context = ctx.context if isinstance(ctx.context, dict) else {}
-    contents = load_skills(requested, supports_images=context.get("supports_images", True))
+    contents = load_skills(
+        requested,
+        supports_images=context.get("supports_images", True),
+        coverage_tools=context.get("coverage_tools", True),
+    )
     if not contents:
         return "load_skill: no content loaded for requested skills."
     sections = [f"## Skill: {name}\n\n{body}" for name, body in contents.items()]

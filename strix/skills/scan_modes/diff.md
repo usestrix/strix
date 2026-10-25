@@ -1,6 +1,7 @@
 ---
 name: diff
 description: Methodology for diff-scoped review of a pull request, commit, or branch — what counts as in scope, how far to follow a change, and what not to report
+template: jinja
 ---
 
 # Diff-Scoped Review
@@ -69,9 +70,14 @@ When it is not, the closure rules apply unchanged: a complete
 source → control → sink → impact trace through the changed code is
 reportable at reduced confidence, with the missing runtime proof named in
 `confidence_rationale`. A candidate you can neither confirm nor rule out
+{% if coverage_tools %}
 with a named control is an `open_proof_gap` — record it as
 `needs_follow_up` coverage rather than dropping it because the
 environment was inconvenient.
+{% else %}
+with a named control is an `open_proof_gap` — carry it up as an open
+item rather than dropping it because the environment was inconvenient.
+{% endif %}
 
 ## Reporting
 
@@ -80,7 +86,9 @@ plainly which part of the diff introduced or exposed it. A reviewer
 reading your report next to the diff should be able to see the connection
 without re-deriving your analysis.
 
+{% if coverage_tools %}
 Record coverage per changed component, not per changed file — a
 formatting-only file and a rewritten auth module are not equal rows.
+{% endif %}
 State which changed areas you reviewed and cleared, so the author knows
 what a clean result actually covered.

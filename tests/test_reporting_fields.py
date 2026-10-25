@@ -1640,7 +1640,7 @@ async def test_http_exchange_ids_must_exist_in_current_proxy_project(
     assert warning is None
 
 
-async def test_http_exchange_ids_are_dropped_when_proxy_cannot_be_queried(
+async def test_http_exchange_ids_are_kept_when_proxy_cannot_be_queried(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def existing_request_ids(
@@ -1656,11 +1656,10 @@ async def test_http_exchange_ids_are_dropped_when_proxy_cannot_be_queried(
         ["1042", "1042", "1088"],
     )
 
-    assert request_ids is None
+    assert request_ids == ["1042", "1088"]
     assert errors == []
     assert warning is not None
-    assert "not stored" in warning
-    assert "update_vulnerability_report" in warning
+    assert "without verification" in warning
 
 
 async def test_create_reports_persistence_failure_as_tool_error(
@@ -1679,7 +1678,7 @@ async def test_create_reports_persistence_failure_as_tool_error(
     assert report_state.vulnerability_reports == []
 
 
-async def test_evidence_only_update_reports_proxy_outage_as_retryable(
+async def test_evidence_only_update_keeps_ids_when_proxy_cannot_be_queried(
     report_state: ReportState,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1712,11 +1711,11 @@ async def test_evidence_only_update_reports_proxy_outage_as_retryable(
     )
     result = json.loads(raw)
 
-    assert result["success"] is False
-    assert "No fields to update" not in result["error"]
-    assert "update_vulnerability_report" in result["error"]
+    assert result["success"] is True
+    assert "without verification" in result["warning"]
     assert result["report_id"] == "vuln-0009"
-    assert report_state.vulnerability_reports[0] == original
+    assert report_state.vulnerability_reports[0]["http_exchange_ids"] == ["204"]
+    assert report_state.vulnerability_reports[0] != original
 
 
 def test_update_reports_persistence_failure_as_tool_error(report_state: ReportState) -> None:

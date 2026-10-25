@@ -185,6 +185,33 @@ def _apply_extra_hosts(create_kwargs: dict[str, Any]) -> None:
     extra_hosts.update(_extra_host_mappings())
 
 
+_SANDBOX_DEVICES_ENV = "STRIX_DOCKER_SANDBOX_DEVICES"
+
+
+def _sandbox_devices() -> list[str]:
+    raw = os.environ.get(_SANDBOX_DEVICES_ENV, "")
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _apply_sandbox_devices(create_kwargs: dict[str, Any]) -> None:
+    """Pass the host devices listed in ``STRIX_DOCKER_SANDBOX_DEVICES`` through.
+
+    Comma-separated device paths, each mapped to the same path in the container
+    with ``rwm`` access. A tunnel brought up inside the sandbox (OpenVPN,
+    Tailscale) needs ``/dev/net/tun``: Docker's default device cgroup denies it
+    even with ``NET_ADMIN``. Unset means no extra devices.
+    """
+    devices = _sandbox_devices()
+    if not devices:
+        return
+    existing = [str(item) for item in (create_kwargs.get("devices") or [])]
+    for path in devices:
+        spec = f"{path}:{path}:rwm"
+        if spec not in existing and path not in existing:
+            existing.append(spec)
+    create_kwargs["devices"] = existing
+
+
 def _apply_resource_limits(create_kwargs: dict[str, Any]) -> None:
     """Apply optional cgroup resource caps from the environment. Unset/blank
     values leave docker's default (unbounded), so this is opt-in per host."""
@@ -355,6 +382,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
 
         _apply_extra_hosts(create_kwargs)
         _apply_sandbox_network(create_kwargs, self.docker_client, image)
+        _apply_sandbox_devices(create_kwargs)
         _apply_resource_limits(create_kwargs)
         _apply_log_limits(create_kwargs)
         _apply_run_labels(create_kwargs)

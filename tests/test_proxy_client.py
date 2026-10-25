@@ -9,7 +9,6 @@ call at a time against the shared client.
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -27,6 +26,7 @@ class _FakeClient:
     def __init__(self, name: str) -> None:
         self.name = name
         self.closed = False
+        self.graphql: Any = None
 
     async def aclose(self) -> None:
         self.closed = True
@@ -231,20 +231,23 @@ async def test_ctx_client_degrades_when_bootstrap_failed() -> None:
     assert await tools._ctx_client(cast("Any", _Ctx({"caido_client": handle}))) is None
 
 
-async def test_existing_request_ids_queries_current_project(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+class _FakeGraphQL:
+    def __init__(self, answers: dict[str, list[Any]]) -> None:
+        self.answers = answers
+        self.queries: list[tuple[str, dict[str, Any]]] = []
+
+    async def query(self, document: str, variables: dict[str, Any]) -> dict[str, Any]:
+        self.queries.append((document, dict(variables)))
+        answer = self.answers[variables["id"]].pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return {"request": answer}
+
+
+async def test_existing_request_ids_select_only_the_id() -> None:
     client = _FakeClient("host")
-    looked_up: list[str] = []
-
-    async def get_request_with_client(passed_client: Any, request_id: str) -> Any:
-        assert passed_client is client
-        looked_up.append(request_id)
-        if request_id == "1042":
-            return SimpleNamespace(request=SimpleNamespace(id="1042"))
-        return None
-
-    monkeypatch.setattr(caido_api, "get_request_with_client", get_request_with_client)
+    graphql = _FakeGraphQL({"1042": [{"id": "1042"}], "1088": [None]})
+    client.graphql = graphql
 
     existing = await tools.existing_request_ids(
         cast("Any", _Ctx({"caido_client": client})),
@@ -252,7 +255,34 @@ async def test_existing_request_ids_queries_current_project(
     )
 
     assert existing == {"1042"}
-    assert looked_up == ["1042", "1088"]
+    assert [variables["id"] for _, variables in graphql.queries] == ["1042", "1088"]
+    for document, _ in graphql.queries:
+        assert "raw" not in document
+        assert "{ id }" in document
+
+
+async def test_existing_request_ids_retry_once_before_giving_up() -> None:
+    client = _FakeClient("host")
+    graphql = _FakeGraphQL(
+        {
+            "1042": [TimeoutError("deadline exceeded"), {"id": "1042"}],
+            "1088": [TimeoutError("deadline exceeded"), TimeoutError("deadline exceeded")],
+        }
+    )
+    client.graphql = graphql
+
+    with pytest.raises(TimeoutError):
+        await tools.existing_request_ids(
+            cast("Any", _Ctx({"caido_client": client})),
+            ["1042", "1088"],
+        )
+
+    assert [variables["id"] for _, variables in graphql.queries] == [
+        "1042",
+        "1042",
+        "1088",
+        "1088",
+    ]
 
 
 def test_err_logs_caido_errors_as_warnings(caplog: pytest.LogCaptureFixture) -> None:

@@ -12,6 +12,7 @@ from strix.skills import (
     register_skill_dir,
     registered_skill_dirs,
     skill_search_dirs,
+    skill_turn_limit,
     validate_requested_skills,
 )
 from strix.utils.resource_paths import get_strix_resource_path
@@ -282,3 +283,16 @@ def test_new_skill_files_load() -> None:
     for name in names:
         key = name.split("/")[-1]
         assert loaded.get(key), f"{name} failed to load"
+
+
+def test_skill_turn_limit_matches_bare_and_qualified_names(tmp_path: Path) -> None:
+    _write_skill(tmp_path, "pr_review", "investigator", "---\nname: investigator\n---\nx")
+    _write_skill(tmp_path, "pr_review", "validator", "---\nname: validator\n---\nx")
+    register_skill_dir(tmp_path)
+    limits = {"pr_review/investigator": 25, "pr_review/validator": 40}
+
+    assert skill_turn_limit(["investigator"], limits) == 25
+    assert skill_turn_limit(["pr_review/validator", "idor"], limits) == 40
+    assert skill_turn_limit(["investigator", "validator"], limits) == 40
+    assert skill_turn_limit(["idor"], limits) is None
+    assert skill_turn_limit(["investigator"], {}) is None

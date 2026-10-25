@@ -31,6 +31,8 @@ jobs:
           assert not any(name.startswith("strix/interface/tui/cmd/") for name in names)
           PY
       - name: Install into a clean environment and run the CLI
+        env:
+          UV_EXCLUDE_NEWER: 5 days
         run: |
           uv venv --python 3.12 /tmp/strix-smoke
           uv pip install --python /tmp/strix-smoke/bin/python dist/*.whl

@@ -507,3 +507,30 @@ def test_recomputed_budget_flags(
     expected: tuple[bool, bool],
 ) -> None:
     assert recomputed_budget_flags(cost, max_budget, interactive=interactive) == expected
+
+
+@pytest.mark.asyncio
+async def test_turn_limit_warns_ten_before_and_repeats_past_it() -> None:
+    hooks = ReportUsageHooks(model="test-model")
+    noticed = []
+    for requests in range(40):
+        ctx = _make_warn_context(requests=requests, parent_id="root-1")
+        ctx.context["turn_limit"] = 25
+        items: list[Any] = []
+        await hooks.on_llm_start(ctx, MagicMock(), None, items)
+        if items:
+            noticed.append((requests + 1, items[0]["content"]))
+
+    assert [turn for turn, _ in noticed] == [15, 25, 30, 35, 40]
+    assert "15 of your 25-turn limit" in noticed[0][1]
+    assert "past your 25-turn limit" in noticed[1][1]
+
+
+@pytest.mark.asyncio
+async def test_no_turn_limit_no_notice() -> None:
+    hooks = ReportUsageHooks(model="test-model")
+    items: list[Any] = []
+    await hooks.on_llm_start(
+        _make_warn_context(requests=14, parent_id="root-1"), MagicMock(), None, items
+    )
+    assert items == []

@@ -176,7 +176,7 @@ USER root
 # overwrite a root-owned binary under /usr/local/bin, which otherwise fails with
 # "cannot move binary" and aborts the scan. Pin the initial version for
 # reproducible builds; self-update then pulls fresh detectors at runtime.
-ARG TRUFFLEHOG_VERSION=3.95.9
+ARG TRUFFLEHOG_VERSION=3.99.2
 RUN curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /home/pentester/.local/bin "v${TRUFFLEHOG_VERSION}" && \
     chown -R pentester:pentester /home/pentester/.local
 RUN set -eux; \

@@ -222,9 +222,9 @@ def _normalize_http_exchange_ids(raw: Any) -> tuple[list[str] | None, list[str]]
     return normalized, errors
 
 
-_HTTP_EXCHANGE_DROPPED_WARNING = (
-    "http_exchange_ids were not stored: the proxy project could not be reached to verify "
-    "them. Attach them with update_vulnerability_report when the proxy responds again."
+_HTTP_EXCHANGE_UNVERIFIED_WARNING = (
+    "http_exchange_ids were stored without verification because the proxy project did "
+    "not respond in time. Ids that do not exist in the project will not render as evidence."
 )
 
 
@@ -235,9 +235,9 @@ async def _verify_http_exchange_ids(
     """Verify proxy exchange IDs against the current Caido project.
 
     IDs the project does not know are rejected. When the proxy itself cannot be
-    queried the IDs are dropped and a warning is returned instead, so a proxy
-    outage never blocks a finding and unverified IDs are never recorded as
-    evidence.
+    queried the IDs are kept and a warning is returned instead: a slow or
+    unreachable proxy must never strip evidence from a finding, and consumers
+    resolve each id against the recorded traffic before rendering it.
     """
     request_ids, errors = _normalize_http_exchange_ids(raw)
     if request_ids is None or errors or not request_ids:
@@ -250,7 +250,7 @@ async def _verify_http_exchange_ids(
             "Could not verify HTTP exchange IDs against the current Caido project",
             exc_info=True,
         )
-        return None, [], _HTTP_EXCHANGE_DROPPED_WARNING
+        return request_ids, [], _HTTP_EXCHANGE_UNVERIFIED_WARNING
 
     missing_ids = [request_id for request_id in request_ids if request_id not in existing_ids]
     if missing_ids:
