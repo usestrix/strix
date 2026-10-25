@@ -1,6 +1,6 @@
 ---
 name: source-aware-sast
-description: Practical source-aware SAST and AST playbook for semgrep, ast-grep, gitleaks, and trivy fs
+description: Practical source-aware SAST and AST playbook for semgrep, Python Bandit, ast-grep, gitleaks, and trivy fs
 ---
 
 # Source-Aware SAST Playbook
@@ -77,6 +77,20 @@ semgrep scan --config auto --json --output /workspace/.source-aware/semgrep-auto
 ```
 
 If diff scope is active, restrict to changed files first, then expand only when needed.
+
+## Python-Specific Triage
+
+When the source map includes Python, use `load_skill(["bandit"])` and add a
+scoped Bandit pass alongside Semgrep. Bandit is already installed in the
+sandbox. The playbook covers JSON output, scan errors, configuration and
+`# nosec` suppressions, and the source-to-runtime handoff.
+
+Keep each service's artifacts separate. Check scanned-file metrics and
+`errors[]` before describing coverage; an empty result list or a zero exit
+status can coexist with skipped files. Treat rule matches as hypotheses,
+trace the caller and closest control, and dynamically validate before reporting.
+Python authorization and business-logic paths still need manual review even
+when both scanners return no candidates.
 
 ## AST-Grep Structural Mapping
 
