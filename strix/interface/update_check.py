@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil
 import stat
 import subprocess
@@ -117,7 +118,7 @@ def _fetch_latest_version() -> str | None:
 
 
 def _fetch_asset_digest(version: str, filename: str) -> str | None:
-    """Return the expected sha256 (hex) for a release asset, if the API provides one."""
+    """Return a valid SHA-256 for the exact release asset, or None on failure."""
     try:
         with requests.get(
             f"https://api.github.com/repos/{GITHUB_REPO}/releases/tags/v{version}",
@@ -128,8 +129,8 @@ def _fetch_asset_digest(version: str, filename: str) -> str | None:
         for asset in assets:
             if asset.get("name") == filename:
                 digest = asset.get("digest") or ""
-                if digest.startswith("sha256:"):
-                    return digest.removeprefix("sha256:")
+                if isinstance(digest, str) and re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest):
+                    return digest.removeprefix("sha256:").lower()
     except Exception:  # noqa: BLE001
         logger.debug("release asset digest lookup failed", exc_info=True)
     return None
@@ -312,6 +313,60 @@ def _release_target() -> str | None:
     return target if target in supported else None
 
 
+def _unpack_binary(archive_path: Path, binary_name: str, staged: Path, *, is_windows: bool) -> None:
+    """Copy only the expected regular file, without extracting archive paths or links."""
+    if is_windows:
+        with zipfile.ZipFile(archive_path) as archive:
+            members = [member for member in archive.infolist() if member.filename == binary_name]
+            if len(members) != 1:
+                raise RuntimeError(f"Expected exactly one {binary_name} in the release archive")
+            member = members[0]
+            file_type = stat.S_IFMT(member.external_attr >> 16)
+            if member.is_dir() or file_type not in (0, stat.S_IFREG) or member.file_size <= 0:
+                raise RuntimeError(f"Release binary {binary_name} must be a nonempty regular file")
+            with archive.open(member) as source, staged.open("xb") as destination:
+                shutil.copyfileobj(source, destination)
+                destination.flush()
+                os.fsync(destination.fileno())
+    else:
+        with tarfile.open(archive_path, "r:gz") as archive:
+            tar_members = [member for member in archive.getmembers() if member.name == binary_name]
+            if len(tar_members) != 1:
+                raise RuntimeError(f"Expected exactly one {binary_name} in the release archive")
+            tar_member = tar_members[0]
+            if not tar_member.isfile() or tar_member.size <= 0:
+                raise RuntimeError(f"Release binary {binary_name} must be a nonempty regular file")
+            tar_source = archive.extractfile(tar_member)
+            if tar_source is None:
+                raise RuntimeError(f"Could not read release binary {binary_name}")
+            with tar_source, staged.open("xb") as destination:
+                shutil.copyfileobj(tar_source, destination)
+                destination.flush()
+                os.fsync(destination.fileno())
+
+
+def _replace_binary(staged: Path, current_exe: Path, *, is_windows: bool) -> None:
+    if not is_windows:
+        staged.replace(current_exe)
+        return
+
+    # Windows cannot replace a running executable. Retain it for rollback;
+    # the next update can remove it once the old process has exited.
+    old = current_exe.with_name(current_exe.name + ".old")
+    old.unlink(missing_ok=True)
+    try:
+        current_exe.rename(old)
+        staged.replace(current_exe)
+    except BaseException:
+        # Restore the installed path on interruption as well as filesystem errors.
+        try:
+            if not current_exe.exists():
+                old.rename(current_exe)
+        except OSError as exc:
+            raise RuntimeError(f"Update failed; restore the previous binary from {old}") from exc
+        raise
+
+
 def _download_and_replace(version: str, target: str, console: Console) -> bool:
     is_windows = target.startswith("windows")
     archive_ext = ".zip" if is_windows else ".tar.gz"
@@ -320,7 +375,16 @@ def _download_and_replace(version: str, target: str, console: Console) -> bool:
     binary_name = f"strix-{version}-{target}" + (".exe" if is_windows else "")
     current_exe = Path(sys.executable).resolve()
 
-    with tempfile.TemporaryDirectory() as tmp:
+    expected_digest = _fetch_asset_digest(version, filename)
+    if expected_digest is None:
+        raise RuntimeError(
+            f"Cannot verify {filename}: release metadata is unavailable or has no valid "
+            "SHA-256 checksum. Try again when GitHub release metadata is available."
+        )
+
+    # A private directory avoids clobbering a shared .new file, and keeps the
+    # replacement on the installation's filesystem for an atomic POSIX rename.
+    with tempfile.TemporaryDirectory(prefix=".strix-update-", dir=current_exe.parent) as tmp:
         tmp_dir = Path(tmp)
         archive_path = tmp_dir / filename
         console.print(f"[dim]Downloading[/] {url}")
@@ -334,45 +398,19 @@ def _download_and_replace(version: str, target: str, console: Console) -> bool:
                 for chunk in response.iter_content(chunk_size=1 << 20):
                     f.write(chunk)
 
-        expected_digest = _fetch_asset_digest(version, filename)
-        if expected_digest:
-            actual_digest = _sha256_file(archive_path)
-            if actual_digest != expected_digest:
-                raise RuntimeError(
-                    f"checksum mismatch for {filename}: "
-                    f"expected sha256 {expected_digest}, got {actual_digest}"
-                )
-        else:
-            console.print("[dim yellow]No published checksum available; skipping verification[/]")
+        actual_digest = _sha256_file(archive_path)
+        if actual_digest != expected_digest:
+            raise RuntimeError(
+                f"checksum mismatch for {filename}: "
+                f"expected sha256 {expected_digest}, got {actual_digest}"
+            )
 
-        if is_windows:
-            with zipfile.ZipFile(archive_path) as zf:
-                zf.extract(binary_name, tmp_dir)
-        else:
-            with tarfile.open(archive_path, "r:gz") as tf:
-                tf.extract(binary_name, tmp_dir, filter="data")
-
-        new_binary = tmp_dir / binary_name
-        new_binary.chmod(new_binary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-        staged = current_exe.with_name(current_exe.name + ".new")
-        try:
-            shutil.copy2(new_binary, staged)
-            if is_windows:
-                # Windows can't replace a running executable in place; move it aside first.
-                old = current_exe.with_name(current_exe.name + ".old")
-                old.unlink(missing_ok=True)
-                current_exe.rename(old)
-                try:
-                    staged.replace(current_exe)
-                except Exception:
-                    old.rename(current_exe)
-                    raise
-            else:
-                staged.replace(current_exe)
-        except Exception:
-            staged.unlink(missing_ok=True)
-            raise
+        staged = tmp_dir / binary_name
+        _unpack_binary(archive_path, binary_name, staged, is_windows=is_windows)
+        # Preserve local access restrictions, but never carry setuid/setgid or
+        # archive-supplied permissions into a newly downloaded executable.
+        staged.chmod(stat.S_IMODE(current_exe.stat().st_mode) & 0o777)
+        _replace_binary(staged, current_exe, is_windows=is_windows)
     return True
 
 
@@ -392,9 +430,9 @@ def self_update(console: Console | None = None, version: str | None = None) -> b
         )
         return False
 
-    latest = version or _fetch_latest_version()
-    if not latest:
-        console.print("[bold red]Could not determine the latest strix version.[/]")
+    latest = (version or _fetch_latest_version() or "").removeprefix("v")
+    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", latest) is None:
+        console.print("[bold red]Could not determine a valid stable strix release version.[/]")
         return False
 
     current = get_version()
@@ -415,10 +453,7 @@ def self_update(console: Console | None = None, version: str | None = None) -> b
     except Exception as e:  # noqa: BLE001
         logger.debug("self-update failed", exc_info=True)
         console.print(f"[bold red]Update failed:[/] {e}")
-        console.print(
-            "[dim]You can reinstall manually with:[/] "
-            "[#60a5fa]curl -sSL https://strix.ai/install | bash[/]"
-        )
+        console.print("[dim]Resolve the error, then retry with:[/] [#60a5fa]strix --update[/]")
         return False
 
     _write_cache(latest_version=latest, checked_at=time.time())

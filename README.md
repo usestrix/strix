@@ -106,6 +106,8 @@ curl -sSL https://strix.ai/install | bash
 
 Installed with pipx, uv, or pip? `strix --update` prints the matching upgrade command instead (`pipx upgrade strix-agent`, `uv tool upgrade strix-agent`, `pip install --upgrade strix-agent`). Strix also shows a notice with the right command when a new version is available.
 
+Standalone self-updates verify the download against the SHA-256 digest in GitHub's release metadata before replacing the installed binary. If the digest is unavailable or does not match, the update stops and keeps the current installation. Resolve the error and retry `strix --update`.
+
 ---
 
 ## Ways to Run Strix
