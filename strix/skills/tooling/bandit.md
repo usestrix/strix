@@ -17,25 +17,43 @@ Official references:
 ## Scoped First Pass
 
 Run from the Python repository root. For a monorepo, scan each relevant Python
-service and give each one its own artifact directory. In a diff-scoped review,
-start with the changed Python files and expand into their callers and controls
-only as needed.
+service separately. The command below scans the whole service. For a diff-scoped
+review, replace `-r .` with explicit changed Python file paths; Bandit does not
+infer Git diff scope. If that list is empty, skip the pass instead of falling
+back to a full-tree scan. Expand into callers and controls only as needed.
+Review the exclusions against the source map before running.
 
 ```bash
-ART=/workspace/.source-aware/python
-mkdir -p "$ART"
-bandit --version > "$ART/bandit.version" 2>&1
-bandit_status=0
-bandit -r . --format json \
-  --exclude './.venv,./venv,./node_modules,./build,./dist' \
-  > "$ART/bandit.json" 2> "$ART/bandit.log" || bandit_status=$?
-printf '%s\n' "$bandit_status" > "$ART/bandit.exit"
+(
+  set -eu
+  ART_ROOT=/workspace/.source-aware
+  mkdir -p "$ART_ROOT"
+  ART=$(mktemp -d "$ART_ROOT/bandit-python.XXXXXX")
+  printf 'Bandit artifacts: %s\n' "$ART"
+  pwd -P > "$ART/source-root.txt"
+  bandit --version > "$ART/bandit.version" 2>&1
+  bandit_status=0
+  bandit -r . --format json \
+    --exclude '*/.venv/*,*/venv/*,*/node_modules/*,*/build/*,*/dist/*' \
+    > "$ART/bandit.json" 2> "$ART/bandit.log" || bandit_status=$?
+  printf '%s\n' "$bandit_status" > "$ART/bandit.exit"
+  case "$bandit_status" in
+    0|1) ;;
+    *) cat "$ART/bandit.log" >&2; exit "$bandit_status" ;;
+  esac
+)
 ```
 
-Keep the unfiltered first pass: severity/confidence thresholds can hide useful
-leads. To narrow a follow-up, select relevant test IDs with `--tests B307,B602`
-or prioritize with `--severity-level medium --confidence-level high`; save that
-run separately and record its filters.
+Each run prints its artifact directory, records the source root, and preserves
+the scanner status. Findings can still make the scanner exit `1`; the shell
+block accepts `0`/`1` so the JSON can be inspected, and propagates other statuses.
+This does not classify coverage: check `errors[]` even when the block succeeds.
+
+Keep the default severity/confidence thresholds for the first pass; filtering
+can hide useful leads. To narrow a follow-up, select relevant test IDs with
+`--tests B307,B602` or prioritize with
+`--severity-level medium --confidence-level high`. Record the filters and any
+configuration restrictions with that run.
 
 ## Configuration and Suppressions
 
@@ -47,6 +65,7 @@ run separately and record its filters.
 - `# nosec` suppresses matches. Review suppressed security-sensitive paths with
   a separate `--ignore-nosec` pass using the same scope and exclusions. Record
   the justification instead of assuming suppression proves safety.
+  `--ignore-nosec` does not restore excluded files or skipped test IDs.
 - A JSON baseline supplied with `--baseline` hides existing matches. Do not use
   it as repository-wide coverage evidence, or add skips just to obtain a clean
   report.
@@ -62,7 +81,7 @@ Inspect all of the following before claiming a pass completed:
 | --- | --- |
 | Exit status and stderr | Distinguish reported matches from configuration or execution failures |
 | `errors[]` | Files that could not be scanned, including syntax errors; mark their coverage incomplete even if exit status is zero |
-| Per-file entries in `metrics` | Which files were analyzed; `_totals` alone does not demonstrate expected file coverage |
+| Per-file entries in `metrics` | Files with recorded metrics, including files that failed parsing; cross-check against `errors[]` and the expected scope |
 | `results[]` | Candidate locations, not a list of verified vulnerabilities |
 
 Missing/invalid JSON, unexpected status, skipped expected files, or no analyzed
@@ -74,6 +93,8 @@ For each candidate retain `test_id`, `filename`, `line_number`, `line_range`,
 `issue_severity`, `issue_confidence`, and any `issue_cwe`. Read the referenced
 function and callers locally. Raw JSON can contain source snippets and secrets;
 share only the minimal redacted evidence needed for validation.
+Rule severity and match confidence are separate from demonstrated impact and
+the final vulnerability severity.
 
 ## Prioritize by Trust Boundary
 

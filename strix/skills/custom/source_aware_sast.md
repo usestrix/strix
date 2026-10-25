@@ -85,9 +85,10 @@ scoped Bandit pass alongside Semgrep. Bandit is already installed in the
 sandbox. The playbook covers JSON output, scan errors, configuration and
 `# nosec` suppressions, and the source-to-runtime handoff.
 
-Keep each service's artifacts separate. Check scanned-file metrics and
-`errors[]` before describing coverage; an empty result list or a zero exit
-status can coexist with skipped files. Treat rule matches as hypotheses,
+Keep each service's artifacts separate. Check per-file metrics against
+`errors[]` and the expected scope before describing coverage: files that fail
+parsing can still have metrics, and an empty result list or a zero exit status
+can coexist with skipped files. Treat rule matches as hypotheses,
 trace the caller and closest control, and dynamically validate before reporting.
 Python authorization and business-logic paths still need manual review even
 when both scanners return no candidates.
