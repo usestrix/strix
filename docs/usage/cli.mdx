@@ -23,7 +23,10 @@ strix (--target <target> | --target-list <path>) [options]
 
   Updates are staged in a private directory next to the installed binary, so that
   directory must be writable. Windows keeps the previous executable as
-  `strix.exe.old` until the next update and restores it if replacement fails.
+  `strix.exe.old` until the next update and tries to restore it if replacement
+  fails. If restoration also fails, the updater prints the retained backup's
+  path. Restore that file to the original `strix.exe` location before retrying
+  `strix --update`.
 </ParamField>
 
 <ParamField path="--target, -t" type="string">
