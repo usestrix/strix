@@ -681,8 +681,7 @@ async def agent_finish(
             {
                 "success": False,
                 "error": (
-                    "agent_finish is for subagents. Root/main agents must call "
-                    f"{coordinator.root_finish_tool} instead"
+                    "agent_finish is for subagents. Root/main agents must call finish_scan instead"
                 ),
             },
             ensure_ascii=False,

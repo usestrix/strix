@@ -735,7 +735,6 @@ def build_strix_agent(
     extra_tools: Sequence[Tool] | None = None,
     instructions_override: str | None = None,
     supports_images: bool = True,
-    finish_tool: Tool = finish_scan,
     coverage_tools: bool = True,
 ) -> SandboxAgent[Any]:
     """Build a SandboxAgent for either root or child use.
@@ -749,7 +748,6 @@ def build_strix_agent(
             registered via ``register_agent_tools``.
         instructions_override: Use this verbatim as the system prompt instead
             of rendering the built-in scan prompt.
-        finish_tool: The tool that ends the run, given to the root agent.
         coverage_tools: Give the agent the coverage ledger tools and the
             prompt rules for them.
     """
@@ -774,10 +772,10 @@ def build_strix_agent(
         # Yielding to the user is only meaningful when one is attached.
         agent_tools.append(wait_for_user)
     base_tools = list(_BASE_TOOLS)
+    finish_tool = finish_scan
     if not coverage_tools:
         base_tools = [t for t in base_tools if t not in _COVERAGE_TOOLS]
-        if finish_tool is finish_scan:
-            finish_tool = _without_coverage_step(finish_scan)
+        finish_tool = _without_coverage_step(finish_scan)
     if is_root:
         tools: list[Tool] = [*base_tools, *agent_tools, finish_tool]
     else:

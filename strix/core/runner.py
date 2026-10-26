@@ -54,7 +54,6 @@ from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
 from strix.telemetry import set_scan_phase
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
-from strix.tools.finish.tool import finish_scan
 from strix.tools.output_store import (
     WORKSPACE_SPILL_DIR,
     configure_spill_writer,
@@ -64,7 +63,6 @@ from strix.tools.output_store import (
 if TYPE_CHECKING:
     from agents.memory import SQLiteSession
     from agents.result import RunResultBase
-    from agents.tool import Tool
 
     from strix.runtime.status import StatusSink
     from strix.tools.mcp import (
@@ -226,7 +224,6 @@ async def run_strix_scan(
     status_sink: StatusSink | None = None,
     mcp_connection_requests: list[McpConnectionRequest] | None = None,
     mcp_status_sink: McpStatusSink | None = None,
-    root_finish_tool: Tool = finish_scan,
     coverage_tools: bool = True,
     subagent_turn_limits: Mapping[str, int] | None = None,
 ) -> RunResultBase | None:
@@ -251,7 +248,6 @@ async def run_strix_scan(
     command-line default) it reads ``~/.strix/mcp-servers.json`` itself. Either
     way the engine does the connecting, so the caller passes inert configs plus
     metadata and never live sessions.
-    ``root_finish_tool`` is the tool the root agent ends the run with.
     ``coverage_tools=False`` drops the coverage ledger tools and their prompt
     rules from every agent.
     ``subagent_turn_limits`` maps a skill name to a soft turn limit for sub-agents
@@ -313,7 +309,6 @@ async def run_strix_scan(
         coordinator = AgentCoordinator()
     coordinator.set_snapshot_path(agents_path)
     coordinator.set_budget_policy(budget_policy)
-    coordinator.root_finish_tool = root_finish_tool.name
 
     from strix.tools.coverage.tools import hydrate_coverage_from_disk
     from strix.tools.notes.tools import hydrate_notes_from_disk
@@ -530,7 +525,6 @@ async def run_strix_scan(
             system_prompt_context=root_context,
             instructions_override=root_instructions,
             supports_images=supports_images,
-            finish_tool=root_finish_tool,
             coverage_tools=coverage_tools,
         )
 
