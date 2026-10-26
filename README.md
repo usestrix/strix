@@ -84,7 +84,8 @@ Strix are autonomous AI penetration testing agents that act just like real hacke
 curl -sSL https://strix.ai/install | bash
 
 # Configure your AI provider
-export STRIX_LLM="openrouter/z-ai/glm-5.3"
+export STRIX_LLM="vercel_ai_gateway/zai/glm-5.3"   # Vercel AI Gateway
+# export STRIX_LLM="openrouter/z-ai/glm-5.3"       # OpenRouter
 export LLM_API_KEY="your-api-key"
 
 # Run your first security assessment
@@ -296,7 +297,8 @@ jobs:
 ### Configuration
 
 ```bash
-export STRIX_LLM="openrouter/z-ai/glm-5.3"
+export STRIX_LLM="vercel_ai_gateway/zai/glm-5.3"   # Vercel AI Gateway
+# export STRIX_LLM="openrouter/z-ai/glm-5.3"       # OpenRouter
 export LLM_API_KEY="your-api-key"
 
 # Optional
@@ -352,6 +354,7 @@ Each server's tools are namespaced by `name`, for example `github_list_issues`. 
 
 **Recommended models for best results:**
 
+- [Z.ai GLM-5.3 on Vercel AI Gateway](https://vercel.com/ai-gateway/models/glm-5.3) - `vercel_ai_gateway/zai/glm-5.3` (recommended)
 - [Z.ai GLM-5.3 on OpenRouter](https://openrouter.ai/z-ai/glm-5.3) - `openrouter/z-ai/glm-5.3` (recommended)
 - [DeepSeek V4.1 Flash on OpenRouter](https://openrouter.ai/deepseek/deepseek-v4.1-flash-1017) - `openrouter/deepseek/deepseek-v4.1-flash-1017`
 - [OpenAI GPT-6.1 Sol](https://openai.com/api/) - `openai/gpt-6.1-sol` (needs [Daybreak](https://openai.com/daybreak/) access)
