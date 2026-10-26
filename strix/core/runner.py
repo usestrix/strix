@@ -59,7 +59,6 @@ from strix.tools.output_store import (
     WORKSPACE_SPILL_DIR,
     configure_spill_writer,
 )
-from strix.tools.reporting.tool import create_vulnerability_report
 
 
 if TYPE_CHECKING:
@@ -179,7 +178,6 @@ def _compose_root_instructions_override(
     parallel_tool_calls: bool,
     system_prompt_context: dict[str, Any],
     supports_images: bool,
-    report_tool: str,
     coverage_tools: bool,
 ) -> str | None:
     if root_instructions_override is None:
@@ -196,7 +194,6 @@ def _compose_root_instructions_override(
         system_prompt_context=system_prompt_context,
         include_scope=False,
         supports_images=supports_images,
-        report_tool=report_tool,
         coverage_tools=coverage_tools,
     )
     return (
@@ -230,7 +227,6 @@ async def run_strix_scan(
     mcp_connection_requests: list[McpConnectionRequest] | None = None,
     mcp_status_sink: McpStatusSink | None = None,
     root_finish_tool: Tool = finish_scan,
-    report_tool: Tool = create_vulnerability_report,
     coverage_tools: bool = True,
     subagent_turn_limits: Mapping[str, int] | None = None,
 ) -> RunResultBase | None:
@@ -256,8 +252,6 @@ async def run_strix_scan(
     way the engine does the connecting, so the caller passes inert configs plus
     metadata and never live sessions.
     ``root_finish_tool`` is the tool the root agent ends the run with.
-    ``report_tool`` is the tool every agent files findings with, in place of
-    ``create_vulnerability_report``.
     ``coverage_tools=False`` drops the coverage ledger tools and their prompt
     rules from every agent.
     ``subagent_turn_limits`` maps a skill name to a soft turn limit for sub-agents
@@ -519,7 +513,6 @@ async def run_strix_scan(
             parallel_tool_calls=settings.llm.parallel_tool_calls,
             system_prompt_context=root_context,
             supports_images=supports_images,
-            report_tool=report_tool.name,
             coverage_tools=coverage_tools,
         )
 
@@ -538,7 +531,6 @@ async def run_strix_scan(
             instructions_override=root_instructions,
             supports_images=supports_images,
             finish_tool=root_finish_tool,
-            report_tool=report_tool,
             coverage_tools=coverage_tools,
         )
 
@@ -561,7 +553,6 @@ async def run_strix_scan(
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=scope_context,
             supports_images=supports_images,
-            report_tool=report_tool,
             coverage_tools=coverage_tools,
         )
 

@@ -736,7 +736,6 @@ def build_strix_agent(
     instructions_override: str | None = None,
     supports_images: bool = True,
     finish_tool: Tool = finish_scan,
-    report_tool: Tool = create_vulnerability_report,
     coverage_tools: bool = True,
 ) -> SandboxAgent[Any]:
     """Build a SandboxAgent for either root or child use.
@@ -751,8 +750,6 @@ def build_strix_agent(
         instructions_override: Use this verbatim as the system prompt instead
             of rendering the built-in scan prompt.
         finish_tool: The tool that ends the run, given to the root agent.
-        report_tool: The tool every agent files findings with, in place of
-            ``create_vulnerability_report``.
         coverage_tools: Give the agent the coverage ledger tools and the
             prompt rules for them.
     """
@@ -769,7 +766,6 @@ def build_strix_agent(
             parallel_tool_calls=parallel_tool_calls,
             system_prompt_context=system_prompt_context,
             supports_images=supports_images,
-            report_tool=report_tool.name,
             coverage_tools=coverage_tools,
         )
 
@@ -777,7 +773,7 @@ def build_strix_agent(
     if interactive:
         # Yielding to the user is only meaningful when one is attached.
         agent_tools.append(wait_for_user)
-    base_tools = [report_tool if t is create_vulnerability_report else t for t in _BASE_TOOLS]
+    base_tools = list(_BASE_TOOLS)
     if not coverage_tools:
         base_tools = [t for t in base_tools if t not in _COVERAGE_TOOLS]
         if finish_tool is finish_scan:
@@ -839,7 +835,6 @@ def make_child_factory(
     strict_tool_schemas: bool = True,
     system_prompt_context: dict[str, Any] | None = None,
     supports_images: bool = True,
-    report_tool: Tool = create_vulnerability_report,
     coverage_tools: bool = True,
 ) -> Any:
     """Return the runner-owned builder used by ``spawn_child_agent``.
@@ -863,7 +858,6 @@ def make_child_factory(
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=system_prompt_context,
             supports_images=supports_images,
-            report_tool=report_tool,
             coverage_tools=coverage_tools,
         )
 
