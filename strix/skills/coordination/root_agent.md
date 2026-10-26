@@ -89,7 +89,7 @@ Before creating agents:
 Complex findings warrant specialized subagents:
 - Discovery agent finds potential vulnerability
 - Validation agent confirms exploitability
-- Reporting agent documents with reproduction steps AND supplies the fix inline (the report tool carries the patch via `code_locations`/`fix_pr_body`) — do not add a separate fix agent that re-derives the same patch
+- Reporting agent documents with reproduction steps AND supplies the fix inline (the report tool carries the patch via `code_locations`{% if report_tool == "create_vulnerability_report" %}/`fix_pr_body`{% endif %}) — do not add a separate fix agent that re-derives the same patch
 
 **Resource Efficiency**
 

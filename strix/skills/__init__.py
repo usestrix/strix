@@ -285,7 +285,11 @@ def skill_turn_limit(skill_names: list[str], turn_limits: Mapping[str, int]) -> 
 
 
 def load_skills(
-    skill_names: list[str], *, supports_images: bool = True, coverage_tools: bool = True
+    skill_names: list[str],
+    *,
+    supports_images: bool = True,
+    coverage_tools: bool = True,
+    report_tool: str = "create_vulnerability_report",
 ) -> dict[str, str]:
     """Load skill markdown bodies (frontmatter stripped) by name.
 
@@ -319,7 +323,9 @@ def load_skills(
         metadata, skill_body = _parse_skill_content(content, file_path)
         if metadata.get("template") == "jinja":
             skill_body = _SKILL_TEMPLATES.from_string(skill_body).render(
-                supports_images=supports_images, coverage_tools=coverage_tools
+                supports_images=supports_images,
+                coverage_tools=coverage_tools,
+                report_tool=report_tool,
             )
         skill_content[var_name] = skill_body
         logger.debug("Loaded skill: %s -> %s", skill_name, var_name)

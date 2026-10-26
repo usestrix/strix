@@ -68,8 +68,8 @@ reachable.
 
 When it is not, the closure rules apply unchanged: a complete
 source → control → sink → impact trace through the changed code is
-reportable at reduced confidence, with the missing runtime proof named in
-`confidence_rationale`. A candidate you can neither confirm nor rule out
+reportable{% if report_tool == "create_vulnerability_report" %} at reduced confidence, with the missing runtime proof named in
+`confidence_rationale`{% endif %}. A candidate you can neither confirm nor rule out
 {% if coverage_tools %}
 with a named control is an `open_proof_gap` — record it as
 `needs_follow_up` coverage rather than dropping it because the

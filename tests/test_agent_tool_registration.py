@@ -104,6 +104,23 @@ def test_report_tool_replaces_create_vulnerability_report() -> None:
         assert "create_vulnerability_report" not in agent.instructions
 
 
+def test_custom_report_tool_drops_create_vulnerability_report_fields() -> None:
+    fields = ("fix_pr_body", "http_exchange_ids", "confidence_rationale", "CVSS impact metrics")
+    for is_root in (True, False):
+        default = factory.build_strix_agent(is_root=is_root, is_whitebox=True, is_diff_scoped=True)
+        custom = factory.build_strix_agent(
+            is_root=is_root,
+            is_whitebox=True,
+            is_diff_scoped=True,
+            report_tool=_tool("file_pr_finding"),
+        )
+        assert isinstance(default.instructions, str)
+        assert isinstance(custom.instructions, str)
+        for field in fields:
+            assert field in default.instructions
+            assert field not in custom.instructions
+
+
 def _descriptions(tools: list[Any]) -> list[str]:
     return [t.description for t in tools if isinstance(t, FunctionTool)]
 

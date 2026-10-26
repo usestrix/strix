@@ -1,6 +1,7 @@
 ---
 name: severity-calibration
 description: Qualitative rubric for what actually deserves high/critical severity, and an acceptance checklist to apply before rating a finding
+template: jinja
 ---
 
 # Severity Calibration
@@ -120,6 +121,7 @@ All of these must be true. If any is not, drop a level:
 - [ ] You have concrete evidence of reachability, not an assumption
       about how the application is deployed.
 - [ ] You would defend this rating in a client debrief.
+{% if report_tool == "create_vulnerability_report" %}
 
 ## Output
 
@@ -128,3 +130,4 @@ vector is honest. When your intuitive rating and the computed CVSS
 severity disagree, re-examine the metrics: usually one of
 `privileges_required`, `attack_complexity`, or the impact triad was set
 optimistically. Fix the metric, do not override the result.
+{% endif %}

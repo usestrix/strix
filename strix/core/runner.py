@@ -599,6 +599,7 @@ async def run_strix_scan(
             "max_context_images": settings.runtime.max_context_images,
             "supports_images": supports_images,
             "coverage_tools": coverage_tools,
+            "report_tool": report_tool.name,
             SUBAGENT_TURN_LIMITS_KEY: dict(subagent_turn_limits or {}),
         }
 

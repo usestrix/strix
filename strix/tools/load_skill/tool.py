@@ -33,6 +33,7 @@ async def load_skill(ctx: RunContextWrapper, skills: list[str]) -> str:
         requested,
         supports_images=context.get("supports_images", True),
         coverage_tools=context.get("coverage_tools", True),
+        report_tool=context.get("report_tool", "create_vulnerability_report"),
     )
     if not contents:
         return "load_skill: no content loaded for requested skills."

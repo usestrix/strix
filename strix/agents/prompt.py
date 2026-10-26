@@ -124,7 +124,10 @@ def render_system_prompt(
             is_diff_scoped=is_diff_scoped,
         )
         skill_content = load_skills(
-            skills_to_load, supports_images=supports_images, coverage_tools=coverage_tools
+            skills_to_load,
+            supports_images=supports_images,
+            coverage_tools=coverage_tools,
+            report_tool=report_tool,
         )
         env.globals["get_skill"] = lambda name: skill_content.get(name, "")
 

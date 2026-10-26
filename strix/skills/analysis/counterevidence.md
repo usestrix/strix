@@ -39,8 +39,8 @@ is a legitimate, expected outcome. Record it with
 {% else %}
 is a legitimate, expected outcome. Carry it up in
 {% endif %}
-`agent_finish(open_items=[...])`, and reflect it in `counterevidence` /
-`confidence_rationale` if you file a related report. Do **not** convert
+`agent_finish(open_items=[...])`{% if report_tool == "create_vulnerability_report" %}, and reflect it in `counterevidence` /
+`confidence_rationale` if you file a related report{% endif %}. Do **not** convert
 it to `ruled_out` to tidy up your worklist.
 
 The failure mode this exists to prevent: an agent reads code, feels
@@ -157,6 +157,7 @@ Run this pass on every finding before filing it:
    case that this is *not* exploitable, or not as severe as you think.
    Look for the guard you might have missed, the deployment context that
    constrains it, the precondition you assumed.
+{% if report_tool == "create_vulnerability_report" %}
 2. **Record what you found** in `counterevidence`. If you found a real
    constraint, say what it is and why it does not neutralize the finding.
    If you genuinely found nothing, say what you checked — "no input
@@ -171,6 +172,7 @@ Run this pass on every finding before filing it:
    — the one concrete piece of evidence that would raise or lower it
    (e.g. "confirmation that this route is exposed to unauthenticated
    internet traffic would raise this to critical").
+{% endif %}
 
 ## Reporting an Unconfirmed Candidate
 
@@ -178,8 +180,8 @@ Dynamic proof is the standard. But when you have a complete
 source → control → sink → impact trace and runtime reproduction is
 genuinely out of reach (no credentials, unavailable internal services, a
 build that cannot run in the sandbox), a static-only finding is still
-reportable — at `confidence: medium` or `low`, with the missing runtime
-proof named explicitly in `confidence_rationale`.
+reportable{% if report_tool == "create_vulnerability_report" %} — at `confidence: medium` or `low`, with the missing runtime
+proof named explicitly in `confidence_rationale`{% endif %}.
 
 What is **not** acceptable is a scanner hit with no trace, a "this
 pattern is usually dangerous" claim, or a finding where you never
