@@ -132,6 +132,9 @@ def _number(value: Any) -> int | float:
         return 0
 
 
+_SOURCE_TARGET_TYPES = frozenset({"repository", "local_code"})
+
+
 def _parse_repo_full_name(uri: str) -> str | None:
     """Extract ``owner/repo`` from a git URL or slug, else None."""
     text = uri.strip().removesuffix(".git")
@@ -888,6 +891,7 @@ class ReportState:
                 tool_version=_strix_version(),
                 repository_context=self._sarif_repository_context(),
                 coverage=coverage,
+                synthetic_anchor=self._has_source_target(),
             )
         except Exception:
             logger.exception("SARIF emit failed (non-fatal; CSV/MD unaffected)")
@@ -907,6 +911,20 @@ class ReportState:
             self._sarif_repo_ctx = self._derive_repository_context()
             self._sarif_repo_ctx_ready = True
         return self._sarif_repo_ctx
+
+    def _has_source_target(self) -> bool:
+        """Whether any target is source code (a repository or local directory).
+
+        SARIF anchors locationless findings to SECURITY.md only for these: a
+        DAST-only run has no repository for that file to resolve against.
+        """
+        targets = self.run_record.get("targets_info") or []
+        if not isinstance(targets, list):
+            return True
+        return any(
+            isinstance(target, dict) and target.get("type") in _SOURCE_TARGET_TYPES
+            for target in targets
+        )
 
     def _derive_repository_context(self) -> dict[str, Any] | None:
         targets = self.run_record.get("targets_info") or []
