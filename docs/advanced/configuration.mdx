@@ -182,6 +182,27 @@ When remote vars are set, Strix dual-writes telemetry to both local JSONL and th
   Runtime backend for the sandbox environment.
 </ParamField>
 
+<ParamField path="STRIX_DOCKER_SANDBOX_NETWORK" type="string">
+  Docker network for the sandbox. Leave unset to use the default bridge and publish the Caido port on `127.0.0.1`. Set to `host` when the target is reachable only through a VPN route on a Linux host running a local Docker engine. Any other value is the name of a Docker network to attach.
+</ParamField>
+
+<ParamField path="STRIX_DOCKER_EXTRA_HOSTS" type="string">
+  Extra sandbox hosts entries, as a JSON object of hostname to a literal IPv4 or IPv6 address (for example `{"app.htb":"10.10.11.42","v6.htb":"fd00::20"}`). Entries merge with the reserved `host.docker.internal` → `host-gateway` mapping. Empty hostnames, values that are not IP addresses, and replacing `host.docker.internal` are rejected. The host `/etc/hosts` file is not inherited.
+</ParamField>
+
+The sandbox does not copy `/etc/hosts` from the machine running Docker. On a Linux host with a local Docker engine and the VPN already connected, map the lab hostname explicitly:
+
+```bash
+export STRIX_DOCKER_SANDBOX_NETWORK=host
+export STRIX_DOCKER_EXTRA_HOSTS='{"app.htb":"10.10.11.42"}'
+```
+
+`host` shares the Docker engine's network namespace. Use it with a Docker engine on the same Linux machine as Strix. Docker Desktop runs the engine in a virtual machine, so this does not follow a VPN connected on macOS or Windows. A remote daemon (`DOCKER_HOST`) applies host networking on that other machine, while Strix still resolves Caido at `127.0.0.1` on the machine running the CLI.
+
+Host mode binds Caido to the fixed port `48080`, so only one host-mode scan can run on a daemon at a time. The default bridge network publishes that container port to a free localhost port for each scan.
+
+Host mode requires image label `strix.sandbox.caido-loopback=true`. That label marks an entrypoint that honors `STRIX_CAIDO_LISTEN_ADDRESS` and binds Caido to loopback. A cached older image is rejected instead of listening on every host interface.
+
 ## Sandbox Configuration
 
 <ParamField path="STRIX_SANDBOX_EXECUTION_TIMEOUT" default="120" type="integer">

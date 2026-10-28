@@ -285,4 +285,5 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 USER pentester
 WORKDIR /workspace
 
+LABEL strix.sandbox.caido-loopback="true"
 ENTRYPOINT ["docker-entrypoint.sh"]
