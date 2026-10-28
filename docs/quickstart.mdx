@@ -7,6 +7,7 @@ description: "Install Strix and run your first security scan"
 
 - Docker (running)
 - An LLM API key from any [supported provider](/llm-providers/overview) (OpenAI, Anthropic, Google, etc.)
+- For the curl installer: [GitHub CLI](https://cli.github.com/) (`gh`) or [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) — used to verify Sigstore provenance before extract
 
 ## Installation
 
@@ -15,6 +16,14 @@ description: "Install Strix and run your first security scan"
     ```bash
     curl -sSL https://strix.ai/install | bash
     ```
+
+    The installer downloads the release archive, checks `SHA256SUMS`, then verifies
+    Sigstore provenance with `gh` or `cosign` before extracting. To skip those checks
+    (not recommended):
+
+    ```bash
+    curl -sSL https://strix.ai/install | STRIX_INSTALL_SKIP_VERIFY=1 bash
+    ```
   </Tab>
   <Tab title="pipx">
     ```bash
@@ -22,6 +31,44 @@ description: "Install Strix and run your first security scan"
     ```
   </Tab>
 </Tabs>
+
+## Verify a downloaded release
+
+If you download assets from GitHub Releases yourself:
+
+```bash
+# Replace VERSION and TARGET (e.g. 1.6.2 and linux-x86_64).
+VERSION=1.6.2
+TARGET=linux-x86_64
+ARCHIVE="strix-${VERSION}-${TARGET}.tar.gz"
+
+curl -fsSLO "https://github.com/usestrix/strix/releases/download/v${VERSION}/${ARCHIVE}"
+curl -fsSLO "https://github.com/usestrix/strix/releases/download/v${VERSION}/SHA256SUMS"
+curl -fsSLO "https://github.com/usestrix/strix/releases/download/v${VERSION}/strix-${TARGET}.intoto.jsonl"
+
+# 1) Integrity
+sha256sum -c --ignore-missing SHA256SUMS
+
+# 2) Provenance (GitHub CLI)
+gh attestation verify "${ARCHIVE}" \
+  --repo usestrix/strix \
+  --bundle "strix-${TARGET}.intoto.jsonl" \
+  --signer-workflow usestrix/strix/.github/workflows/build-release.yml \
+  --predicate-type https://slsa.dev/provenance/v1 \
+  --deny-self-hosted-runners
+```
+
+With `cosign` instead of `gh`:
+
+```bash
+cosign verify-blob-attestation \
+  --bundle "strix-${TARGET}.intoto.jsonl" \
+  --new-bundle-format \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/usestrix/strix/.github/workflows/build-release.yml' \
+  --type slsaprovenance1 \
+  "${ARCHIVE}"
+```
 
 ## Configuration
 
