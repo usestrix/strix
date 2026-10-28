@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
+import json
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from docker.errors import DockerException
@@ -17,6 +19,10 @@ from strix.runtime.docker_connection import (
     DockerEndpoint,
     resolve_docker_endpoint,
 )
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 cli_utils: Any = importlib.import_module("strix.interface.utils")
@@ -34,7 +40,9 @@ def _sdk_error(inner: BaseException) -> DockerException:
 
 def test_docker_host_wins_over_context(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(docker_connection, "get_current_context_name", lambda: "desktop-linux")
-    endpoint = resolve_docker_endpoint({"DOCKER_HOST": "tcp://10.0.0.5:2375"})
+    endpoint = resolve_docker_endpoint(
+        {"DOCKER_HOST": "tcp://10.0.0.5:2375", "DOCKER_CONTEXT": "selected"}
+    )
     assert endpoint == DockerEndpoint("tcp://10.0.0.5:2375", "DOCKER_HOST")
 
 
@@ -54,6 +62,61 @@ def test_current_context_is_used_like_the_cli(monkeypatch: pytest.MonkeyPatch) -
 def test_default_context_uses_the_sdk_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(docker_connection, "get_current_context_name", lambda: "default")
     assert resolve_docker_endpoint({}) == DockerEndpoint(None, "default socket")
+
+
+@pytest.mark.parametrize(
+    ("selected", "expected_host"),
+    [
+        ("selected", "unix:///tmp/strix-selected.sock"),
+        ("default", None),
+        ("", "unix:///tmp/strix-saved.sock"),
+    ],
+)
+def test_shell_context_overrides_the_saved_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    selected: str,
+    expected_host: str | None,
+) -> None:
+    """Read a real Docker context store, without contacting any daemon."""
+    (tmp_path / "config.json").write_text(json.dumps({"currentContext": "saved"}))
+    for name in ("saved", "selected"):
+        context_id = hashlib.sha256(name.encode()).hexdigest()
+        metadata = tmp_path / "contexts" / "meta" / context_id / "meta.json"
+        metadata.parent.mkdir(parents=True)
+        metadata.write_text(
+            json.dumps(
+                {
+                    "Name": name,
+                    "Metadata": {},
+                    "Endpoints": {
+                        "docker": {
+                            "Host": f"unix:///tmp/strix-{name}.sock",
+                            "SkipTLSVerify": True,
+                        }
+                    },
+                }
+            )
+        )
+    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path))
+    monkeypatch.setenv("DOCKER_CONTEXT", selected)
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+
+    assert resolve_docker_endpoint().host == expected_host
+
+
+def test_missing_shell_context_does_not_fall_back_to_saved_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "config.json").write_text(json.dumps({"currentContext": "default"}))
+    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path))
+    monkeypatch.setenv("DOCKER_CONTEXT", "missing")
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+
+    with pytest.raises(
+        DockerConnectionError, match="docker context 'missing' is selected but does not exist"
+    ):
+        resolve_docker_endpoint()
 
 
 def test_missing_or_broken_current_context_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
