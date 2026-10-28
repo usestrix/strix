@@ -297,7 +297,7 @@ def _update_note_impl(
         try:
             if note_id not in _notes_storage:
                 return {"success": False, "error": f"Note with ID '{note_id}' not found"}
-            note = _notes_storage[note_id]
+            note = _notes_storage[note_id].copy()
             if title is not None:
                 if not title.strip():
                     return {"success": False, "error": "Title cannot be empty"}
@@ -312,6 +312,7 @@ def _update_note_impl(
         except (ValueError, TypeError) as e:
             return {"success": False, "error": f"Failed to update note: {e}"}
         else:
+            _notes_storage[note_id].update(note)
             _persist()
             return {
                 "success": True,

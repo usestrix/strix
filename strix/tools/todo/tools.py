@@ -238,7 +238,7 @@ def _apply_single_update(
 ) -> dict[str, Any] | None:
     if todo_id not in agent_todos:
         return {"todo_id": todo_id, "error": f"Todo with ID '{todo_id}' not found"}
-    todo = agent_todos[todo_id]
+    todo = agent_todos[todo_id].copy()
     if title is not None:
         if not title.strip():
             return {"todo_id": todo_id, "error": "Title cannot be empty"}
@@ -260,6 +260,7 @@ def _apply_single_update(
         todo["status"] = status_candidate
         todo["completed_at"] = datetime.now(UTC).isoformat() if status_candidate == "done" else None
     todo["updated_at"] = datetime.now(UTC).isoformat()
+    agent_todos[todo_id].update(todo)
     return None
 
 
