@@ -222,6 +222,17 @@ Strix Cloud:
     )
 
     parser.add_argument(
+        "--subagent-model",
+        dest="subagent_model",
+        type=str,
+        default=None,
+        help=(
+            "Model identifier to use for spawned subagents (e.g. claude-3-5-haiku, "
+            "gpt-4o-mini). If not specified, subagents inherit the root agent model."
+        ),
+    )
+
+    parser.add_argument(
         "--scope-mode",
         type=str,
         choices=["auto", "diff", "full"],
@@ -532,6 +543,10 @@ def load_resume_state(args: argparse.Namespace) -> None:
     persisted_scan_mode = state.get("scan_mode")
     if persisted_scan_mode and args.scan_mode == "deep":
         args.scan_mode = persisted_scan_mode
+    persisted_subagent_model = state.get("subagent_model")
+    if not getattr(args, "subagent_model", None) and persisted_subagent_model:
+        args.subagent_model = persisted_subagent_model
+
     agents_path = runtime_state_dir(run_dir) / "agents.json"
     if not agents_path.exists():
         raise ResumeError(
