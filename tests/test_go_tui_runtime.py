@@ -19,7 +19,7 @@ from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui import runtime as go_tui
 from strix.interface.tui import sidecar
 from strix.interface.tui.runtime import GoTuiRuntime
-from strix.report.state import ReportState
+from strix.report.state import BASELINE_REPORT_ID_PREFIX, ReportState
 
 
 def args() -> argparse.Namespace:
@@ -37,6 +37,36 @@ def args() -> argparse.Namespace:
         user_explicit_instruction=None,
         run_name="test-run",
     )
+
+
+@pytest.mark.asyncio
+async def test_init_run_state_hydrates_selected_baseline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    baseline_name = "baseline-run"
+    baseline_report = {
+        "id": "vuln-0001",
+        "title": "Known SQL injection",
+        "severity": "high",
+    }
+    baseline_dir = tmp_path / "strix_runs" / baseline_name
+    baseline_dir.mkdir(parents=True)
+    (baseline_dir / "vulnerabilities.json").write_text(
+        json.dumps([baseline_report]),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    runtime_args = args()
+    runtime_args.baseline_run = baseline_name
+    runtime = GoTuiRuntime(runtime_args)
+
+    runtime.init_run_state()
+
+    assert runtime.report_state.get_dedupe_vulnerabilities() == [
+        {**baseline_report, "id": f"{BASELINE_REPORT_ID_PREFIX}{baseline_report['id']}"}
+    ]
+    assert runtime.report_state.get_existing_vulnerabilities() == []
 
 
 def test_binary_command_prefers_packaged_sidecar(

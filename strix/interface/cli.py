@@ -98,10 +98,12 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         "scope_mode": getattr(args, "scope_mode", "auto"),
         "diff_base": getattr(args, "diff_base", None),
         "resume_instruction": getattr(args, "user_explicit_instruction", None) or "",
+        "baseline_run": getattr(args, "baseline_run", None),
     }
 
     report_state = ReportState(args.run_name)
     report_state.hydrate_from_run_dir()
+    report_state.hydrate_baseline_run(scan_config.get("baseline_run"))
     report_state.set_scan_config(scan_config)
     report_state.save_run_data()
 
