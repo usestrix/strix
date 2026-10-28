@@ -77,6 +77,55 @@ def test_generate_report_pdf_has_pdf_header(tmp_path: Path) -> None:
     assert len(pdf) > 1000
 
 
+def test_pdf_shows_what_a_reader_needs_to_weigh_a_finding(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path)
+    vulns = json.loads((run_dir / "vulnerabilities.json").read_text(encoding="utf-8"))
+    vulns[0].update(
+        {
+            "confidence": "high",
+            "cwe": "CWE-89",
+            "cve": "CVE-2024-0001",
+            "counterevidence": "No WAF in front of the endpoint rewrote the payload.",
+            "confidence_rationale": "The injected sleep delayed the response three times.",
+            "severity_change_conditions": "Lower to high if the database user is read-only.",
+            "assumptions": "The staging database mirrors production.",
+        }
+    )
+    (run_dir / "vulnerabilities.json").write_text(json.dumps(vulns), encoding="utf-8")
+
+    text = " ".join(_pdf_text(generate_report_pdf(run_dir)).split())
+
+    for expected in (
+        "Confidence High",
+        "CWE CWE-89",
+        "CVE CVE-2024-0001",
+        "COUNTEREVIDENCE",
+        "No WAF in front of the endpoint rewrote the payload.",
+        "CONFIDENCE RATIONALE",
+        "The injected sleep delayed the response three times.",
+        "WHAT WOULD CHANGE THIS SEVERITY",
+        "Lower to high if the database user is read-only.",
+        "ASSUMPTIONS",
+        "The staging database mirrors production.",
+    ):
+        assert expected in text
+
+
+def test_pdf_leaves_out_the_trust_fields_a_finding_does_not_have(tmp_path: Path) -> None:
+    text = " ".join(_pdf_text(generate_report_pdf(_make_run(tmp_path))).split())
+
+    assert "SQL Injection" in text
+    for label in (
+        "Confidence",
+        "CWE",
+        "COUNTEREVIDENCE",
+        "CONFIDENCE RATIONALE",
+        "WHAT WOULD CHANGE THIS SEVERITY",
+        "ASSUMPTIONS",
+    ):
+        assert label not in text
+
+
 def test_generate_password_is_long_and_random() -> None:
     first = generate_password()
     second = generate_password()
