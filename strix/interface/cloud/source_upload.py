@@ -585,6 +585,21 @@ def _matches_user_pattern(relative: Path, pattern: str) -> bool:
     return posix.match(pattern) or fnmatch.fnmatch(relative_posix, pattern)
 
 
+def _is_stat_unchanged(stat_result: os.stat_result, item: SelectedFile) -> bool:
+    if (
+        not stat.S_ISREG(stat_result.st_mode)
+        or stat_result.st_size != item.size
+        or stat_result.st_dev != item.device
+        or stat_result.st_ino != item.inode
+        or stat_result.st_mtime_ns != item.mtime_ns
+    ):
+        return False
+    # On Windows (NTFS/FAT), st_ctime represents file creation time rather than
+    # POSIX inode change time, and its nanosecond timestamp can settle asynchronously
+    # after creation without any content or attribute changes.
+    return os.name == "nt" or stat_result.st_ctime_ns == item.ctime_ns
+
+
 def _write_archive(destination: Path, files: tuple[SelectedFile, ...]) -> None:
     with zipfile.ZipFile(
         destination, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6
@@ -597,14 +612,7 @@ def _write_archive(destination: Path, files: tuple[SelectedFile, ...]) -> None:
                 raise http.CloudError(f"could not safely read {item.archive_name}: {exc}") from exc
             with os.fdopen(descriptor, "rb") as source_file:
                 current = os.fstat(source_file.fileno())
-                if (
-                    not stat.S_ISREG(current.st_mode)
-                    or current.st_size != item.size
-                    or current.st_dev != item.device
-                    or current.st_ino != item.inode
-                    or current.st_mtime_ns != item.mtime_ns
-                    or current.st_ctime_ns != item.ctime_ns
-                ):
+                if not _is_stat_unchanged(current, item):
                     raise http.CloudError(
                         f"{item.archive_name} changed while the source archive was being built; "
                         "retry."
@@ -624,15 +632,7 @@ def _write_archive(destination: Path, files: tuple[SelectedFile, ...]) -> None:
                         target.write(chunk)
                         remaining -= len(chunk)
                     final = os.fstat(source_file.fileno())
-                    if (
-                        source_file.read(1)
-                        or not stat.S_ISREG(final.st_mode)
-                        or final.st_size != item.size
-                        or final.st_dev != item.device
-                        or final.st_ino != item.inode
-                        or final.st_mtime_ns != item.mtime_ns
-                        or final.st_ctime_ns != item.ctime_ns
-                    ):
+                    if source_file.read(1) or not _is_stat_unchanged(final, item):
                         raise http.CloudError(
                             f"{item.archive_name} changed while the source archive was being "
                             "built; retry."
