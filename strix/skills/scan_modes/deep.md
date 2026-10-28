@@ -102,6 +102,7 @@ Test every input vector with every applicable technique.
 - Cache poisoning and cache deception
 - Subdomain takeover
 - Prototype pollution (JavaScript applications)
+- Client-side path traversal: client-rendered front end (SPA in React/Vue/Angular/Svelte/Next.js, or any page building a fetch/XHR/axios URL or client router navigation from the URL path, query, or hash) → load `client_side_path_traversal` and test for EXPLOITABLE CSPT (a decoded `../` reaching no request sink with real impact is a false positive)
 - CORS misconfiguration exploitation
 - WebSocket security testing
 - GraphQL-specific attacks (introspection, batching, nested queries)
