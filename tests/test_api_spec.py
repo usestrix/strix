@@ -234,6 +234,32 @@ def test_fetch_postman_missing_key_raises() -> None:
         fetch_postman_collection("abc-123", "")
 
 
+def test_fetch_postman_collection_rejects_path_traversal_uid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Security regression: requests collapses ".." in a URL path before sending
+    # the request, so this used to turn into a confused-deputy GET against an
+    # arbitrary Postman API endpoint, authenticated with the caller's API key.
+    # Assert requests.get is never even called -- rejected before any network I/O.
+    def fail_if_called(*_a: Any, **_k: Any) -> _FakeResponse:
+        raise AssertionError("requests.get must not be called for an invalid uid")
+
+    monkeypatch.setattr(requests, "get", fail_if_called)
+    with pytest.raises(SpecParseError, match="Invalid Postman collection id"):
+        fetch_postman_collection("x/../../workspaces", "PMAK-xyz")
+
+
+def test_fetch_postman_environment_rejects_path_traversal_uid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_if_called(*_a: Any, **_k: Any) -> _FakeResponse:
+        raise AssertionError("requests.get must not be called for an invalid uid")
+
+    monkeypatch.setattr(requests, "get", fail_if_called)
+    with pytest.raises(SpecParseError, match="Invalid Postman environment id"):
+        fetch_postman_environment("../../users/me", "PMAK-xyz")
+
+
 def test_fetch_postman_404_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(requests, "get", lambda *_a, **_k: _FakeResponse(404, {}))
     with pytest.raises(SpecParseError, match="not found"):
