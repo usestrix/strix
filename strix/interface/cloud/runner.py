@@ -1054,12 +1054,13 @@ def _emit_interrupted(console: Console, *, as_json: bool, to_stderr: bool) -> No
 
 
 def _created_id(created: Any) -> str | None:
-    """Read the identifier of a created item. The API names it `id` or `<resource>_id`."""
+    """Read the created scan's ID, never an associated resource's identifier."""
     if not isinstance(created, dict):
         return None
     fields = cast("dict[str, Any]", created)
-    for key, value in fields.items():
-        if (key == "id" or key.endswith("_id")) and isinstance(value, str) and value.strip():
+    for key in ("scan_id", "id"):
+        value = fields.get(key)
+        if isinstance(value, str) and value.strip():
             return value
     return None
 
