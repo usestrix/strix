@@ -56,6 +56,7 @@ def _settings() -> Any:
             extra_body=None,
         ),
         runtime=types.SimpleNamespace(max_context_images=3),
+        telemetry=types.SimpleNamespace(run_record_timings=False),
     )
 
 
