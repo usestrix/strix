@@ -11,6 +11,24 @@ strix (--target <target> | --target-list <path>) [options]
 
 ## Options
 
+<ParamField path="--update" type="boolean">
+  Update the standalone binary to the latest stable GitHub release and exit. No
+  target, Docker daemon, or LLM credentials are required. For pip, pipx, and uv
+  installs, print the corresponding package-manager upgrade command instead.
+
+  The standalone updater requires a valid SHA-256 digest from GitHub's release
+  metadata and verifies the archive before installing it. Unavailable metadata,
+  checksum mismatches, download failures, and invalid archives leave the current
+  binary in place and exit with code `1`. Retry after resolving the error.
+
+  Updates are staged in a private directory next to the installed binary, so that
+  directory must be writable. Windows keeps the previous executable as
+  `strix.exe.old` until the next update and tries to restore it if replacement
+  fails. If restoration also fails, the updater prints the retained backup's
+  path. Restore that file to the original `strix.exe` location before retrying
+  `strix --update`.
+</ParamField>
+
 <ParamField path="--target, -t" type="string">
   Target to test. Accepts URLs, repositories, local directories, domains, IP addresses, API spec files (OpenAPI/Swagger `.json`/`.yaml`, a Postman collection export), or a live Postman collection by id (`postman://<collection-uuid>`). Can be specified multiple times. Fresh runs require at least one target source: `--target` or `--target-list`.
 
