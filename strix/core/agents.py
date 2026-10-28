@@ -254,6 +254,26 @@ class AgentCoordinator:
                 runtime.wake.set()
             return next((aid for aid, parent in self.parent_of.items() if parent is None), None)
 
+    def _record_registration(
+        self,
+        agent_id: str,
+        name: str,
+        parent_id: str | None,
+        *,
+        task: str | None,
+        skills: list[str] | None,
+    ) -> None:
+        """Record a new agent in the graph; callers must hold ``self._lock``."""
+        self.statuses[agent_id] = "running"
+        self.parent_of[agent_id] = parent_id
+        self.names[agent_id] = name
+        self.pending_counts.setdefault(agent_id, 0)
+        self.metadata[agent_id] = {
+            "task": task or "",
+            "skills": list(skills or []),
+        }
+        self.runtimes.setdefault(agent_id, AgentRuntime())
+
     async def register(
         self,
         agent_id: str,
@@ -264,16 +284,48 @@ class AgentCoordinator:
         skills: list[str] | None = None,
     ) -> None:
         async with self._lock:
-            self.statuses[agent_id] = "running"
-            self.parent_of[agent_id] = parent_id
-            self.names[agent_id] = name
-            self.pending_counts.setdefault(agent_id, 0)
-            self.metadata[agent_id] = {
-                "task": task or "",
-                "skills": list(skills or []),
-            }
-            self.runtimes.setdefault(agent_id, AgentRuntime())
+            self._record_registration(agent_id, name, parent_id, task=task, skills=skills)
         logger.info("agent.register %s (%s) parent=%s", agent_id, name, parent_id or "-")
+        await self._maybe_snapshot()
+
+    async def register_child_if_capacity(
+        self,
+        agent_id: str,
+        name: str,
+        parent_id: str,
+        *,
+        max_child_agents: int,
+        task: str | None = None,
+        skills: list[str] | None = None,
+    ) -> tuple[bool, int]:
+        async with self._lock:
+            child_count = sum(parent is not None for parent in self.parent_of.values())
+            if max_child_agents > 0 and child_count >= max_child_agents:
+                return False, child_count
+            self._record_registration(agent_id, name, parent_id, task=task, skills=skills)
+            child_count += 1
+        logger.info("agent.register %s (%s) parent=%s", agent_id, name, parent_id)
+        try:
+            await self._maybe_snapshot()
+        except BaseException:
+            # The slot is already recorded under the lock; if persistence is
+            # cancelled (CancelledError is a BaseException, so it escapes the
+            # best-effort guard in ``_maybe_snapshot``) undo the reservation so
+            # the atomic capacity count never leaks.
+            await self.discard_child_reservation(agent_id)
+            raise
+        return True, child_count
+
+    async def discard_child_reservation(self, agent_id: str) -> None:
+        """Forget a reserved child whose runner never started, freeing its slot."""
+        async with self._lock:
+            self.statuses.pop(agent_id, None)
+            self.parent_of.pop(agent_id, None)
+            self.names.pop(agent_id, None)
+            self.pending_counts.pop(agent_id, None)
+            self.metadata.pop(agent_id, None)
+            self.runtimes.pop(agent_id, None)
+        logger.info("agent.discard %s", agent_id)
         await self._maybe_snapshot()
 
     async def attach_runtime(
