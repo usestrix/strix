@@ -23,6 +23,8 @@ Increase white-box coverage by combining source-aware triage with dynamic valida
 ## Source-Aware Triage Stack
 
 - `semgrep`: fast security-first triage and custom pattern scans
+- `bandit`: Python AST triage when Python source is present; load the `bandit`
+  skill for scan-completeness checks and source-to-runtime validation
 - `ast-grep` (`sg`): structural pattern hunting and targeted repo mapping
 - `tree-sitter`: syntax-aware parsing support for symbol and route extraction
 - `gitleaks` + `trufflehog`: complementary secret detection (working tree and history coverage)
