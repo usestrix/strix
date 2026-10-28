@@ -55,6 +55,7 @@ import os
 import re
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
+from urllib.parse import urlsplit, urlunsplit
 
 
 logger = logging.getLogger(__name__)
@@ -947,11 +948,34 @@ _VULN_CLASS_KEYWORDS = (
     "insecure random",
     "tls verification",
     "certificate verification",
-    "denial of service",
     "regex denial of service",
+    "denial of service",
     "redos",
     "supply chain",
 )
+
+
+def _resource_identity(target: str) -> str:
+    """Canonicalize URL authority without guessing at opaque target semantics.
+
+    Paths, queries and fragments may identify different resources, so keep
+    them verbatim. Invalid URLs and non-URL targets retain their exact spelling.
+    Authentication material is not part of the resource's identity.
+    """
+    try:
+        parsed = urlsplit(target)
+        if not parsed.scheme or not parsed.netloc or not parsed.hostname:
+            return target
+        host = parsed.hostname.lower()
+        if ":" in host:
+            host = f"[{host}]"
+        port = parsed.port
+    except ValueError:
+        return target
+    scheme = parsed.scheme.lower()
+    default_port = {"http": 80, "https": 443, "ws": 80, "wss": 443, "ftp": 21}.get(scheme)
+    authority = f"{host}:{port}" if port is not None and port != default_port else host
+    return urlunsplit((scheme, authority, parsed.path or "/", parsed.query, parsed.fragment))
 
 
 def _primary_fingerprint(
@@ -976,16 +1000,20 @@ def _primary_fingerprint(
     uri="SECURITY.md" and have no real start_line. Hashing by
     (rule_id, "SECURITY.md") alone would collapse every locationless
     finding of the same CWE into a single alert. To distinguish them,
-    the synthetic path adds the class keyword extracted from the title
-    (same logic ``_class_fingerprint`` uses). The class keyword
-    catalogue is closed and stable, so cross-run identity holds — same
-    vulnerability class on the same rule_id always lands on the same
-    hash, and two different classes on the same rule_id don't collide.
+    the synthetic path adds the normalized class keyword extracted from the
+    title and the canonical target resource, when supplied. It retains the
+    SECURITY.md identity component even when the physical anchor is omitted.
+
+    Source-linked primary hashes are unchanged. Target-less synthetic hashes
+    are preserved except for corrected class aliases/precedence. Adding a
+    resource necessarily re-keys previously colliding synthetic results;
+    consumers may create new alerts, and prior dismissals are not guaranteed
+    to carry over.
 
     Returns None when no anchor is available AND not synthetic.
     """
     primary_physical = _first_physical_location(locations)
-    uri = ""
+    uri = _SYNTHETIC_LOCATION_URI if is_synthetic and not primary_physical else ""
     start_line: int | None = None
     if primary_physical:
         uri = (primary_physical.get("artifactLocation") or {}).get("uri", "") or ""
@@ -1023,6 +1051,9 @@ def _primary_fingerprint(
         title = _string_value(report.get("title")) or ""
         if title:
             parts.append(f"synth_class:{_class_keyword(title)}")
+        target = _string_value(report.get("target"))
+        if target:
+            parts.append(f"resource:{_resource_identity(target)}")
 
     composite = "|".join(parts)
     return hashlib.sha256(composite.encode("utf-8")).hexdigest()
@@ -1073,7 +1104,8 @@ def _class_keyword(title: str) -> str:
     """
     if not title:
         return ""
-    lower = title.lower()
+    # Explicit, bounded aliases only: e.g. SQLish must not become SQL injection.
+    lower = re.sub(r"\bsqli\b", "sql injection", title.lower())
     for kw in _VULN_CLASS_KEYWORDS:
         if kw in lower:
             return kw
