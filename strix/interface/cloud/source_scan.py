@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import sys
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
@@ -26,6 +27,25 @@ if TYPE_CHECKING:
 
 
 _SHA256 = re.compile(r"^[0-9a-fA-F]{64}$")
+
+_UPLOAD_PROCESSING_POLL_S = 5
+_UPLOAD_PROCESSING_TIMEOUT_S = 300
+
+
+class _UploadStillProcessing(http.CloudError):
+    """The platform is still processing an upload past the polling bound.
+
+    Unlike other completion failures this is not a rejection: the upload
+    is retained so the scan can be started from it once it is ready.
+    """
+
+    def __init__(self, upload_id: str) -> None:
+        super().__init__(
+            f"the platform is still processing source upload {upload_id} after "
+            f"{_UPLOAD_PROCESSING_TIMEOUT_S:g} seconds; the upload was kept. "
+            f"Start the scan with `strix cloud scans start --upload-ids {upload_id}` "
+            "once processing finishes."
+        )
 
 
 @dataclass
@@ -251,15 +271,9 @@ def _upload_scan_source(bundle: SourceBundle, *, token: str | None) -> str:
         raise error
     try:
         http.upload_file(cast("str", signed_url), cast("str", upload_token), bundle.archive_path)
-        completed = http.check(
-            http.request(
-                "POST",
-                "/uploads/complete",
-                token=token,
-                body={"upload_id": upload_id},
-            )
-        )
-        _validate_completed_upload(completed, expected_id=cast("str", upload_id))
+        _complete_upload(cast("str", upload_id), token=token)
+    except _UploadStillProcessing:
+        raise
     except BaseException as error:
         try:
             _delete_upload(cast("str", upload_id), token=token)
@@ -272,6 +286,35 @@ def _upload_scan_source(bundle: SourceBundle, *, token: str | None) -> str:
             ) from None
         raise
     return cast("str", upload_id)
+
+
+def _complete_upload(upload_id: str, *, token: str | None) -> None:
+    """Complete an upload, polling while the platform is still processing it.
+
+    The platform answers ``202`` with ``status: "processing"`` until the
+    upload record is ready, so a single completion call is not enough for
+    larger sources. Poll on a short bounded loop; past the bound, raise
+    :class:`_UploadStillProcessing` so the upload is kept for a later
+    ``--upload-ids`` launch instead of being deleted as a rejection.
+    """
+    deadline = time.monotonic() + _UPLOAD_PROCESSING_TIMEOUT_S
+    while True:
+        completed = http.check(
+            http.request(
+                "POST",
+                "/uploads/complete",
+                token=token,
+                body={"upload_id": upload_id},
+            )
+        )
+        fields = cast("dict[str, Any]", completed) if isinstance(completed, dict) else {}
+        if str(fields.get("status", "")).lower() != "processing":
+            _validate_completed_upload(completed, expected_id=upload_id)
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise _UploadStillProcessing(upload_id)
+        time.sleep(min(_UPLOAD_PROCESSING_POLL_S, remaining))
 
 
 def _validate_completed_upload(completed: Any, *, expected_id: str) -> None:
