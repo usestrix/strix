@@ -149,6 +149,92 @@ def test_openapi_drops_unresolved_relative_server() -> None:
     assert spec_base_urls(raw) == []
 
 
+def test_openapi_extracts_path_and_operation_servers() -> None:
+    raw = {
+        "openapi": "3.0.0",
+        "info": {"title": "Microservices"},
+        "servers": [{"url": "https://gateway.test/api"}],
+        "paths": {
+            "/users": {
+                "servers": [{"url": "https://users.service.test"}],
+                "get": {"summary": "List users"},
+            },
+            "/orders": {
+                "post": {
+                    "servers": [{"url": "https://orders.service.test/v1"}],
+                    "summary": "Create order",
+                },
+            },
+            "/relative": {
+                "servers": [{"url": "/relative-path"}],
+                "get": {"summary": "Ignored relative server"},
+            },
+        },
+    }
+    assert spec_base_urls(raw) == [
+        "https://gateway.test/api",
+        "https://users.service.test",
+        "https://orders.service.test/v1",
+    ]
+
+
+def test_openapi_without_root_servers_extracts_nested_servers() -> None:
+    raw = {
+        "openapi": "3.0.0",
+        "info": {"title": "No Root Servers"},
+        "paths": {
+            "/auth": {
+                "servers": [{"url": "https://auth.service.test"}],
+                "post": {"summary": "Login"},
+            },
+        },
+    }
+    assert spec_base_urls(raw) == ["https://auth.service.test"]
+
+
+def test_openapi_extracts_webhook_servers() -> None:
+    raw = {
+        "openapi": "3.1.0",
+        "info": {"title": "Webhooks API"},
+        "webhooks": {
+            "newPet": {
+                "post": {
+                    "servers": [{"url": "https://webhook-receiver.test"}],
+                    "summary": "Webhook notification",
+                },
+            },
+        },
+    }
+    assert spec_base_urls(raw) == ["https://webhook-receiver.test"]
+
+
+def test_openapi_ignores_vendor_extensions_in_paths_and_operations() -> None:
+    raw = {
+        "openapi": "3.0.0",
+        "info": {"title": "Extensions Test"},
+        "paths": {
+            "x-internal-path": {
+                "servers": [{"url": "https://leaked-internal.test"}],
+                "get": {"servers": [{"url": "https://leaked-internal-op.test"}]},
+            },
+            "/api/valid": {
+                "servers": [{"url": "https://valid.test"}],
+                "get": {
+                    "servers": [{"url": "https://valid-get.test"}],
+                    "summary": "Valid GET operation",
+                },
+                "x-deployment": {
+                    "servers": [{"url": "https://admin-extension.test"}],
+                },
+                "parameters": [
+                    {"name": "id", "in": "query", "servers": [{"url": "https://param.test"}]}
+                ],
+            },
+        },
+    }
+    assert spec_base_urls(raw) == ["https://valid.test", "https://valid-get.test"]
+
+
 def test_swagger_base_urls_built_from_host() -> None:
     assert spec_base_urls(SWAGGER_JSON) == ["https://legacy.test/api"]
 
