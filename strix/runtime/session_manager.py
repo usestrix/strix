@@ -54,6 +54,27 @@ _EXTRA_FILE_EXTRACT_TIMEOUT_S = 120
 _EXTRA_FILE_MODE = 0o644
 
 
+def _is_regular_login_user(uid: int) -> bool:
+    """Whether ``uid`` refers to an interactive login user whose home directory
+    can take part in the sandbox uid-remapping flow.
+
+    System/service accounts (uid below the login range, or without a usable
+    home directory) must not opt in: the sandbox image's entrypoint demotes
+    itself to ``STRIX_HOST_UID``, and a demoted system uid ends up with an
+    unwritable HOME, which panics the in-container Caido sidecar
+    ("Unable to create data directory") and silently degrades every scan.
+    """
+    import pwd
+
+    if uid < 1000:
+        return False
+    try:
+        pw_dir = pwd.getpwuid(uid).pw_dir
+    except KeyError:
+        return False
+    return bool(pw_dir) and pw_dir not in ("/", "/nonexistent")
+
+
 def _host_identity_env() -> dict[str, str]:
     # Read the platform through a local so it is not narrowed to whichever OS is
     # type-checking: comparing sys.platform directly makes one of these branches
@@ -63,7 +84,15 @@ def _host_identity_env() -> dict[str, str]:
         return {}
     # Bind-mount ownership only needs mapping on Linux, where the container uid
     # must match the host's.
-    return {"STRIX_HOST_UID": str(os.getuid()), "STRIX_HOST_GID": str(os.getgid())}
+    uid, gid = os.getuid(), os.getgid()
+    if not _is_regular_login_user(uid):
+        logger.warning(
+            "Skipping sandbox uid mapping for uid %s (system/service account): "
+            "bind-mounted workspace files will keep the container user's ownership",
+            uid,
+        )
+        return {}
+    return {"STRIX_HOST_UID": str(uid), "STRIX_HOST_GID": str(gid)}
 
 
 def build_bind_mounts(local_sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
