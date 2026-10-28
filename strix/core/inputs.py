@@ -10,12 +10,11 @@ from openai.types.shared import Reasoning
 
 from strix.config.models import (
     DEFAULT_MODEL_RETRY,
-    OPENROUTER_ATTRIBUTION_HEADERS,
+    attribution_headers,
     bedrock_route_supports_prompt_caching,
     is_bedrock_route,
     is_claude_model,
     is_known_openai_bare_model,
-    is_openrouter_model,
     model_supports_reasoning,
     request_timeout_extra_args,
     routes_through_litellm,
@@ -287,9 +286,7 @@ def make_model_settings(
 def _request_headers(
     model_name: str, extra_headers: dict[str, str] | None
 ) -> dict[str, str] | None:
-    headers: dict[str, str] = {}
-    if is_openrouter_model(model_name):
-        headers.update(OPENROUTER_ATTRIBUTION_HEADERS)
+    headers: dict[str, str] = dict(attribution_headers(model_name))
     if extra_headers:
         headers.update(extra_headers)
     return headers or None
