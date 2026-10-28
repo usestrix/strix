@@ -61,6 +61,8 @@ SCENARIOS = {
     "null-id": _Scenario(turns=((None,),)),
     "missing-id": _Scenario(turns=((_MISSING,),)),
     "parallel-empty-ids": _Scenario(turns=(("", ""),)),
+    "parallel-duplicate-ids": _Scenario(turns=(("dup", "dup"),)),
+    "parallel-duplicates-after-recycle": _Scenario(turns=(("dup",), ("dup", "dup"))),
     "empty-id-every-turn": _Scenario(turns=(("",), ("",), ("",))),
     "recycled-counter": _Scenario(turns=(("exec_command:0",), ("exec_command:0",))),
     "parallel-recycled-counter": _Scenario(
