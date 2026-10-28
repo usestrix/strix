@@ -19,6 +19,7 @@ from strix.report.sarif import write_sarif
 from strix.report.writer import (
     read_run_record,
     write_executive_report,
+    write_html_report,
     write_run_record,
     write_vulnerabilities,
 )
@@ -891,6 +892,15 @@ class ReportState:
             )
         except Exception:
             logger.exception("SARIF emit failed (non-fatal; CSV/MD unaffected)")
+
+        # Self-contained HTML findings report (report.html). Best-effort and
+        # isolated: a render/write error must NEVER break the CSV/MD/SARIF/
+        # run-record path or fail the scan. Disable via STRIX_HTML_REPORT=0.
+        try:
+            if load_settings().runtime.html_report:
+                write_html_report(run_dir, self.run_record, self.vulnerability_reports)
+        except Exception:
+            logger.exception("HTML report emit failed (non-fatal; other outputs unaffected)")
 
         write_run_record(run_dir, self.run_record)
 
