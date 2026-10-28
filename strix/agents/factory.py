@@ -47,6 +47,11 @@ from strix.tools.notes.tools import (
 )
 from strix.tools.nullish import is_nullish
 from strix.tools.output_store import bound_and_store, bound_text
+from strix.tools.planner.tools import (
+    calculate_target_complexity,
+    create_scan_plan,
+    list_scan_modules,
+)
 from strix.tools.proxy.tools import (
     list_requests,
     list_sitemap,
@@ -650,6 +655,9 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     get_threat_model,
     save_threat_model,
     amend_threat_model,
+    calculate_target_complexity,
+    create_scan_plan,
+    list_scan_modules,
     web_search,
     web_get_contents,
     create_vulnerability_report,
