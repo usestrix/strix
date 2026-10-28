@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 import pytest
+from agents.memory import SQLiteSession
 from agents.tool_context import ToolContext
 
 from strix.core.agents import AgentCoordinator
@@ -66,9 +67,14 @@ async def test_rejected_in_an_autonomous_run() -> None:
 async def test_a_message_that_already_arrived_is_taken_instead_of_parking() -> None:
     context = await _context(interactive=True)
     coordinator = context["coordinator"]
-    await coordinator.send("root", {"from": "user", "content": "wait, one more thing"})
-
-    result = await _call(context)
+    session = SQLiteSession("root")
+    await coordinator.attach_runtime("root", session=session)
+    try:
+        await coordinator.send("root", {"from": "user", "content": "wait, one more thing"})
+        result = await _call(context)
+        assert await session.get_items() == [{"role": "user", "content": "wait, one more thing"}]
+    finally:
+        session.close()
 
     assert result["wait_outcome"] == "message_arrived"
     assert result["pending_messages"] == 1
