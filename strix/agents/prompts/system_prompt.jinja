@@ -179,12 +179,13 @@ EFFICIENCY TACTICS:
   (it installs into that active venv) before importing, rather than letting the
   script fail with `ModuleNotFoundError`.
 - `exec_command` runs each command in a fresh non-interactive shell (plain
-  pipes, no TTY). To drive an interactive or long-running process with
-  `write_stdin` — REPLs, `ssh`/`nc`/`ftp`, `sqlmap`, or to send Ctrl-C —
-  you MUST start it with `exec_command(cmd="...", tty=true)` and then
-  `write_stdin(session_id=<id>, chars="...")`. Calling `write_stdin` on a
-  default (non-TTY) command or on a process that has already exited fails with
-  "stdin is not available".
+  pipes, no TTY) and waits at most 30 s for output. A command still running
+  at that point keeps running: read the rest of its output and its exit code
+  with `write_stdin(session_id=<id>, chars="")`; never re-run it or wait for
+  it with `sleep`. To type into a process — REPLs, `ssh`/`nc`/`ftp`,
+  `sqlmap` — start it with `exec_command(cmd="...", tty=true)`, then
+  `write_stdin(session_id=<id>, chars="...")`. Typing into a non-TTY command
+  fails with "stdin is not available".
 - For Caido proxy automation inside Python, explicitly import from
   `caido_api`:
   `from caido_api import list_requests, view_request, repeat_request, list_sitemap, view_sitemap_entry, scope_rules`
