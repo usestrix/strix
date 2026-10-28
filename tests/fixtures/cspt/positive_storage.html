@@ -1,0 +1,33 @@
+<!doctype html>
+<!--
+  CSPT POSITIVE — browser storage source
+  Source: localStorage value (seeded by an earlier attacker-influenceable flow)
+  Sink:   axios-style request wrapper
+  The stored "activeTenant" is joined into the API path with no validation, so a
+  poisoned storage value of "../../admin" steers the authenticated request.
+-->
+<html lang="en">
+<head><meta charset="utf-8" /><title>Tenant dashboard</title></head>
+<body>
+<h1>Tenant dashboard</h1>
+<pre id="out">loading…</pre>
+<script>
+  // Minimal axios-like wrapper with a baseURL (stands in for a real axios client).
+  const api = {
+    baseURL: "/api",
+    get(path) {
+      return fetch(this.baseURL + path, { credentials: "include" }).then((r) => r.text());
+    },
+  };
+
+  // SOURCE: attacker-influenceable stored value, e.g. "../../admin".
+  const tenant = localStorage.getItem("activeTenant") || "self";
+
+  // SINK: stored value joined directly into the request path — CSPT.
+  api
+    .get("/tenants/" + tenant + "/summary")
+    .then((t) => { document.getElementById("out").textContent = t; })
+    .catch((e) => { document.getElementById("out").textContent = String(e); });
+</script>
+</body>
+</html>
