@@ -181,6 +181,8 @@ def _is_image_rejection(exc: BaseException) -> bool:
 def _is_transient_model_error(exc: BaseException) -> bool:
     if codex.is_content_guardrail_error(exc):
         return False
+    if codex.is_usage_limit_error(exc):
+        return False
     if isinstance(
         exc, APITimeoutError | APIConnectionError | TimeoutError | ConnectionError | OSError
     ):
