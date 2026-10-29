@@ -1514,20 +1514,24 @@ def write_fetched_collection(collection: dict[str, Any], collection_uid: str) ->
     return str(path)
 
 
-def stage_api_specs(targets_info: list[dict[str, Any]], run_name: str) -> list[dict[str, Any]]:
+def stage_api_specs(
+    targets_info: list[dict[str, Any]], run_name: str, *, resume: bool = False
+) -> list[dict[str, Any]]:
     """Copy every ``api_spec`` target into one directory for the sandbox.
 
     A spec is a single file the agent reads, not a tree it works in, so it is
     copied to a per-run staging directory that is exposed at
     ``/workspace/api-specs`` instead of mounting its host location. Each target's
-    ``workspace_path`` records where the agent will find it.
+    ``workspace_path`` records where the agent will find it. On resume, reuse
+    the staged files without replacing them with potentially changed inputs.
     """
     specs = [t for t in targets_info if t.get("type") == "api_spec"]
     if not specs:
         return []
 
     staging = Path(tempfile.gettempdir()) / "strix_api_specs" / run_name
-    staging.mkdir(parents=True, exist_ok=True)
+    if not resume:
+        staging.mkdir(parents=True, exist_ok=True)
 
     used: set[str] = set()
     for target in specs:
@@ -1540,7 +1544,16 @@ def stage_api_specs(targets_info: list[dict[str, Any]], run_name: str) -> list[d
             count += 1
             name = f"{stem}-{count}{suffix}"
         used.add(name)
-        shutil.copy2(source, staging / name)
+        staged = staging / name
+        if resume:
+            if not staged.is_file():
+                raise ValueError(
+                    f"staged API specification at {staged} is missing. "
+                    "Restore the staged file before resuming, or start a fresh scan "
+                    "with the original specification target."
+                )
+        else:
+            shutil.copy2(source, staged)
         details["workspace_path"] = f"/workspace/{API_SPEC_WORKSPACE_SUBDIR}/{name}"
 
     return [

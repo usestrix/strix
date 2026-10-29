@@ -6,6 +6,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from strix.config import apply_config_override
 from strix.config.settings import DEFAULT_MAX_TURNS
@@ -16,6 +17,7 @@ from strix.interface.utils import (
     check_mountable_dir,
     collect_local_sources,
     resolve_workspace_files,
+    stage_api_specs,
     validate_config_file,
 )
 from strix.report.runs import list_run_summaries
@@ -464,7 +466,8 @@ def load_resume_state(args: argparse.Namespace) -> None:
     except (RuntimeError, TypeError) as exc:
         raise ResumeError(f"--resume {args.resume}: run.json unreadable: {exc}") from exc
 
-    args.targets_info = state.get("targets_info") or []
+    targets_info: Any = state.get("targets_info") or []
+    args.targets_info = targets_info
     # A target-less run has no targets_info at all. It is driven by its
     # instruction, over a mounted working directory or over nothing when the
     # mount was declined, so either of those is enough to resume it.
@@ -499,6 +502,10 @@ def load_resume_state(args: argparse.Namespace) -> None:
     if not getattr(args, "user_instruction", None):
         args.user_instruction = state.get("user_instruction") or None
     args.local_sources = collect_local_sources(args.targets_info)
+    try:
+        args.local_sources.extend(stage_api_specs(targets_info, args.resume, resume=True))
+    except ValueError as exc:
+        raise ResumeError(f"--resume {args.resume}: {exc}") from exc
     # Remount the workspace the run was started with. The user already confirmed
     # this directory, so the target mount guard does not apply to it; it only has
     # to still be there.
