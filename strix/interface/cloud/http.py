@@ -339,7 +339,12 @@ def parsed(response: requests.Response) -> Any:
 
 
 def check(response: requests.Response) -> Any:
-    data = parsed(response)
+    try:
+        data = parsed(response)
+    except requests.RequestException as exc:
+        raise CloudTransportError(
+            f"could not read the platform response (HTTP {response.status_code}): {exc}"
+        ) from exc
     if 200 <= response.status_code < 300:
         content_type = response.headers.get("content-type", "").lower()
         if "application/json" not in content_type:
