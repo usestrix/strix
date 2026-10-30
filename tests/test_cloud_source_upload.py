@@ -56,6 +56,93 @@ def _git_source(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _git_source_with_conflict(tmp_path: Path, subdirectory: str = "") -> Path:
+    git = shutil.which("git")
+    assert git is not None
+    subprocess.run([git, "init", "-q", str(tmp_path)], check=True)  # noqa: S603
+    source = tmp_path / subdirectory
+    source.mkdir(exist_ok=True)
+    (source / "tracked.py").write_bytes(b"tracked working-tree content\n")
+    (source / "untracked.py").write_bytes(b"untracked content\n")
+    (source / "conflict.py").write_bytes(b"current working-tree conflict content\n")
+    (source / "ignored.log").write_bytes(b"ignored\n")
+    (tmp_path / ".gitignore").write_text("ignored.log\n", encoding="utf-8")
+    subprocess.run(  # noqa: S603
+        [git, "-C", str(tmp_path), "add", (source / "tracked.py").relative_to(tmp_path).as_posix()],
+        check=True,
+    )
+    entries: list[str] = []
+    for stage, content in enumerate(("base\n", "ours\n", "theirs\n"), start=1):
+        blob = subprocess.run(  # noqa: S603
+            [git, "-C", str(tmp_path), "hash-object", "-w", "--stdin"],
+            input=content,
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        relative = (source / "conflict.py").relative_to(tmp_path).as_posix()
+        entries.append(f"100644 {blob} {stage}\t{relative}\n")
+    subprocess.run(  # noqa: S603
+        [git, "-C", str(tmp_path), "update-index", "--index-info"],
+        input="".join(entries),
+        text=True,
+        check=True,
+    )
+    if subdirectory:
+        (tmp_path / "outside.py").write_bytes(b"outside selected source\n")
+    return source
+
+
+@pytest.mark.parametrize("subdirectory", ["", "src"])
+def test_source_archive_deduplicates_unmerged_git_paths(tmp_path: Path, subdirectory: str) -> None:
+    source = _git_source_with_conflict(tmp_path, subdirectory)
+    expected = {
+        name: (source / name).read_bytes() for name in ("conflict.py", "tracked.py", "untracked.py")
+    }
+
+    bundle = source_upload.prepare_source(
+        str(source),
+        include_hidden=False,
+        include_sensitive=False,
+        include_archives=False,
+        exclude=[],
+    )
+    try:
+        assert [item.archive_name for item in bundle.manifest.files] == sorted(expected)
+        assert bundle.manifest.total_bytes == sum(map(len, expected.values()))
+        with zipfile.ZipFile(bundle.archive_path) as archive:
+            assert archive.namelist() == sorted(expected)
+            assert {name: archive.read(name) for name in archive.namelist()} == expected
+    finally:
+        source_upload.remove_bundle(bundle)
+
+
+@pytest.mark.parametrize("limit", ["files", "bytes"])
+def test_unmerged_git_paths_do_not_inflate_selection_limits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, limit: str
+) -> None:
+    source = _git_source_with_conflict(tmp_path)
+    if limit == "files":
+        monkeypatch.setattr(source_upload, "MAX_FILES", 3)
+    else:
+        actual_bytes = sum(path.stat().st_size for path in source.glob("*.py"))
+        monkeypatch.setattr(source_upload, "MAX_TOTAL_BYTES", actual_bytes)
+
+    manifest = source_upload.select_source(source)
+
+    assert len(manifest.files) == 3
+
+
+def test_unmerged_git_entries_still_count_towards_candidate_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _git_source_with_conflict(tmp_path)
+    monkeypatch.setattr(source_upload, "MAX_CANDIDATE_PATHS", 4)
+
+    with pytest.raises(http.CloudError, match="source enumeration exceeded"):
+        source_upload.select_source(source)
+
+
 def test_source_defaults_are_private_and_git_aware(tmp_path: Path) -> None:
     source = _git_source(tmp_path)
     (source / ".hidden.py").write_text("hidden\n", encoding="utf-8")
