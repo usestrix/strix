@@ -314,6 +314,12 @@ def test_make_model_settings_disables_parallel_tool_calls_by_default() -> None:
     assert make_model_settings("none", model_name="gpt-4o").parallel_tool_calls is False
 
 
+def test_make_model_settings_enables_parallel_tool_calls_when_requested() -> None:
+    settings = make_model_settings("none", model_name="gpt-4o", parallel_tool_calls=True)
+
+    assert settings.parallel_tool_calls is True
+
+
 def test_make_model_settings_omits_parallel_tool_calls_without_tools() -> None:
     settings = make_model_settings("none", model_name="gpt-4o", has_tools=False)
 
@@ -466,6 +472,11 @@ def test_openrouter_attribution_rides_on_the_request_headers() -> None:
         "X-Title": "Strix",
         "X-OpenRouter-Categories": "cli-agent",
     }
+
+
+def test_vercel_ai_gateway_attribution_rides_on_the_request_headers() -> None:
+    headers = make_model_settings(None, model_name="vercel_ai_gateway/zai/glm-5.3").extra_headers
+    assert headers == {"HTTP-Referer": "https://strix.ai", "X-Title": "Strix"}
 
 
 def test_openrouter_attribution_absent_for_other_providers() -> None:

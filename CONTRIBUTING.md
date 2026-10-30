@@ -31,7 +31,7 @@ Thank you for your interest in contributing to Strix! This guide will help you g
 
 3. **Configure your LLM provider**
    ```bash
-   export STRIX_LLM="openrouter/z-ai/glm-5.3"
+   export STRIX_LLM="openrouter/z-ai/glm-5.3"   # or vercel_ai_gateway/zai/glm-5.3
    export LLM_API_KEY="your-api-key"
    ```
 

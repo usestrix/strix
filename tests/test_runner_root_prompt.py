@@ -61,12 +61,14 @@ def _patch_engine_scaffold(
             model="openai/gpt-4o",
             reasoning_effort="high",
             force_required_tool_choice=False,
+            parallel_tool_calls=False,
             timeout=300,
             prompt_cache=True,
             extra_headers=None,
             extra_body=None,
         ),
         runtime=types.SimpleNamespace(max_context_images=3),
+        telemetry=types.SimpleNamespace(run_record_timings=False),
     )
     monkeypatch.setattr(runner, "load_settings", lambda: settings)
     monkeypatch.setattr(runner, "configure_sdk_model_defaults", lambda _settings: None)
@@ -158,6 +160,36 @@ async def test_root_prompt_options_flow_into_root_agent(
         **scope_context,
         "target_context": "known findings",
     }
+
+
+@pytest.mark.asyncio
+async def test_replace_root_scan_prompt_drops_the_scan_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    scope_context = {
+        "scope_source": "user_scan_config",
+        "authorized_targets": [
+            {"type": "web_application", "value": "https://example.com", "workspace_path": ""},
+        ],
+    }
+    captured = _patch_engine_scaffold(monkeypatch, tmp_path, scope_context)
+
+    await runner.run_strix_scan(
+        scan_config={"targets": [], "scan_mode": "deep"},
+        scan_id="scan-replace",
+        image="img",
+        coordinator=AgentCoordinator(),
+        root_instructions_override="CUSTOM SCAN PROMPT",
+        replace_root_scan_prompt=True,
+    )
+
+    instructions_override = captured["kwargs"]["instructions_override"]
+    assert instructions_override.startswith("CUSTOM SCAN PROMPT")
+    assert instructions_override.count("SCOPE:") == 1
+    assert "https://example.com" in instructions_override
+    assert "<root_scan_instructions_override>" not in instructions_override
+    assert "application security validation agent" not in instructions_override
 
 
 @pytest.mark.asyncio
@@ -283,6 +315,19 @@ async def test_unknown_tool_calls_are_returned_to_the_model(
     )
 
     assert captured["run_config"].tool_not_found_behavior == "return_error_to_model"
+
+
+@pytest.mark.parametrize("interactive", [False, True])
+def test_parallel_tool_calls_prompt_is_opt_in(interactive: bool) -> None:
+    default = render_system_prompt(include_scope=False, interactive=interactive)
+    parallel = render_system_prompt(
+        include_scope=False, interactive=interactive, parallel_tool_calls=True
+    )
+
+    assert "Read-only calls can go together" not in default
+    assert ("Read-only calls can go together" in parallel) is not interactive
+    assert ("exactly one tool call" in default) is interactive
+    assert "exactly one tool call" not in parallel
 
 
 def test_scope_is_rendered_once_at_the_end_of_the_prompt() -> None:

@@ -1,31 +1,46 @@
 ---
 title: "Vercel AI Gateway"
-description: "Configure Strix with models via Vercel AI Gateway"
+description: "Configure Strix with models through Vercel AI Gateway"
 ---
 
-[Vercel AI Gateway](https://vercel.com/docs/ai-gateway) provides an OpenAI-compatible API for models from multiple providers.
+[Vercel AI Gateway](https://vercel.com/docs/ai-gateway) provides access to 100+ models from multiple providers through one OpenAI-compatible API.
 
 ## Setup
 
 Create an [AI Gateway API key](https://vercel.com/docs/ai-gateway/authentication-and-byok), then configure Strix:
 
 ```bash
-export STRIX_LLM="openai/anthropic/claude-opus-5"
+export STRIX_LLM="vercel_ai_gateway/zai/glm-5.3"
 export LLM_API_KEY="your-ai-gateway-api-key"
-export LLM_API_BASE="https://ai-gateway.vercel.sh/v1"
 ```
 
-The first `openai/` segment tells Strix to use its OpenAI-compatible client. The remaining value is the [AI Gateway model ID](https://vercel.com/docs/ai-gateway/models-and-providers).
+The `vercel_ai_gateway/` prefix selects the Gateway. The remaining value is the [AI Gateway model ID](https://vercel.com/docs/ai-gateway/models-and-providers).
 
 ## Available Models
 
-Use any language model returned by the AI Gateway models endpoint:
+Access any model on the Gateway using the format `vercel_ai_gateway/<provider>/<model>`:
+
+| Model | Configuration |
+|-------|---------------|
+| GLM-5.3 (recommended) | `vercel_ai_gateway/zai/glm-5.3` |
+| GPT-6.1 Sol | `vercel_ai_gateway/openai/gpt-6.1-sol` |
+| GPT-6 Astra | `vercel_ai_gateway/openai/gpt-6-astra` |
+| Claude Opus 5.5 | `vercel_ai_gateway/anthropic/claude-opus-5.5` |
+| Claude Sonnet 5.5 | `vercel_ai_gateway/anthropic/claude-sonnet-5.5` |
+| Gemini 4 Argon | `vercel_ai_gateway/google/gemini-4-argon` |
+| Gemini 3.8 Flash | `vercel_ai_gateway/google/gemini-3.8-flash` |
+| DeepSeek V4.1 Flash | `vercel_ai_gateway/deepseek/deepseek-v4.1-flash-1017` |
+| DeepSeek V4 Pro | `vercel_ai_gateway/deepseek/deepseek-v4-pro` |
+| Kimi K3.1 Pro | `vercel_ai_gateway/moonshotai/kimi-k3.1-pro` |
+| GLM-5.3 Flash | `vercel_ai_gateway/zai/glm-5.3-flash` |
+
+OpenAI, Anthropic and Gemini models keep their provider safeguards on the Gateway. Security testing with them needs [Daybreak](https://openai.com/daybreak/), [CVP](https://support.claude.com/en/articles/14604842-cyber-verification-program) or [Fairwind](https://deepmind.google/fairwind-program/) access.
+
+The full list is at the [AI Gateway models page](https://vercel.com/ai-gateway/models) or the models endpoint:
 
 ```text
 https://ai-gateway.vercel.sh/v1/models
 ```
-
-Prefix its model ID with `openai/` when setting `STRIX_LLM`. For example, the Gateway model ID `anthropic/claude-opus-5` becomes `openai/anthropic/claude-opus-5` in Strix.
 
 ## Get API Key
 
@@ -35,5 +50,6 @@ Prefix its model ID with `openai/` when setting `STRIX_LLM`. For example, the Ga
 
 ## Benefits
 
-- Access models from multiple providers through one endpoint
-- Track Gateway usage and cost in Vercel
+- **Single API** — Access models from OpenAI, Anthropic, Google, Z.ai, and more
+- **Bring your own keys** — Route through your own provider accounts when you want
+- **Cost tracking** — Monitor Gateway usage and cost in Vercel

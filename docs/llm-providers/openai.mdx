@@ -6,13 +6,23 @@ description: "Configure Strix with OpenAI models"
 ## Setup
 
 ```bash
-export STRIX_LLM="openai/gpt-5.4"
+export STRIX_LLM="openai/gpt-6.1-sol"
 export LLM_API_KEY="sk-..."
 ```
 
 ## Available Models
 
-See [OpenAI Models Documentation](https://platform.openai.com/docs/models) for the full list of available models.
+| Model | Description |
+|-------|-------------|
+| `openai/gpt-6.1-sol` | Best balance of capability and cost for agentic security work |
+| `openai/gpt-6-astra` | Flagship, maximum capability |
+| `openai/gpt-6-luna` | Fast and cheap |
+
+See [OpenAI Models Documentation](https://platform.openai.com/docs/models) for the full list.
+
+<Note>
+Security testing with OpenAI models needs [Daybreak](https://openai.com/daybreak/) (Trusted Access for Cyber). Without it the models refuse most offensive tasks. [Request access](https://openai.com/form/enterprise-trusted-access-for-cyber/).
+</Note>
 
 ## Get API Key
 
@@ -25,7 +35,7 @@ See [OpenAI Models Documentation](https://platform.openai.com/docs/models) for t
 For OpenAI-compatible APIs:
 
 ```bash
-export STRIX_LLM="openai/gpt-5.4"
+export STRIX_LLM="openai/gpt-6.1-sol"
 export LLM_API_KEY="your-key"
 export LLM_API_BASE="https://your-proxy.com/v1"
 ```

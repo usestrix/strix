@@ -6,7 +6,7 @@ description: "Configure Strix with Claude models"
 ## Setup
 
 ```bash
-export STRIX_LLM="anthropic/claude-sonnet-4-6"
+export STRIX_LLM="anthropic/claude-sonnet-5-5"
 export LLM_API_KEY="sk-ant-..."
 ```
 
@@ -14,8 +14,12 @@ export LLM_API_KEY="sk-ant-..."
 
 | Model | Description |
 |-------|-------------|
-| `anthropic/claude-sonnet-4-6` | Best balance of intelligence and speed |
-| `anthropic/claude-opus-4-6` | Maximum capability for deep analysis |
+| `anthropic/claude-sonnet-5-5` | Best balance of intelligence and speed |
+| `anthropic/claude-opus-5-5` | Maximum capability for deep analysis |
+
+<Note>
+Security testing with Claude needs the [Cyber Verification Program](https://support.claude.com/en/articles/14604842-cyber-verification-program) (CVP). Without it the safety classifiers block most offensive tasks. Red Team Access covers authorized penetration testing.
+</Note>
 
 ## Get API Key
 
