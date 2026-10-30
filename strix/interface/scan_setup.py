@@ -40,6 +40,7 @@ from strix.utils.api_spec import (
     load_spec,
     spec_base_urls,
     spec_title,
+    with_postman_environment,
 )
 
 
@@ -224,6 +225,8 @@ def _resolve_api_spec(target: str, details: dict[str, Any]) -> None:
             extra_variables = (
                 fetch_postman_environment(environment_uid, api_key) if environment_uid else None
             )
+            if extra_variables:
+                raw = with_postman_environment(raw, extra_variables)
             details["target_spec"] = write_fetched_collection(raw, collection_uid)
         else:
             raw = load_spec(str(details["target_spec"]))
