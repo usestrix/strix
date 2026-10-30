@@ -15,7 +15,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.config import codex, load_settings, persist_current
+from strix.config import codex, load_settings, orcarouter, persist_current
 from strix.core.paths import RUNS_DIR_NAME, run_dir_for
 from strix.interface.cli_args import (
     FAIL_ON_SEVERITIES,
@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 _ROOT_SUBCOMMAND_HELP = """
 Additional commands:
   strix cloud ...          Use the managed Strix platform
-  strix auth ...           Manage model-subscription sign-in
+  strix auth ...           Manage ChatGPT / OrcaRouter sign-in
   strix view [RUN]         View a completed or running scan
   strix completions SHELL  Generate zsh, bash, or fish tab completion
 """
@@ -312,16 +312,34 @@ def _print_error_panel(title: str, message: str) -> None:
     console.print()
 
 
-def _print_model_connection_error(exc: BaseException) -> None:
+def _orcarouter_error_hint(exc: BaseException, model_name: str) -> str | None:
+    """Return a re-authentication hint when OrcaRouter rejected the credential."""
+    if orcarouter.route_model(model_name) is None:
+        return None
+    if isinstance(exc, orcarouter.OrcaRouterAuthError):
+        return str(exc)
+    joined = " ".join(_exception_messages(exc)).lower()
+    if "error code: 401" in joined or "authenticationerror" in joined:
+        return orcarouter.handle_unauthorized()
+    return None
+
+
+def _print_model_connection_error(exc: BaseException, model_name: str) -> None:
     console = Console()
     error_text = Text()
     sub_hint = _subscription_error_hint(exc)
+    orca_hint = _orcarouter_error_hint(exc, model_name)
     if sub_hint is not None:
         border_style = "yellow"
         error_text.append("MODEL NOT AVAILABLE ON SUBSCRIPTION", style="bold yellow")
         error_text.append("\n\n", style="white")
         error_text.append(f"{sub_hint}\n", style="white")
         error_text.append(f"\nDetails: {exc}", style="dim white")
+    elif orca_hint is not None:
+        border_style = "yellow"
+        error_text.append("ORCAROUTER CREDENTIAL REJECTED", style="bold yellow")
+        error_text.append("\n\n", style="white")
+        error_text.append(f"{orca_hint}\n", style="white")
     else:
         border_style = "red"
         error_text.append("LLM CONNECTION FAILED", style="bold red")
@@ -406,7 +424,7 @@ def _bootstrap_scan(args: argparse.Namespace) -> None:
         asyncio.run(warm_up_llm())
     except ModelConnectionError as exc:
         report_error("model_connection_failed", exc)
-        _print_model_connection_error(exc)
+        _print_model_connection_error(exc, exc.model_name)
         sys.exit(1)
     persist_current()
     try:
