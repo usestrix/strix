@@ -300,7 +300,15 @@ def _parse_dedupe_response(content: str) -> dict[str, Any]:
         raise ValueError(f"No JSON object found in dedupe response: {content[:500]}")
     parsed = json.loads(text[start : end + 1])
 
-    duplicate_id = str(parsed.get("duplicate_id") or "")[:64]
+    is_duplicate = parsed.get("is_duplicate")
+    if not isinstance(is_duplicate, bool):
+        raise TypeError("is_duplicate must be a boolean")
+    duplicate_id = parsed.get("duplicate_id") or ""
+    if is_duplicate and (not isinstance(duplicate_id, str) or not duplicate_id):
+        raise ValueError("A duplicate decision must name an existing report ID")
+    # Keep the ID verbatim: truncating or stripping it could turn an unknown ID
+    # into a different, existing one before the membership check below.
+    duplicate_id = str(duplicate_id)
     reason = str(parsed.get("reason") or "")[:500]
     try:
         confidence = float(parsed.get("confidence", 0.0))
@@ -308,11 +316,20 @@ def _parse_dedupe_response(content: str) -> dict[str, Any]:
         confidence = 0.0
 
     return {
-        "is_duplicate": bool(parsed.get("is_duplicate", False)),
+        "is_duplicate": is_duplicate,
         "duplicate_id": duplicate_id,
         "confidence": confidence,
         "reason": reason,
     }
+
+
+def _validate_duplicate_reference(
+    result: dict[str, Any], existing_reports: list[dict[str, Any]]
+) -> None:
+    if result["is_duplicate"] and not any(
+        report.get("id") == result["duplicate_id"] for report in existing_reports
+    ):
+        raise ValueError("Duplicate decision refers to an unknown report ID")
 
 
 def _extract_text(response: ModelResponse) -> str:
@@ -397,6 +414,7 @@ async def check_duplicate(
             }
 
         result = _parse_dedupe_response(content)
+        _validate_duplicate_reference(result, existing_reports)
 
         logger.info(
             "Deduplication check: is_duplicate=%s, confidence=%.2f, reason=%s",
