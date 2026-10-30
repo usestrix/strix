@@ -156,6 +156,22 @@ def test_max_reasoning_effort_sent_as_raw_body_field() -> None:
     assert settings.extra_body == {"reasoning_effort": "max"}
 
 
+def test_mixed_case_reasoning_capability_reaches_model_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731"
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {model: {"supports_reasoning": True}},
+    )
+
+    settings = make_model_settings("high", model_name=model)
+
+    assert settings.reasoning is not None
+    assert settings.reasoning.effort == "high"
+
+
 def test_conversation_tail_breakpoint_moves_with_appended_transcript() -> None:
     # LiteLLM must place the index=-1 cache_control on the last message however
     # long the transcript grows.

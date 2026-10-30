@@ -1016,22 +1016,30 @@ def model_supports_images(model_name: str) -> bool:
 
 
 def _bare_openai_name(model_name: str) -> str:
-    name = model_name.strip().lower()
+    name = model_name.strip()
+    normalized = name.lower()
     for prefix in ("litellm/", "any-llm/", "openai/"):
-        if name.startswith(prefix):
+        if normalized.startswith(prefix):
             return name[len(prefix) :]
     return name
 
 
 def _catalog_entry(model_name: str) -> dict[str, Any] | None:
-    """LiteLLM's cost-map entry for the model, looked up as it would route it."""
+    """LiteLLM's case-sensitive cost-map entry for the model and its aliases."""
     import litellm
 
-    name = _bare_openai_name(model_name)
-    entry = litellm.model_cost.get(name)
-    if entry is None and "/" in name:
-        entry = litellm.model_cost.get(name.rsplit("/", 1)[1])
-    return entry if isinstance(entry, dict) else None
+    supplied_name = model_name.strip()
+    routed_name = _bare_openai_name(supplied_name)
+    candidates = [supplied_name, routed_name, routed_name.lower()]
+    if "/" in routed_name:
+        bare_name = routed_name.rsplit("/", 1)[1]
+        candidates.extend((bare_name, bare_name.lower()))
+
+    for candidate in dict.fromkeys(candidates):
+        entry = litellm.model_cost.get(candidate)
+        if entry is not None:
+            return entry if isinstance(entry, dict) else None
+    return None
 
 
 def is_known_openai_bare_model(model_name: str) -> bool:
