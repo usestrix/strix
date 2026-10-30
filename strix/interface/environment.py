@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.config import IntegrationSettings, codex, load_settings
+from strix.config import IntegrationSettings, codex, load_settings, orcarouter
 from strix.interface.utils import (
     check_docker_connection,
     image_exists,
@@ -49,6 +49,14 @@ def validate_environment() -> None:
             sys.exit(1)
         logger.info("Environment OK (ChatGPT subscription)")
         return
+
+    if orcarouter.route_model(settings.llm.model):
+        try:
+            orcarouter.resolve_credential(settings.llm.api_key)
+        except orcarouter.OrcaRouterAuthError as exc:
+            console.print(f"[red]STRIX_LLM={settings.llm.model} runs on OrcaRouter.[/] {exc}")
+            report_error(f"orcarouter_{exc.code}")
+            sys.exit(1)
 
     if not settings.llm.model:
         missing_required_vars.append("STRIX_LLM")
