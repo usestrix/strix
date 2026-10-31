@@ -493,8 +493,12 @@ def _build_result(
     # partialFingerprints. Computed from the deterministic primitives
     # this report already carries (CWE, primary code location, route
     # tuple) — NOT from the LLM-authored title or message body, which
-    # vary cosmetically across runs of the same finding.
-    fp = _primary_fingerprint(rule_id, report, locations, is_synthetic=is_synthetic)
+    # vary cosmetically across runs of the same finding. Fingerprints
+    # key on the bare CWE, not the class-qualified rule id, so refining
+    # a rule id (``CWE-639`` → ``CWE-639/<class>``) does not churn
+    # existing alerts or break cross-run dismissal carryover.
+    fp_rule_id = _cwe_base(rule_id) or rule_id
+    fp = _primary_fingerprint(fp_rule_id, report, locations, is_synthetic=is_synthetic)
     if fp:
         result["partialFingerprints"] = {"primaryLocationLineHash": fp}
     # File-independent class fingerprint as a sibling property: lets
@@ -502,7 +506,7 @@ def _build_result(
     # determinations across file rename refactors where the primary
     # fingerprint legitimately shifts but the underlying class is
     # unchanged.
-    class_fp = _class_fingerprint(rule_id, report)
+    class_fp = _class_fingerprint(fp_rule_id, report)
     result["properties"] = _result_properties(report, class_fp, is_synthetic=is_synthetic)
     return result
 
@@ -865,11 +869,24 @@ def _rule_id(report: dict[str, Any]) -> str:
     CWE values are normalised from Strix output variants (``CWE-306``,
     ``cwe: 306``, ``306``) to the canonical ``CWE-NNN`` form. Without
     normalisation, the same weakness across runs dedups to separate rules.
+
+    A CWE-keyed rule is further qualified with the finding's
+    vulnerability-class slug (``CWE-639/insecure-direct-object-reference``)
+    so distinct classes that share one CWE do not collapse into a single
+    rule. The slug comes from the curated class-keyword catalogue only —
+    never from the raw LLM title — and equivalent class names resolve
+    to one canonical keyword (``_CLASS_ALIASES``), so rewordings of the
+    same class keep the same rule id. Findings with no curated keyword
+    keep the bare ``CWE-NNN`` id, so rule ids stay stable across
+    title rewordings.
     """
     cwe = _string_value(report.get("cwe"))
     if cwe:
         normalised = _normalise_cwe(cwe)
         if normalised:
+            class_slug = _class_rule_slug(report)
+            if class_slug:
+                return f"{normalised}/{class_slug}"
             return normalised
 
     cve = _string_value(report.get("cve"))
@@ -892,10 +909,44 @@ def _normalise_cwe(value: str) -> str | None:
     return f"CWE-{digits}"
 
 
+def _cwe_base(rule_id: str) -> str | None:
+    """``CWE-639/insecure-direct-object-reference`` → ``CWE-639``.
+
+    Returns None for non-CWE rule ids (CVE, finding id, title slug).
+    Used wherever the bare CWE matters — tags, help URIs, and the
+    fingerprint composites, which must not churn when a rule id gains
+    its class qualifier.
+    """
+    if not rule_id.startswith("CWE-"):
+        return None
+    head = rule_id.split("/", 1)[0]
+    if re.fullmatch(r"CWE-[0-9]+", head):
+        return head
+    return None
+
+
+def _class_rule_slug(report: dict[str, Any]) -> str | None:
+    """Slug of the finding's curated vulnerability class, if one matches.
+
+    Uses only the closed class-keyword catalogue (the same notion of
+    class ``_class_fingerprint`` uses), never the raw title: a title
+    with no curated keyword yields None and the rule keeps its bare
+    CWE id rather than gaining a prose-dependent suffix. Equivalent
+    names map to their canonical keyword first (``_CLASS_ALIASES``),
+    so e.g. "SQLi" yields the "sql injection" slug, not a bare id.
+    """
+    title = _string_value(report.get("title")) or ""
+    keyword = _curated_class_keyword(title)
+    if not keyword:
+        return None
+    return _slugify(keyword)
+
+
 # Vulnerability-class keywords for the file-independent class
 # fingerprint. Order matters — first match wins, so precise terms
 # come before fuzzy ones (e.g. "broken access control" before
-# "access control"). Keep this list closed and curated; a future
+# "access control", "regex denial of service" before
+# "denial of service"). Keep this list closed and curated; a future
 # maintainer adding sloppy entries could collapse distinct findings
 # to the same class hash.
 _VULN_CLASS_KEYWORDS = (
@@ -912,7 +963,6 @@ _VULN_CLASS_KEYWORDS = (
     "session fixation",
     "open redirect",
     "path traversal",
-    "directory traversal",
     "command injection",
     "sql injection",
     "code injection",
@@ -932,7 +982,6 @@ _VULN_CLASS_KEYWORDS = (
     "toctou",
     "information disclosure",
     "insecure direct object reference",
-    "idor",
     "bola",
     "bfla",
     "cross-tenant",
@@ -940,17 +989,58 @@ _VULN_CLASS_KEYWORDS = (
     "tenant bypass",
     "auth bypass",
     "rate limiting",
-    "rate limit",
     "weak cryptography",
     "weak hash",
     "weak random",
     "insecure random",
     "tls verification",
     "certificate verification",
-    "denial of service",
     "regex denial of service",
-    "redos",
+    "denial of service",
     "supply chain",
+)
+
+
+# Equivalent names for a canonical class, keyed by that canonical
+# keyword. A rule id (and a class fingerprint) must be a property of
+# the vulnerability class, not of the LLM's phrasing of it: "SQLi",
+# "directory traversal", "IDOR", "ReDoS" and "cross-site scripting"
+# are the same classes as "sql injection", "path traversal",
+# "insecure direct object reference", "regex denial of service" and
+# "xss", so they must resolve to the same canonical keyword — and
+# hence the same rule id — rather than to a bare CWE id or a
+# different slug. Only unambiguous acronyms / full-form synonyms
+# belong here. Near-synonyms that may denote distinct sub-classes
+# (e.g. "bola" vs "insecure direct object reference", "weak random"
+# vs "insecure random", "auth bypass" vs "missing authentication")
+# are deliberately NOT aliased, so distinct classes sharing one CWE
+# still get distinct rules.
+_CLASS_ALIASES: dict[str, tuple[str, ...]] = {
+    "sql injection": ("sqli",),
+    "command injection": ("cmd injection",),
+    "template injection": ("ssti",),
+    "xss": ("cross site scripting",),
+    "csrf": ("cross site request forgery",),
+    "ssrf": ("server side request forgery",),
+    "xxe": ("xml external entity", "xml external entities"),
+    "toctou": ("time of check time of use", "time of check to time of use"),
+    "insecure direct object reference": ("idor",),
+    "path traversal": ("directory traversal",),
+    "rate limiting": ("rate limit",),
+    "regex denial of service": ("redos",),
+    "open redirect": ("unvalidated redirect",),
+    "information disclosure": ("info disclosure",),
+}
+
+
+# (pattern, canonical keyword) pairs in match order: each canonical
+# keyword's aliases sit at that keyword's own position, so an alias
+# and its canonical form have identical priority against every other
+# class. First match wins, as in the catalogue itself.
+_CLASS_MATCH_PATTERNS: tuple[tuple[str, str], ...] = tuple(
+    (pattern, canonical)
+    for canonical in _VULN_CLASS_KEYWORDS
+    for pattern in (*_CLASS_ALIASES.get(canonical, ()), canonical)
 )
 
 
@@ -1062,6 +1152,28 @@ def _class_fingerprint(rule_id: str, report: dict[str, Any]) -> str | None:
     return hashlib.sha256(composite.encode("utf-8")).hexdigest()
 
 
+def _curated_class_keyword(title: str) -> str:
+    """Canonical curated class keyword for ``title``, or "".
+
+    The catalogue is closed and ordered (first match wins); this is
+    the stable notion of "the finding's class" shared by fingerprints
+    and CWE rule-id qualification. Equivalent names resolve to their
+    canonical keyword (``_CLASS_ALIASES``), so rewordings of the same
+    class — "SQL Injection" vs "SQLi", "IDOR" vs "insecure direct
+    object reference" — return the same value instead of diverging
+    into a qualified id and a bare CWE id. Titles are normalised
+    (hyphens/underscores become spaces) before matching, so
+    "sql-injection" and "cross-site scripting" match too.
+    """
+    if not title:
+        return ""
+    normalised = re.sub(r"\s+", " ", title.lower().replace("-", " ").replace("_", " ")).strip()
+    for pattern, canonical in _CLASS_MATCH_PATTERNS:
+        if pattern in normalised:
+            return canonical
+    return ""
+
+
 def _class_keyword(title: str) -> str:
     """Pick the first matching curated keyword in ``title``, or fall
     back to the first 5 lowercased alpha-numeric words.
@@ -1071,26 +1183,26 @@ def _class_keyword(title: str) -> str:
     two fingerprints stay aligned on what counts as "the same class".
     Returns empty string when title is empty or whitespace-only.
     """
+    keyword = _curated_class_keyword(title)
+    if keyword:
+        return keyword
     if not title:
         return ""
-    lower = title.lower()
-    for kw in _VULN_CLASS_KEYWORDS:
-        if kw in lower:
-            return kw
-    words = re.findall(r"[a-z0-9]+", lower)[:5]
+    words = re.findall(r"[a-z0-9]+", title.lower())[:5]
     return " ".join(words)
 
 
 def _rule_name(rule_id: str, title: str) -> str:
     """SARIF rule.name must be a free-form string; prefer the finding title
     where available, fall back to a snake_case'd form of the rule id."""
-    return title or rule_id.replace("-", "_")
+    return title or rule_id.replace("-", "_").replace("/", "_")
 
 
 def _rule_tags(rule_id: str, report: dict[str, Any]) -> list[str]:
     tags: list[str] = ["security"]
-    if rule_id.startswith("CWE-"):
-        tags.append(rule_id)
+    cwe_base = _cwe_base(rule_id)
+    if cwe_base:
+        tags.append(cwe_base)
     cve = _string_value(report.get("cve"))
     if cve and cve not in tags:
         tags.append(cve)
@@ -1105,8 +1217,9 @@ def _rule_tags(rule_id: str, report: dict[str, Any]) -> list[str]:
 
 
 def _help_uri_for(rule_id: str) -> str | None:
-    if rule_id.startswith("CWE-"):
-        return f"https://cwe.mitre.org/data/definitions/{rule_id.removeprefix('CWE-')}.html"
+    cwe_base = _cwe_base(rule_id)
+    if cwe_base:
+        return f"https://cwe.mitre.org/data/definitions/{cwe_base.removeprefix('CWE-')}.html"
     return None
 
 
