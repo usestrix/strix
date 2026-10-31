@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import json
 import logging
@@ -12,11 +13,13 @@ from agents.agent import ToolsToFinalOutputResult
 from agents.sandbox import SandboxAgent
 from agents.sandbox.capabilities import Filesystem, Shell
 from agents.sandbox.errors import InvalidManifestPathError
+from agents.sandbox.session.pty_types import PTY_YIELD_TIME_MS_MAX
 from agents.tool import CustomTool, FunctionTool, Tool
 from pydantic import ValidationError
 
 from strix.agents.prompt import render_system_prompt
 from strix.config import load_settings
+from strix.config.tool_call_arguments import describe_malformed_arguments
 from strix.tools.agents_graph.tools import (
     agent_finish,
     create_agent,
@@ -25,8 +28,16 @@ from strix.tools.agents_graph.tools import (
     view_agent_graph,
     wait_for_agents,
 )
+from strix.tools.coverage.tools import list_coverage, record_coverage, update_coverage
 from strix.tools.finish.tool import finish_scan
 from strix.tools.load_skill.tool import load_skill
+from strix.tools.mcp import (
+    call_mcp,
+    describe_mcp,
+    get_mcp_tool_schema,
+    list_mcps,
+    search_mcp_tools,
+)
 from strix.tools.notes.tools import (
     create_note,
     delete_note,
@@ -34,6 +45,7 @@ from strix.tools.notes.tools import (
     list_notes,
     update_note,
 )
+from strix.tools.nullish import is_nullish
 from strix.tools.output_store import bound_and_store, bound_text
 from strix.tools.proxy.tools import (
     list_requests,
@@ -46,11 +58,17 @@ from strix.tools.proxy.tools import (
 from strix.tools.reporting.tool import (
     create_dependency_report,
     create_vulnerability_report,
+    delete_vulnerability_report,
     get_report,
     list_reports,
+    update_vulnerability_report,
 )
-from strix.tools.respond.tool import respond_to_user
 from strix.tools.thinking.tool import think
+from strix.tools.threat_model.tools import (
+    amend_threat_model,
+    get_threat_model,
+    save_threat_model,
+)
 from strix.tools.todo.tools import (
     create_todo,
     delete_todo,
@@ -59,7 +77,8 @@ from strix.tools.todo.tools import (
     mark_todo_pending,
     update_todo,
 )
-from strix.tools.web_search.tool import web_search
+from strix.tools.wait_for_user.tool import wait_for_user
+from strix.tools.web_search.tool import web_get_contents, web_search
 
 
 if TYPE_CHECKING:
@@ -157,6 +176,28 @@ def _schema_types(spec: dict[str, Any]) -> set[str]:
     return types
 
 
+def _allows_null(spec: dict[str, Any]) -> bool:
+    raw = spec.get("type")
+    if raw == "null" or (isinstance(raw, list) and "null" in raw):
+        return True
+    return any(
+        isinstance(variant, dict) and _allows_null(variant) for variant in spec.get("anyOf") or ()
+    )
+
+
+def _is_nullable(key: str, spec: dict[str, Any], schema: dict[str, Any]) -> bool:
+    """Whether ``key`` may be ``None``.
+
+    Strict schemas list every property as required, so nullability shows up as a
+    ``null`` type variant; without a declared one, fall back to the property
+    being absent from a declared ``required`` list.
+    """
+    if _allows_null(spec):
+        return True
+    required = schema.get("required")
+    return isinstance(required, list) and key not in required
+
+
 def _decode_structured(value: str, types: set[str]) -> Any:
     stripped = value.strip()
     if not stripped:
@@ -171,9 +212,14 @@ def _decode_structured(value: str, types: set[str]) -> Any:
     return decoded if isinstance(decoded, wanted) else value
 
 
-def _coerce_argument(value: Any, spec: dict[str, Any]) -> Any:
+def _coerce_argument(value: Any, spec: dict[str, Any], *, nullable: bool = False) -> Any:
+    if value is None:
+        return value
+    if nullable and is_nullish(value):
+        # The model's stand-in for "no value"; as a filter it matches nothing.
+        return None
     types = _schema_types(spec)
-    if not types or value is None:
+    if not types:
         return value
     if isinstance(value, list | dict) and "string" in types and not types & {"array", "object"}:
         return json.dumps(value, ensure_ascii=False)
@@ -182,7 +228,12 @@ def _coerce_argument(value: Any, spec: dict[str, Any]) -> Any:
     return value
 
 
-def _coerce_arguments(raw_input: str, schema: dict[str, Any]) -> str:
+# Only query tools get nullish coercion: there a literal "null" is a filter that
+# matches nothing, while a tool that writes may well be given it as real content.
+_QUERY_TOOL_PREFIXES = ("list_", "search_", "view_", "get_")
+
+
+def _coerce_arguments(raw_input: str, schema: dict[str, Any], *, nullish: bool = False) -> str:
     properties = schema.get("properties")
     if not isinstance(properties, dict) or not properties:
         return raw_input
@@ -198,7 +249,9 @@ def _coerce_arguments(raw_input: str, schema: dict[str, Any]) -> str:
         spec = properties.get(key)
         if not isinstance(spec, dict):
             continue
-        coerced = _coerce_argument(value, spec)
+        coerced = _coerce_argument(
+            value, spec, nullable=nullish and _is_nullable(key, spec, schema)
+        )
         if coerced is not value:
             payload[key] = coerced
             changed = True
@@ -213,13 +266,29 @@ def _with_coerced_arguments(tool: FunctionTool) -> FunctionTool:
         return tool
     invoke_tool = tool.on_invoke_tool
     schema = tool.params_json_schema
+    nullish = tool.name.startswith(_QUERY_TOOL_PREFIXES)
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
-        return await invoke_tool(ctx, _coerce_arguments(raw_input, schema))
+        malformed = describe_malformed_arguments(tool.name, raw_input)
+        if malformed is not None:
+            logger.debug("Tool %s got malformed arguments; asking the model to re-issue", tool.name)
+            return malformed
+        return await invoke_tool(ctx, _coerce_arguments(raw_input, schema, nullish=nullish))
 
     tool.on_invoke_tool = invoke
     tool._strix_coerced = True  # type: ignore[attr-defined]
     return tool
+
+
+def _with_strictness(tool: FunctionTool, strict_schemas: bool) -> FunctionTool:
+    """Drop strict JSON-schema mode when the route can't take it (see
+    ``supports_strict_tool_schemas``); the tool stays functionally identical.
+
+    Returns a copy so the shared tool singletons keep their declared mode.
+    """
+    if strict_schemas or not tool.strict_json_schema:
+        return tool
+    return dataclasses.replace(tool, strict_json_schema=False)
 
 
 def _function_tool_with_error_result(tool: FunctionTool) -> FunctionTool:
@@ -285,24 +354,42 @@ def _bound_custom_tool(tool: CustomTool) -> CustomTool:
     return tool
 
 
-def _configure_filesystem_tools(toolset: Any, *, chat_completions: bool) -> None:
+def _configure_filesystem_tools(
+    toolset: Any, *, chat_completions: bool, strict_schemas: bool = True
+) -> None:
     for name, tool in vars(toolset).items():
         if chat_completions:
             if isinstance(tool, CustomTool):
                 setattr(toolset, name, _custom_tool_as_function_tool(tool))
             elif isinstance(tool, FunctionTool):
                 setattr(
-                    toolset, name, _function_tool_with_error_result(_with_coerced_arguments(tool))
+                    toolset,
+                    name,
+                    _function_tool_with_error_result(
+                        _with_strictness(_with_coerced_arguments(tool), strict_schemas)
+                    ),
                 )
         elif isinstance(tool, CustomTool):
             setattr(toolset, name, _bound_custom_tool(tool))
         elif isinstance(tool, FunctionTool):
-            setattr(toolset, name, _with_bounded_result(_with_coerced_arguments(tool)))
+            setattr(
+                toolset,
+                name,
+                _with_bounded_result(
+                    _with_strictness(_with_coerced_arguments(tool), strict_schemas)
+                ),
+            )
 
 
-def _make_filesystem_configurator(*, chat_completions: bool) -> Any:
+def _make_filesystem_configurator(
+    *, chat_completions: bool, strict_schemas: bool, supports_images: bool = True
+) -> Any:
     def configure(toolset: Any) -> None:
-        _configure_filesystem_tools(toolset, chat_completions=chat_completions)
+        _configure_filesystem_tools(
+            toolset, chat_completions=chat_completions, strict_schemas=strict_schemas
+        )
+        if not supports_images:
+            toolset.view_image.is_enabled = False
 
     return configure
 
@@ -355,8 +442,47 @@ def _apply_shell_output_cap(parsed: dict[str, Any]) -> None:
     )
 
 
+_EXEC_YIELD_CAP_S = PTY_YIELD_TIME_MS_MAX // 1000
+
+_EXEC_COMMAND_DESCRIPTION_NOTE = (
+    f"The wait for output is capped at {_EXEC_YIELD_CAP_S} s whatever yield_time_ms says. "
+    "A non-TTY command still running at the yield cannot be read later (write_stdin fails "
+    "on it and its output is lost): run anything longer in the background with its output "
+    "redirected to a file (`cmd > /tmp/out.log 2>&1 &`, then read the log), or start it with "
+    'tty=true and poll with write_stdin(session_id=<id>, chars="").'
+)
+
+_RUNNING_NON_TTY_NOTICE = (
+    "Note: this non-TTY process cannot be polled and its later output is lost. Rerun it in "
+    "the background (`cmd > /tmp/out.log 2>&1 &`, then read the log) or with tty=true."
+)
+
+_PROCESS_RUNNING_RE = re.compile(r"^Process running with session ID \d+$", re.MULTILINE)
+_OUTPUT_HEADER_RE = re.compile(r"^Output:\n", re.MULTILINE)
+
+
+def _annotate_running_non_tty(parsed: dict[str, Any], result: Any) -> Any:
+    if parsed.get("tty") or not isinstance(result, str):
+        return result
+    header = _OUTPUT_HEADER_RE.search(result)
+    head_end = len(result) if header is None else header.start()
+    if _PROCESS_RUNNING_RE.search(result, 0, head_end) is None:
+        return result
+    notice = _RUNNING_NON_TTY_NOTICE
+    requested = parsed.get("yield_time_ms")
+    if isinstance(requested, int | float) and requested > PTY_YIELD_TIME_MS_MAX:
+        notice = (
+            f"Note: yield_time_ms={int(requested)} was capped at {PTY_YIELD_TIME_MS_MAX} "
+            f"({_EXEC_YIELD_CAP_S} s). " + notice.removeprefix("Note: ")
+        )
+    if header is None:
+        return f"{result}\n{notice}"
+    return f"{result[: header.end()]}{notice}\n{result[header.end() :]}"
+
+
 def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
+    tool.description = f"{tool.description.rstrip()} {_EXEC_COMMAND_DESCRIPTION_NOTE}"
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
         try:
@@ -369,7 +495,7 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
             _apply_shell_output_cap(parsed)
             raw_input = json.dumps(parsed)
         try:
-            return await invoke_tool(ctx, raw_input)
+            result = await invoke_tool(ctx, raw_input)
         except ValidationError as exc:
             return _format_validation_error(tool.name, exc)
         except InvalidManifestPathError as exc:
@@ -379,6 +505,9 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
                 "(or omitted to use the turn's cwd). "
                 f"Got: {rel!r}."
             )
+        if isinstance(parsed, dict):
+            return _annotate_running_non_tty(parsed, result)
+        return result
 
     tool.on_invoke_tool = invoke
     return tool
@@ -406,11 +535,13 @@ def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
     return tool
 
 
-def _configure_shell_tools(toolset: Any, *, chat_completions: bool) -> None:
+def _configure_shell_tools(
+    toolset: Any, *, chat_completions: bool, strict_schemas: bool = True
+) -> None:
     for name, tool in vars(toolset).items():
         if not isinstance(tool, FunctionTool):
             continue
-        wrapped = _with_coerced_arguments(tool)
+        wrapped = _with_strictness(_with_coerced_arguments(tool), strict_schemas)
         if tool.name == "exec_command":
             wrapped = _wrap_exec_command(wrapped)
         elif tool.name == "write_stdin":
@@ -420,15 +551,17 @@ def _configure_shell_tools(toolset: Any, *, chat_completions: bool) -> None:
         setattr(toolset, name, wrapped)
 
 
-def _make_shell_configurator(*, chat_completions: bool) -> Any:
+def _make_shell_configurator(*, chat_completions: bool, strict_schemas: bool) -> Any:
     def configure(toolset: Any) -> None:
-        _configure_shell_tools(toolset, chat_completions=chat_completions)
+        _configure_shell_tools(
+            toolset, chat_completions=chat_completions, strict_schemas=strict_schemas
+        )
 
     return configure
 
 
 # Tools that hand control away by parking the agent rather than ending the scan.
-_PARKING_TOOLS: frozenset[str] = frozenset({"respond_to_user", "wait_for_agents"})
+_PARKING_TOOLS: frozenset[str] = frozenset({"wait_for_user", "wait_for_agents"})
 
 
 def _lifecycle_tool_completed(tool_name: str, output: Any) -> bool:
@@ -436,6 +569,8 @@ def _lifecycle_tool_completed(tool_name: str, output: Any) -> bool:
         completion_key = "agent_completed"
     elif tool_name == "finish_scan":
         completion_key = "scan_completed"
+    elif tool_name == "finish_pr_review":  # registered by strix-pro
+        completion_key = "review_completed"
     else:
         return False
 
@@ -484,6 +619,17 @@ def _finish_tool_use_behavior(
     return ToolsToFinalOutputResult(is_final_output=False, final_output=None)
 
 
+_COVERAGE_TOOLS: tuple[Tool, ...] = (record_coverage, update_coverage, list_coverage)
+_FINISH_SCAN_COVERAGE_STEP = re.compile(
+    r"\n5\. \*\*Coverage reconciliation\.\*\*.*?(?=\n\n)", re.DOTALL
+)
+
+
+def _without_coverage_step(tool: FunctionTool) -> FunctionTool:
+    description = _FINISH_SCAN_COVERAGE_STEP.sub("", tool.description)
+    return dataclasses.replace(tool, description=description)
+
+
 _BASE_TOOLS: tuple[Tool, ...] = (
     think,
     load_skill,
@@ -498,9 +644,18 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     get_note,
     update_note,
     delete_note,
+    record_coverage,
+    update_coverage,
+    list_coverage,
+    get_threat_model,
+    save_threat_model,
+    amend_threat_model,
     web_search,
+    web_get_contents,
     create_vulnerability_report,
     create_dependency_report,
+    update_vulnerability_report,
+    delete_vulnerability_report,
     list_reports,
     get_report,
     list_requests,
@@ -509,6 +664,11 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     list_sitemap,
     view_sitemap_entry,
     scope_rules,
+    list_mcps,
+    search_mcp_tools,
+    get_mcp_tool_schema,
+    describe_mcp,
+    call_mcp,
     view_agent_graph,
     send_message_to_agent,
     wait_for_agents,
@@ -566,21 +726,35 @@ def build_strix_agent(
     is_root: bool,
     scan_mode: str = "deep",
     is_whitebox: bool = False,
+    is_diff_scoped: bool = False,
     interactive: bool = False,
+    parallel_tool_calls: bool = False,
     chat_completions_tools: bool = False,
+    strict_tool_schemas: bool = True,
     system_prompt_context: dict[str, Any] | None = None,
     extra_tools: Sequence[Tool] | None = None,
     instructions_override: str | None = None,
+    supports_images: bool = True,
+    finish_tool: Tool = finish_scan,
+    report_tool: Tool = create_vulnerability_report,
+    coverage_tools: bool = True,
 ) -> SandboxAgent[Any]:
     """Build a SandboxAgent for either root or child use.
 
     Args:
         chat_completions_tools: Wrap SDK custom tools as function tools
             when the selected backend cannot accept Responses custom tools.
+        strict_tool_schemas: Send function tools as strict-schema tools. Off
+            for routes that reject a toolset this size as strict.
         extra_tools: Additional tools for this scan agent only, on top of any
             registered via ``register_agent_tools``.
         instructions_override: Use this verbatim as the system prompt instead
             of rendering the built-in scan prompt.
+        finish_tool: The tool that ends the run, given to the root agent.
+        report_tool: The tool every agent files findings with, in place of
+            ``create_vulnerability_report``.
+        coverage_tools: Give the agent the coverage ledger tools and the
+            prompt rules for them.
     """
     if instructions_override is not None:
         instructions = instructions_override
@@ -590,21 +764,31 @@ def build_strix_agent(
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
             is_root=is_root,
+            is_diff_scoped=is_diff_scoped,
             interactive=interactive,
+            parallel_tool_calls=parallel_tool_calls,
             system_prompt_context=system_prompt_context,
+            supports_images=supports_images,
+            report_tool=report_tool.name,
+            coverage_tools=coverage_tools,
         )
 
     agent_tools = [*_EXTRA_TOOLS, *(extra_tools or [])]
     if interactive:
         # Yielding to the user is only meaningful when one is attached.
-        agent_tools.append(respond_to_user)
+        agent_tools.append(wait_for_user)
+    base_tools = [report_tool if t is create_vulnerability_report else t for t in _BASE_TOOLS]
+    if not coverage_tools:
+        base_tools = [t for t in base_tools if t not in _COVERAGE_TOOLS]
+        if finish_tool is finish_scan:
+            finish_tool = _without_coverage_step(finish_scan)
     if is_root:
-        tools: list[Tool] = [*_BASE_TOOLS, *agent_tools, finish_scan]
+        tools: list[Tool] = [*base_tools, *agent_tools, finish_tool]
     else:
-        tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
+        tools = [*base_tools, *agent_tools, agent_finish]
     _ensure_unique_tool_names(tools)
     tools = [
-        _with_bounded_result(_with_coerced_arguments(tool))
+        _with_bounded_result(_with_strictness(_with_coerced_arguments(tool), strict_tool_schemas))
         if isinstance(tool, FunctionTool)
         else tool
         for tool in tools
@@ -630,11 +814,14 @@ def build_strix_agent(
             Filesystem(
                 configure_tools=_make_filesystem_configurator(
                     chat_completions=chat_completions_tools,
+                    strict_schemas=strict_tool_schemas,
+                    supports_images=supports_images,
                 ),
             ),
             Shell(
                 configure_tools=_make_shell_configurator(
                     chat_completions=chat_completions_tools,
+                    strict_schemas=strict_tool_schemas,
                 ),
             ),
         ],
@@ -645,9 +832,15 @@ def make_child_factory(
     *,
     scan_mode: str = "deep",
     is_whitebox: bool = False,
+    is_diff_scoped: bool = False,
     interactive: bool = False,
+    parallel_tool_calls: bool = False,
     chat_completions_tools: bool = False,
+    strict_tool_schemas: bool = True,
     system_prompt_context: dict[str, Any] | None = None,
+    supports_images: bool = True,
+    report_tool: Tool = create_vulnerability_report,
+    coverage_tools: bool = True,
 ) -> Any:
     """Return the runner-owned builder used by ``spawn_child_agent``.
 
@@ -663,9 +856,15 @@ def make_child_factory(
             is_root=False,
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
+            is_diff_scoped=is_diff_scoped,
             interactive=interactive,
+            parallel_tool_calls=parallel_tool_calls,
             chat_completions_tools=chat_completions_tools,
+            strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=system_prompt_context,
+            supports_images=supports_images,
+            report_tool=report_tool,
+            coverage_tools=coverage_tools,
         )
 
     return _factory

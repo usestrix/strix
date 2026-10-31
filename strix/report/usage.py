@@ -6,11 +6,55 @@ import logging
 from typing import Any
 
 from agents.usage import Usage, deserialize_usage, serialize_usage
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from strix.config.loader import load_settings
 from strix.report.pricing import resolve_litellm_model
 
 
 logger = logging.getLogger(__name__)
+
+Prices = tuple[float | None, float | None, float | None]
+
+
+def _configured_prices() -> tuple[str | None, Prices | None]:
+    llm = load_settings().llm
+    prices = (llm.input_cost_per_mtok, llm.output_cost_per_mtok, llm.cached_input_cost_per_mtok)
+    if all(price is None for price in prices):
+        return None, None
+    return (llm.model or "").strip() or None, prices
+
+
+def _configured_usage_cost(usage: Usage, prices: Prices) -> float:
+    input_rate, output_rate, cached_rate = prices
+    input_tokens = max(0, _int_or_zero(getattr(usage, "input_tokens", 0)))
+    cached_details = getattr(usage, "input_tokens_details", None)
+    cached_tokens = max(0, _int_or_zero(getattr(cached_details, "cached_tokens", 0)))
+    cached_tokens = min(cached_tokens, input_tokens)
+    output_tokens = max(0, _int_or_zero(getattr(usage, "output_tokens", 0)))
+    billable_input = input_tokens - cached_tokens
+    cost = (
+        billable_input * (input_rate or 0)
+        + cached_tokens * (cached_rate if cached_rate is not None else input_rate or 0)
+        + output_tokens * (output_rate or 0)
+    ) / 1_000_000
+    return _round_cost(cost)
+
+
+class ProviderUsage(BaseModel):
+    """Running totals for one upstream provider OpenRouter routed calls to."""
+
+    requests: int = 0
+    input_tokens: int = 0
+    cached_tokens: int = 0
+    cost: float = 0.0
+    # Calls that didn't find the agent's whole previous prompt cached, and the
+    # previous-prompt tokens they had to pay for again.
+    cache_misses: int = 0
+    missed_tokens: int = 0
+
+
+_PROVIDER_USAGE = TypeAdapter(dict[str, ProviderUsage])
 
 
 class LLMUsageLedger:
@@ -20,9 +64,14 @@ class LLMUsageLedger:
         self._total_usage = Usage()
         self._agent_usage: dict[str, Usage] = {}
         self._agent_metadata: dict[str, dict[str, str]] = {}
+        self._agent_estimated_cost: dict[str, float] = {}
         self._observed_cost = 0.0
         self._estimated_cost = 0.0
         self._has_observed_cost = False
+        # Keyed by upstream provider name, e.g. "Z.AI" or "DeepInfra".
+        self._providers: dict[str, ProviderUsage] = {}
+        # Each agent's last prompt size, which its next call should find cached.
+        self._last_input_tokens: dict[str, int] = {}
         # When True, tokens are still tracked but cost stays $0 — the run is on a
         # model subscription, so there is no metered per-token charge to report.
         self.zero_cost = False
@@ -52,6 +101,9 @@ class LLMUsageLedger:
             estimated = _estimate_litellm_cost(usage, model)
             if estimated:
                 self._estimated_cost += estimated
+                self._agent_estimated_cost[normalized_agent_id] = (
+                    self._agent_estimated_cost.get(normalized_agent_id, 0.0) + estimated
+                )
 
         return True
 
@@ -62,15 +114,55 @@ class LLMUsageLedger:
             self._observed_cost += float(cost)
             self._has_observed_cost = True
 
+    def record_provider(
+        self,
+        provider: str,
+        *,
+        agent_id: str | None,
+        input_tokens: int,
+        cached_tokens: int,
+        cost: float,
+        cache_block_tokens: int,
+    ) -> None:
+        tally = self._providers.setdefault(provider, ProviderUsage())
+        tally.requests += 1
+        tally.input_tokens += input_tokens
+        tally.cached_tokens += cached_tokens
+        if agent_id:
+            previous = self._last_input_tokens.get(agent_id, 0)
+            # The previous prompt is a prefix of this one, so all of it but a
+            # partial last block should read back cached. A shrinking prompt means
+            # compaction rewrote it, so a miss is expected.
+            missed = previous - cached_tokens
+            if input_tokens >= previous and missed >= cache_block_tokens:
+                tally.cache_misses += 1
+                tally.missed_tokens += missed
+            self._last_input_tokens[agent_id] = input_tokens
+        if not self.zero_cost:
+            tally.cost = _round_cost(tally.cost + cost)
+
     @property
     def total_cost(self) -> float:
         if self.zero_cost:
             return 0.0
+        model, prices = _configured_prices()
+        if prices is not None:
+            return _round_cost(
+                sum(self._configured_agent_cost(aid, model, prices) for aid in self._agent_usage)
+            )
         return _round_cost(self._observed_cost if self._has_observed_cost else self._estimated_cost)
+
+    def _configured_agent_cost(self, agent_id: str, model: str | None, prices: Prices) -> float:
+        if self._agent_metadata.get(agent_id, {}).get("model") == model:
+            return _configured_usage_cost(self._agent_usage[agent_id], prices)
+        return self._agent_estimated_cost.get(agent_id, 0.0)
 
     def to_record(self) -> dict[str, Any]:
         record = serialize_usage(self._total_usage)
-        record["cost"] = self.total_cost
+        model, prices = _configured_prices()
+        total_cost = self.total_cost
+        record["cost"] = total_cost
+        record["providers"] = {name: tally.model_dump() for name, tally in self._providers.items()}
         record["agents"] = []
 
         agent_tokens = {aid: _resolve_total_tokens(u) for aid, u in self._agent_usage.items()}
@@ -79,7 +171,11 @@ class LLMUsageLedger:
             usage = self._agent_usage[agent_id]
             metadata = self._agent_metadata.get(agent_id, {})
             agent_cost = (
-                self.total_cost * (agent_tokens[agent_id] / total_tokens) if total_tokens else 0.0
+                self._configured_agent_cost(agent_id, model, prices)
+                if prices is not None and not self.zero_cost
+                else total_cost * (agent_tokens[agent_id] / total_tokens)
+                if total_tokens
+                else 0.0
             )
 
             agent_record = serialize_usage(usage)
@@ -99,12 +195,19 @@ class LLMUsageLedger:
         self._total_usage = Usage()
         self._agent_usage.clear()
         self._agent_metadata.clear()
+        self._agent_estimated_cost.clear()
         self._observed_cost = 0.0
         self._estimated_cost = 0.0
         self._has_observed_cost = False
+        self._providers = {}
 
         if not isinstance(raw_usage, dict):
             return
+
+        try:
+            self._providers = _PROVIDER_USAGE.validate_python(raw_usage.get("providers") or {})
+        except ValidationError:
+            logger.exception("Failed to hydrate llm_usage providers from run.json")
 
         try:
             self._total_usage = deserialize_usage(raw_usage)
@@ -128,6 +231,7 @@ class LLMUsageLedger:
                 logger.exception("Failed to hydrate llm_usage for agent %s", agent_id)
                 self._agent_usage[agent_id] = Usage()
 
+            self._agent_estimated_cost[agent_id] = _float_or_zero(raw_agent.get("cost"))
             metadata: dict[str, str] = {}
             agent_name = raw_agent.get("agent_name")
             model = raw_agent.get("model")

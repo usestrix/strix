@@ -8,8 +8,6 @@ import logging
 from functools import lru_cache
 from typing import Any
 
-import litellm
-
 from strix.config import load_settings
 
 
@@ -38,6 +36,8 @@ def _lookup_key(model: str) -> str:
 
 def _safe_get_model_info(model: str) -> dict[str, Any] | None:
     try:
+        import litellm
+
         return dict(litellm.get_model_info(model))
     except Exception:  # noqa: BLE001 - unmapped models raise; caller falls back.
         return None
@@ -82,6 +82,8 @@ def count_tokens(model: str, text: str) -> int:
     if not text:
         return 0
     try:
+        import litellm
+
         return int(litellm.token_counter(model=_lookup_key(model), text=text))
     except Exception:  # noqa: BLE001 - tokenizer may be unavailable for some models.
         return len(text.encode("utf-8"))

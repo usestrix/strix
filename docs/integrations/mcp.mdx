@@ -1,0 +1,131 @@
+---
+title: "MCP Servers"
+description: "Connect your own MCP servers and expose their tools to the agent"
+---
+
+Strix can connect to [Model Context Protocol (MCP)](https://modelcontextprotocol.io) servers you list and expose their tools to the agent during a run. Use this to let the agent read how your system is actually built instead of inferring it from the outside.
+
+A few things it pays off for:
+
+- **A database server.** The agent can read the schema and access policies and see tables left readable without them, rather than guessing from responses.
+- **A hosting or infrastructure server.** Deployments, domains and environment variable names tell it what is really running, so it tests what exists instead of what it discovered by crawling.
+- **An issue tracker.** Known and accepted risks stop the agent re-reporting findings you already triaged.
+- **A logging server.** Reading logs lets it confirm an exploit attempt actually landed instead of inferring it from a status code.
+
+## Setup
+
+Create the file `~/.strix/mcp-servers.json`. It holds a JSON list of the servers you want the agent to reach. Each entry is either a local `stdio` server that Strix launches as a subprocess, or a remote `http` server.
+
+Create the directory if it does not exist, then write the file:
+
+```bash
+mkdir -p ~/.strix
+```
+
+Paste the servers you want into `~/.strix/mcp-servers.json`. The example below shows one of each transport: a local filesystem server over `stdio` and a remote GitHub server over `http` with a bearer token:
+
+```json
+[
+  {
+    "name": "local_fs",
+    "transport": "stdio",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/project"]
+  },
+  {
+    "name": "github",
+    "transport": "http",
+    "url": "https://api.githubcopilot.com/mcp/",
+    "auth": { "kind": "bearer", "token": "your-token" },
+    "allowed_tools": ["list_issues"]
+  }
+]
+```
+
+Strix reads this file at the start of each run. There is no default file, so no MCP tools are loaded until you create it. Edit `command`, `args`, `url`, and `token` to match your own servers.
+
+## Fields
+
+<ParamField path="name" type="string" required>
+  A short label for the connection. Each server's tools are namespaced by
+  `name` (for example `local_fs_read_file`), so two servers can offer the same
+  tool name without colliding.
+</ParamField>
+
+<ParamField path="transport" type="string">
+  `stdio` for a local subprocess server, or `http` for a remote server.
+</ParamField>
+
+<ParamField path="command" type="string">
+  For `stdio` servers: the executable Strix launches (for example `npx`).
+</ParamField>
+
+<ParamField path="args" type="array">
+  For `stdio` servers: the arguments passed to `command`.
+</ParamField>
+
+<ParamField path="url" type="string">
+  For `http` servers: the server endpoint URL.
+</ParamField>
+
+<ParamField path="auth" type="object">
+  For `http` servers that need a bearer token:
+  `{ "kind": "bearer", "token": "your-token" }`.
+</ParamField>
+
+<ParamField path="allowed_tools" type="array">
+  Restrict which tools the agent can call. Omit it to expose every tool the
+  server offers, or set it to a list of tool names to allow only those. Strix
+  does not decide for you which of a server's tools only read and which change
+  things, so run the server in its own read-only mode if it has one.
+</ParamField>
+
+<ParamField path="notes" type="string">
+  Free-text notes for the agent about what this connection is and how you want
+  it used, for example "Staging analytics database, read-only, prefer aggregate
+  queries." When set, the notes are given to the agent at the start of the run
+  as a description of the connection.
+</ParamField>
+
+## Choosing connections per run
+
+By default every connection in the file is used on each run. To narrow it for a
+single run without editing the file, use either flag (both repeatable):
+
+```bash
+strix --mcp-server github -t ...        # use only the named connection(s)
+strix --mcp-exclude staging-db -t ...   # use everything except the named one(s)
+```
+
+`--mcp-server` keeps only the connections you name; `--mcp-exclude` drops the
+ones you name. Connection names must be unique in the file; if two entries share
+a name, the first is kept and the rest are ignored.
+
+## Pointing at a different file
+
+To read the config from another path instead of `~/.strix/mcp-servers.json`, either pass `--mcp-config <path>` on the command line:
+
+```bash
+strix --mcp-config ./mcp-servers.json -t ...
+```
+
+or set the `STRIX_MCP_CONFIG` environment variable to that path. The flag takes precedence when both are given.
+
+## Startup confirmation
+
+When servers are configured, Strix prints a one-line summary at scan startup, for example `MCP: connected 1 server (14 tools): local_fs`, so you can confirm your servers connected.
+
+## Seeing the calls
+
+Each call the agent makes to one of your servers is shown with its own icon and
+labelled with the connection it went out to, in the terminal and in the run
+viewer (`strix view`), so a call that left Strix for a server you connected is
+easy to pick out of a transcript. The terminal shows the call and its arguments;
+results can be large and arbitrary, so read them in the viewer, which shows a
+preview you can expand.
+
+## Behavior
+
+- The config file is optional. Without it, a run simply gets no MCP tools.
+- A server that fails to connect is skipped and logged, and the run continues without it.
+- A single malformed entry is skipped without blocking the valid ones.

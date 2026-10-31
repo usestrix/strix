@@ -12,6 +12,7 @@ would let it escape and surface a traceback on every teardown.
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -20,6 +21,10 @@ from docker import errors as docker_errors
 from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from strix.runtime.docker_client import StrixDockerSandboxClient
+
+
+if TYPE_CHECKING:
+    from agents.sandbox.session.sandbox_session import SandboxSession
 
 
 def _client_with_kill_error(exc: Exception) -> StrixDockerSandboxClient:
@@ -31,9 +36,10 @@ def _client_with_kill_error(exc: Exception) -> StrixDockerSandboxClient:
     return client
 
 
-def _session() -> object:
+def _session(container_id: str | None = "abc123") -> SandboxSession:
     # delete() reads session._inner.state.container_id
-    return SimpleNamespace(_inner=SimpleNamespace(state=SimpleNamespace(container_id="abc123")))
+    fake = SimpleNamespace(_inner=SimpleNamespace(state=SimpleNamespace(container_id=container_id)))
+    return cast("SandboxSession", fake)
 
 
 @pytest.mark.parametrize(
@@ -45,7 +51,7 @@ def _session() -> object:
     ],
 )
 @pytest.mark.asyncio
-async def test_delete_swallows_best_effort_kill_errors(exc):
+async def test_delete_swallows_best_effort_kill_errors(exc: Exception) -> None:
     """A torn-down socket (ConnectionError) or a gone/unhappy container
     (NotFound/APIError) during the kill must not propagate; delete() still
     delegates to the SDK's delete()."""
@@ -62,7 +68,7 @@ async def test_delete_swallows_best_effort_kill_errors(exc):
 
 
 @pytest.mark.asyncio
-async def test_delete_does_not_swallow_unrelated_errors():
+async def test_delete_does_not_swallow_unrelated_errors() -> None:
     """A programming error (e.g. ValueError) is not part of best-effort kill and
     must still propagate."""
     client = _client_with_kill_error(ValueError("boom"))
@@ -71,11 +77,11 @@ async def test_delete_does_not_swallow_unrelated_errors():
 
 
 @pytest.mark.asyncio
-async def test_delete_noop_without_container_id():
+async def test_delete_noop_without_container_id() -> None:
     """No container_id -> no kill attempt, just delegate."""
     client = StrixDockerSandboxClient.__new__(StrixDockerSandboxClient)
     client.docker_client = MagicMock()
-    session = SimpleNamespace(_inner=SimpleNamespace(state=SimpleNamespace(container_id=None)))
+    session = _session(container_id=None)
 
     with patch.object(
         DockerSandboxClient, "delete", new=AsyncMock(return_value=session)

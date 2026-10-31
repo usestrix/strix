@@ -58,6 +58,12 @@ For each route, identify:
 
 ## Key Vulnerabilities
 
+### Starlette Request Handling
+
+Resolve Starlette's version independently of FastAPI and identify the ASGI server/front proxy. Check current upstream advisories and any vendor backports for the installed build before treating a parser issue as applicable. Compare middleware authorization against the actual routed path: malformed Host values can alter reconstructed `request.url` without changing routing ([URL parsing advisory](https://github.com/Kludex/starlette/security/advisories/GHSA-86qp-5c8j-p5mr)).
+
+For `request.form()`, test URL-encoded and multipart limits separately; a limit enforced on one parser may not constrain the other. Check whether crossing an upload's memory-to-disk spool threshold blocks the event loop ([form limits](https://github.com/Kludex/starlette/security/advisories/GHSA-82w8-qh3p-5jfq), [file spooling](https://github.com/Kludex/starlette/security/advisories/GHSA-2c2j-9gv5-cj73)).
+
 ### Authentication & Authorization
 
 **Dependency Injection Gaps**

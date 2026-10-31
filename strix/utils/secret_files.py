@@ -23,9 +23,26 @@ def write_secret_text(path: Path, text: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            tmp.unlink()
+    except BaseException as exc:
+        _cleanup_tmp(tmp, exc)
         raise
 
-    tmp.replace(path)
+    try:
+        tmp.replace(path)
+    except BaseException as exc:
+        _cleanup_tmp(tmp, exc)
+        raise
+
+
+def _cleanup_tmp(tmp: Path, cause: BaseException) -> None:
+    """Delete the temporary secret file. A failed delete must not stay silent."""
+    try:
+        tmp.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        message = (
+            f"could not store the secret, and the temporary file {tmp} "
+            f"still holds it. Delete the file manually."
+        )
+        raise OSError(message) from cause

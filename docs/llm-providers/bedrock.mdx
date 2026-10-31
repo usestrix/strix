@@ -3,18 +3,10 @@ title: "AWS Bedrock"
 description: "Configure Strix with models via AWS Bedrock"
 ---
 
-## Installation
-
-Bedrock requires the AWS SDK dependency. Install Strix with the bedrock extra:
-
-```bash
-pipx install "strix-agent[bedrock]"
-```
-
 ## Setup
 
 ```bash
-export STRIX_LLM="bedrock/anthropic.claude-4-5-sonnet-20251022-v1:0"
+export STRIX_LLM="bedrock/us.anthropic.claude-sonnet-5-5"
 ```
 
 No API key required—uses AWS credentials from environment.
@@ -44,10 +36,13 @@ Automatically uses instance role credentials.
 
 | Model | Description |
 |-------|-------------|
-| `bedrock/anthropic.claude-4-5-sonnet-20251022-v1:0` | Claude 4.5 Sonnet |
-| `bedrock/anthropic.claude-4-5-opus-20251022-v1:0` | Claude 4.5 Opus |
-| `bedrock/anthropic.claude-4-5-haiku-20251022-v1:0` | Claude 4.5 Haiku |
-| `bedrock/amazon.titan-text-premier-v2:0` | Amazon Titan Premier v2 |
+| `bedrock/us.anthropic.claude-sonnet-5-5` | Claude Sonnet 5.5 |
+| `bedrock/us.anthropic.claude-opus-5-5` | Claude Opus 5.5 |
+| `bedrock/us.anthropic.claude-haiku-5-5` | Claude Haiku 5.5 |
+
+<Note>
+Security testing with Claude needs the [Cyber Verification Program](https://support.claude.com/en/articles/14604842-cyber-verification-program) (CVP), also on Bedrock.
+</Note>
 
 ## Prerequisites
 

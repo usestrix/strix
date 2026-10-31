@@ -177,9 +177,17 @@ async def _launch_windows_tui_process(
     return windows_process, connection
 
 
+class TuiProcessExitedError(RuntimeError):
+    """The Go TUI process ended with a non-zero status."""
+
+    def __init__(self, return_code: int) -> None:
+        super().__init__(f"Bubble Tea TUI exited with status {return_code}")
+        self.return_code = return_code
+
+
 def check_return_code(return_code: int) -> None:
     if return_code != 0:
-        raise RuntimeError(f"Bubble Tea TUI exited with status {return_code}")
+        raise TuiProcessExitedError(return_code)
 
 
 def package_version() -> str:

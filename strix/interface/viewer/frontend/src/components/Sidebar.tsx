@@ -14,6 +14,7 @@ import { IoChatbubblesOutline } from "react-icons/io5";
 import { cn } from "@/lib/utils";
 import { ctaUrl, trackCta } from "@/lib/cta";
 import { UpgradeModal } from "@/components/UpgradeModal";
+import type { McpConnectionStatus } from "@/data/serverSource";
 import type { View } from "@/App";
 
 /**
@@ -37,6 +38,8 @@ interface SidebarProps {
   onSelectView: (view: View) => void;
   issuesCount: number;
   agentCount: number;
+  mcpConnections: McpConnectionStatus[];
+  mcpInUse: Set<string>;
   runCount: number;
   finished: boolean;
   verified: boolean;
@@ -61,6 +64,8 @@ export default function Sidebar({
   onSelectView,
   issuesCount,
   agentCount,
+  mcpConnections,
+  mcpInUse,
   runCount,
   finished,
   verified,
@@ -246,6 +251,9 @@ export default function Sidebar({
                 onClick={() => onSelectView("agents")}
               />
             )}
+            {mcpConnections.length > 0 && (
+              <McpConnectionsPanel connections={mcpConnections} inUse={mcpInUse} />
+            )}
             <NavItem
               icon={<History className="h-4 w-4" />}
               label="Past runs"
@@ -418,6 +426,84 @@ function NavItem({ icon, label, active, onClick, count }: NavItemProps) {
         </span>
       )}
     </button>
+  );
+}
+
+// The quarter-circle sweep frames the terminal UI cycles for an in-use
+// connection, and the sub-second tick that advances them.
+const SWEEP_FRAMES = ["◐", "◓", "◑", "◒"] as const;
+const SWEEP_MS = 220;
+
+/**
+ * The MCP connections panel: a compact roster of the run's connected MCP
+ * servers, matching the terminal UI's sidebar panel. A header carries the
+ * total count; each row shows a status glyph, the connection name, and its
+ * tool count (or "offline"):
+ *   - solid green dot: attached and idle;
+ *   - green cycling quarter-circle (◐◓◑◒): a tool call is running against it;
+ *   - red dot + "offline": the connection's live session has died.
+ *
+ * "In use" is derived by the caller from the connection-tagged tool events, not
+ * carried on the roster, so a call in flight shows motion with no extra signal.
+ * The roster scrolls within a bounded height so a long list never blows out the
+ * rail, mirroring how the nav above it scrolls.
+ */
+function McpConnectionsPanel({
+  connections,
+  inUse,
+}: {
+  connections: McpConnectionStatus[];
+  inUse: Set<string>;
+}) {
+  const anyInUse = connections.some((c) => !c.dead && inUse.has(c.name));
+  const [frame, setFrame] = useState(0);
+
+  // Advance the sweep only while at least one connection is in use, so an idle
+  // panel does no work.
+  useEffect(() => {
+    if (!anyInUse) return;
+    const id = setInterval(() => setFrame((f) => (f + 1) % SWEEP_FRAMES.length), SWEEP_MS);
+    return () => clearInterval(id);
+  }, [anyInUse]);
+
+  return (
+    <div className="mt-1">
+      <div className="flex h-7 items-center px-2 text-[11px] font-medium text-[#666]">
+        MCP Connections ({connections.length})
+      </div>
+      <div className="max-h-48 overflow-y-auto overflow-x-clip scrollbar-thin">
+        {connections.map((conn) => {
+          const busy = !conn.dead && inUse.has(conn.name);
+          return (
+            <div
+              key={conn.name}
+              className="flex h-7 items-center gap-2 rounded-md px-2"
+              title={conn.provider ? `${conn.name} · ${conn.provider}` : conn.name}
+            >
+              <span
+                className={cn(
+                  "w-3 flex-none text-center text-[11px] leading-none",
+                  conn.dead ? "text-red-400" : "text-emerald-400"
+                )}
+                aria-hidden="true"
+              >
+                {conn.dead ? "●" : busy ? SWEEP_FRAMES[frame] : "●"}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[#ededed]">
+                {conn.name}
+              </span>
+              {conn.dead ? (
+                <span className="flex-none text-[11px] text-red-400">offline</span>
+              ) : (
+                <span className="flex-none text-[11px] tabular-nums text-[#666]">
+                  {conn.toolCount} {conn.toolCount === 1 ? "tool" : "tools"}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

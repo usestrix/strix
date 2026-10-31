@@ -134,6 +134,10 @@ Parser precedence varies; may bypass validation. Also test default argument valu
 
 Send unexpected keys in input objects; backends may pass them to resolvers or downstream logic.
 
+### OneOf Inputs
+
+Discover `@oneOf` input types through the schema or `__Type.isOneOf`. They require exactly one non-null field, with every other field omitted. Test both inline literals and variables with zero fields, two selectors, and an extra null-valued selector; all must fail coercion. Then test authorization independently for each valid selector (ID, username, organization/email), since schema exclusivity does not ensure identical tenant checks in each resolver branch. Confirm the deployed implementation supports OneOf before treating acceptance as a specification violation ([GraphQL September 2025](https://spec.graphql.org/September2025/#sec-OneOf-Input-Objects)).
+
 ### Cursor Manipulation
 
 Decode cursors (usually base64) to:

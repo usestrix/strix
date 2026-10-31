@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any, cast
 
@@ -9,11 +10,38 @@ import pytest
 from strix.core.sessions import open_agent_session
 
 
-def _count_open_fds() -> int | None:
+def _fd_dir() -> Path | None:
     for path in (Path("/proc/self/fd"), Path("/dev/fd")):
         if path.is_dir():
-            return len(list(path.iterdir()))
+            return path
     return None
+
+
+def _count_open_fds() -> int | None:
+    fd_dir = _fd_dir()
+    return None if fd_dir is None else len(list(fd_dir.iterdir()))
+
+
+def _count_open_fds_to(files: list[Path]) -> int | None:
+    """Count the descriptors this process holds on exactly ``files``.
+
+    Matching on inode rather than on the process-wide total keeps the check
+    immune to sockets and pipes that unrelated background threads open while
+    the test runs.
+    """
+    fd_dir = _fd_dir()
+    if fd_dir is None:
+        return None
+    wanted = {(stat.st_dev, stat.st_ino) for stat in (path.stat() for path in files)}
+    held = 0
+    for entry in fd_dir.iterdir():
+        try:
+            stat = os.fstat(int(entry.name))
+        except (OSError, ValueError):
+            continue
+        if (stat.st_dev, stat.st_ino) in wanted:
+            held += 1
+    return held
 
 
 @pytest.mark.asyncio
@@ -25,21 +53,20 @@ async def test_sessions_hold_no_descriptors_while_parked(tmp_path: Path) -> None
     scan, and fan-out multiplies those handles until the process runs out of file
     descriptors (#1018). A session that is not mid-operation should hold none.
     """
-    baseline = _count_open_fds()
-    if baseline is None:
+    if _fd_dir() is None:
         pytest.skip("no /proc/self/fd or /dev/fd on this platform")
 
-    sessions = [open_agent_session(f"a{i}", tmp_path / f"s{i}.db") for i in range(60)]
+    db_paths = [tmp_path / f"s{i}.db" for i in range(60)]
+    sessions = [open_agent_session(f"a{i}", path) for i, path in enumerate(db_paths)]
     try:
         for _ in range(4):
             await asyncio.gather(
                 *(s.add_items([{"role": "user", "content": "x"}]) for s in sessions)
             )
             await asyncio.gather(*(s.get_items() for s in sessions))
-        parked = _count_open_fds()
-        assert parked is not None
-        # 60 parked sessions, yet descriptors are back at the baseline.
-        assert parked - baseline <= 5, f"parked fds grew by {parked - baseline}"
+        parked = _count_open_fds_to(db_paths)
+        # 60 parked sessions, yet none of them holds its database open.
+        assert parked == 0, f"parked sessions hold {parked} database descriptors"
     finally:
         for s in sessions:
             s.close()

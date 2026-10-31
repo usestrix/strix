@@ -94,6 +94,8 @@ curl https://BUCKET.s3.amazonaws.com/
 
 ### IAM Privilege Escalation
 
+**Resource control policies:** AWS Organizations RCPs impose an organization-level limit on supported resources, including access by external principals. Map resource-account RCPs as well as principal-account SCPs, identity/resource policies, session policies, and permission boundaries when assessing a cross-account or leaked-key path. RCPs do not grant access and do not apply uniformly to every service; an identity-policy allow alone does not describe the effective permission ([AWS RCP documentation](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_rcps.html)).
+
 Common escalation paths (verify with `aws iam simulate-principal-policy` when possible):
 
 | Permission | Escalation |

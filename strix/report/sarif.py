@@ -40,6 +40,10 @@ Design notes:
   * Findings without safe locations still appear in the SARIF output,
     anchored to SECURITY.md and flagged via
     ``properties.synthetic_location`` rather than being dropped silently.
+  * Coverage rides in the same document as non-failing results (``kind`` of
+    ``pass`` / ``notApplicable`` / ``open``), and run completeness on
+    ``run.invocations``. Consumers that only want alerts filter on
+    ``kind == "fail"`` and are unaffected.
 """
 
 from __future__ import annotations
@@ -199,6 +203,7 @@ def build_sarif_report(
     *,
     tool_version: str | None = None,
     repository_context: dict[str, Any] | None = None,
+    coverage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a SARIF 2.1.0 document for findings.
 
@@ -208,6 +213,11 @@ def build_sarif_report(
     ``versionControlProvenance`` + ``automationDetails`` so code-scanning
     can bind alerts to the scanned commit; it is omitted for URL / IP
     (DAST) targets that have no repository.
+
+    ``coverage`` (optional) is the document from
+    :func:`strix.report.coverage.build_coverage_document`: its cleared
+    surfaces become non-failing results and its completeness caveats become
+    invocation notifications.
 
     Findings without safe source locations are anchored synthetically
     to SECURITY.md and flagged via ``properties.synthetic_location``.
@@ -247,6 +257,9 @@ def build_sarif_report(
             )
         )
 
+    if coverage:
+        _append_coverage(coverage, rules_by_id, rule_index_by_id, results)
+
     driver: dict[str, Any] = {
         "name": TOOL_NAME,
         "informationUri": TOOL_INFORMATION_URI,
@@ -259,6 +272,9 @@ def build_sarif_report(
         "tool": {"driver": driver},
         "results": results,
     }
+
+    if coverage:
+        run["invocations"] = [_coverage_invocation(coverage)]
 
     run_properties: dict[str, Any] = {}
     if synthetic_location_count:
@@ -292,6 +308,7 @@ def write_sarif_report(
     *,
     tool_version: str | None = None,
     repository_context: dict[str, Any] | None = None,
+    coverage: dict[str, Any] | None = None,
 ) -> None:
     """Write a SARIF report to disk, creating parent directories first.
 
@@ -304,6 +321,7 @@ def write_sarif_report(
         vulnerability_reports,
         tool_version=tool_version,
         repository_context=repository_context,
+        coverage=coverage,
     )
     tmp_path = output_path.with_name(f"{output_path.name}.{os.getpid()}.tmp")
     try:
@@ -321,6 +339,7 @@ def write_sarif(
     *,
     tool_version: str | None = None,
     repository_context: dict[str, Any] | None = None,
+    coverage: dict[str, Any] | None = None,
     filename: str = "findings.sarif",
 ) -> Path:
     """Write ``findings.sarif`` alongside existing outputs in ``run_dir``.
@@ -335,6 +354,7 @@ def write_sarif(
         reports,
         tool_version=tool_version,
         repository_context=repository_context,
+        coverage=coverage,
     )
     logger.info(
         "Wrote SARIF 2.1.0 report: %s (%d results)",
@@ -526,6 +546,11 @@ def _result_properties(
         "impact",
         "technical_analysis",
         "remediation_steps",
+        "counterevidence",
+        "confidence",
+        "confidence_rationale",
+        "severity_change_conditions",
+        "fix_verification",
     ):
         value = report.get(key)
         if value not in (None, ""):
@@ -611,6 +636,115 @@ def _build_fixes(report: dict[str, Any]) -> list[dict[str, Any]] | None:
     if remediation:
         fix["description"] = {"text": remediation, "markdown": remediation}
     return [fix]
+
+
+# ---------------------------------------------------------------------------
+# Coverage
+# ---------------------------------------------------------------------------
+
+_COVERAGE_RULE_PREFIX = "strix-coverage"
+
+# ``reported`` is absent on purpose: those surfaces are already in ``results``
+# as ``fail`` findings.
+_OUTCOME_TO_KIND = {
+    "no_issue_found": "pass",
+    "ruled_out": "pass",
+    "not_applicable": "notApplicable",
+    "needs_follow_up": "open",
+}
+
+
+def _coverage_rule_id(risk_area: str) -> str:
+    slug = _slugify(risk_area) or "unspecified"
+    return f"{_COVERAGE_RULE_PREFIX}/{slug}"
+
+
+def _build_coverage_rule(rule_id: str, risk_area: str) -> dict[str, Any]:
+    description = f"Coverage of {risk_area} across the assessed attack surface."
+    return {
+        "id": rule_id,
+        "name": _rule_name(rule_id, risk_area),
+        "shortDescription": {"text": f"Coverage: {risk_area}"},
+        "fullDescription": {"text": description},
+        "defaultConfiguration": {"level": "none"},
+        "help": {"text": description, "markdown": description},
+        "properties": {"tags": ["coverage"]},
+    }
+
+
+def _build_coverage_result(
+    rule_id: str,
+    rule_index: int,
+    kind: str,
+    entry: dict[str, Any],
+) -> dict[str, Any]:
+    surface = _string_value(entry.get("surface")) or "unspecified surface"
+    risk_area = _string_value(entry.get("risk_area")) or "unspecified risk"
+    evidence = _string_value(entry.get("evidence"))
+    label = _string_value(entry.get("outcome_label")) or str(entry.get("outcome", ""))
+
+    message = f"{risk_area} — {label}: {surface}"
+    if evidence:
+        message = f"{message}\n\n{evidence}"
+
+    result: dict[str, Any] = {
+        "ruleId": rule_id,
+        "ruleIndex": rule_index,
+        "kind": kind,
+        # SARIF requires ``level: none`` for any result whose kind is not ``fail``.
+        "level": "none",
+        "message": {"text": message},
+        "locations": [{"logicalLocations": [{"fullyQualifiedName": surface}]}],
+        "properties": {
+            "strix": {
+                "coverage_outcome": entry.get("outcome", ""),
+                "risk_area": risk_area,
+                "surface": surface,
+                "recorded_by": entry.get("recorded_by", ""),
+                "source": entry.get("source", "agent_reported"),
+            }
+        },
+    }
+    return result
+
+
+def _append_coverage(
+    coverage: dict[str, Any],
+    rules_by_id: dict[str, dict[str, Any]],
+    rule_index_by_id: dict[str, int],
+    results: list[dict[str, Any]],
+) -> None:
+    entries = coverage.get("entries")
+    if not isinstance(entries, list):
+        return
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        kind = _OUTCOME_TO_KIND.get(str(entry.get("outcome", "")))
+        if kind is None:
+            continue
+        rule_id = _coverage_rule_id(str(entry.get("risk_area", "")))
+        if rule_id not in rules_by_id:
+            rule_index_by_id[rule_id] = len(rules_by_id)
+            rules_by_id[rule_id] = _build_coverage_rule(
+                rule_id, _string_value(entry.get("risk_area")) or "unspecified risk"
+            )
+        results.append(_build_coverage_result(rule_id, rule_index_by_id[rule_id], kind, entry))
+
+
+def _coverage_invocation(coverage: dict[str, Any]) -> dict[str, Any]:
+    """``executionSuccessful: false`` stops a truncated run reading as a clean one."""
+    completeness = coverage.get("completeness")
+    completeness = completeness if isinstance(completeness, dict) else {}
+    caveats = completeness.get("caveats")
+    caveats = caveats if isinstance(caveats, list) else []
+
+    invocation: dict[str, Any] = {"executionSuccessful": bool(completeness.get("complete", True))}
+    if caveats:
+        invocation["toolExecutionNotifications"] = [
+            {"level": "warning", "message": {"text": str(caveat)}} for caveat in caveats
+        ]
+    return invocation
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,49 @@
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns:
+          - '*'
+
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      python:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: gomod
+    directory: /strix/interface/tui
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      go:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /strix/interface/viewer/frontend
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      viewer:
+        update-types:
+          - minor
+          - patch

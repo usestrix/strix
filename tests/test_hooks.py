@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from agents.usage import Usage
 
+from strix.config import loader
+from strix.core.agents import AgentCoordinator
 from strix.core.hooks import (
     BudgetExceededError,
     BudgetPausedError,
@@ -14,6 +18,11 @@ from strix.core.hooks import (
     SubagentBudgetReservedError,
     recomputed_budget_flags,
 )
+from strix.report.usage import LLMUsageLedger
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _make_hooks(max_budget: float | None) -> ReportUsageHooks:
@@ -82,6 +91,38 @@ async def test_over_budget_raises() -> None:
         pytest.raises(BudgetExceededError),
     ):
         await hooks.on_llm_end(_make_context(), MagicMock(), MagicMock())
+
+
+@pytest.mark.asyncio
+async def test_manual_rates_make_unpriced_model_trip_budget(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("STRIX_LLM", "test-model")
+    monkeypatch.setenv("STRIX_LLM_INPUT_COST_PER_MTOK", "10")
+    monkeypatch.delenv("STRIX_LLM_OUTPUT_COST_PER_MTOK", raising=False)
+    monkeypatch.delenv("STRIX_LLM_CACHED_INPUT_COST_PER_MTOK", raising=False)
+    monkeypatch.setattr(loader, "_override", tmp_path / "missing.json")
+    monkeypatch.setattr(loader, "_cached", None)
+    usage = Usage()
+    usage.requests = 1
+    usage.input_tokens = 1000
+    usage.total_tokens = 1000
+    ledger = LLMUsageLedger()
+
+    class ReportState:
+        def record_sdk_usage(self, **kwargs: Any) -> None:
+            ledger.record(**kwargs)
+
+        def get_total_llm_cost(self) -> float:
+            return ledger.total_cost
+
+    hooks = _make_hooks(0.005)
+    response: Any = SimpleNamespace(usage=usage)
+    with (
+        patch("strix.core.hooks.get_global_report_state", return_value=ReportState()),
+        pytest.raises(BudgetExceededError),
+    ):
+        await hooks.on_llm_end(_make_context(), MagicMock(), response)
 
 
 @pytest.mark.asyncio
@@ -335,6 +376,21 @@ async def test_budget_warning_root_directive_distinct_from_subagent() -> None:
     assert "confirmed" in sub
 
 
+@pytest.mark.asyncio
+async def test_root_directive_names_the_coordinators_finish_tool() -> None:
+    hooks = ReportUsageHooks(model="test-model", max_turns=100)
+    coordinator = AgentCoordinator()
+    coordinator.root_finish_tool = "finish_pr_review"
+    ctx = _make_warn_context(requests=85, parent_id=None)
+    ctx.context["coordinator"] = coordinator
+
+    items: list[Any] = []
+    await hooks.on_llm_start(ctx, MagicMock(), None, items)
+
+    assert "finish_pr_review" in items[0]["content"]
+    assert "finish_scan" not in items[0]["content"]
+
+
 @pytest.mark.parametrize("parent_id", [None, "root-1"])
 @pytest.mark.asyncio
 async def test_turn_warning_directive_escalates_per_stage(parent_id: str | None) -> None:
@@ -491,3 +547,30 @@ def test_recomputed_budget_flags(
     expected: tuple[bool, bool],
 ) -> None:
     assert recomputed_budget_flags(cost, max_budget, interactive=interactive) == expected
+
+
+@pytest.mark.asyncio
+async def test_turn_limit_warns_ten_before_and_repeats_past_it() -> None:
+    hooks = ReportUsageHooks(model="test-model")
+    noticed = []
+    for requests in range(40):
+        ctx = _make_warn_context(requests=requests, parent_id="root-1")
+        ctx.context["turn_limit"] = 25
+        items: list[Any] = []
+        await hooks.on_llm_start(ctx, MagicMock(), None, items)
+        if items:
+            noticed.append((requests + 1, items[0]["content"]))
+
+    assert [turn for turn, _ in noticed] == [15, 25, 30, 35, 40]
+    assert "15 of your 25-turn limit" in noticed[0][1]
+    assert "past your 25-turn limit" in noticed[1][1]
+
+
+@pytest.mark.asyncio
+async def test_no_turn_limit_no_notice() -> None:
+    hooks = ReportUsageHooks(model="test-model")
+    items: list[Any] = []
+    await hooks.on_llm_start(
+        _make_warn_context(requests=14, parent_id="root-1"), MagicMock(), None, items
+    )
+    assert items == []

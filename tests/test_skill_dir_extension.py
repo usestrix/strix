@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 import strix.skills as skills_mod
-from strix.agents.prompt import render_system_prompt
+from strix.agents.prompt import _resolve_skills, render_system_prompt
 from strix.skills import (
     get_all_skill_names,
     get_available_skills,
@@ -12,6 +12,7 @@ from strix.skills import (
     register_skill_dir,
     registered_skill_dirs,
     skill_search_dirs,
+    skill_turn_limit,
     validate_requested_skills,
 )
 from strix.utils.resource_paths import get_strix_resource_path
@@ -68,6 +69,17 @@ def test_registered_dir_adds_new_skill(tmp_path: Path) -> None:
     assert "widget" in get_all_skill_names()
     assert get_available_skills()["extra"] == [{"name": "widget", "description": ""}]
     assert load_skills(["widget"]) == {"widget": "widget body"}
+
+
+def test_only_jinja_skills_are_rendered(tmp_path: Path) -> None:
+    body = "{% if supports_images %}\nlook\n{% else %}\nread\n{% endif %}\n"
+    _write_skill(tmp_path, "extra", "plain", body)
+    _write_skill(tmp_path, "extra", "templated", f"---\ntemplate: jinja\n---\n{body}")
+    register_skill_dir(tmp_path)
+
+    assert load_skills(["plain"]) == {"plain": body}
+    assert load_skills(["templated"]) == {"templated": "look\n"}
+    assert load_skills(["templated"], supports_images=False) == {"templated": "read\n"}
 
 
 def test_available_skill_includes_frontmatter_description(tmp_path: Path) -> None:
@@ -232,3 +244,55 @@ def test_builtin_skill_still_loads_when_not_overridden(tmp_path: Path) -> None:
 def test_missing_skill_is_skipped(tmp_path: Path) -> None:
     register_skill_dir(tmp_path)
     assert load_skills(["does_not_exist"]) == {}
+
+
+def test_resolve_skills_always_includes_analysis_baseline() -> None:
+    resolved = _resolve_skills(requested=None)
+
+    assert "analysis/counterevidence" in resolved
+    assert "analysis/severity_calibration" in resolved
+
+
+def test_resolve_skills_adds_diff_mode_only_when_diff_scoped() -> None:
+    assert "scan_modes/diff" not in _resolve_skills(requested=None)
+    diff_scoped = _resolve_skills(requested=None, is_diff_scoped=True)
+    assert "scan_modes/diff" in diff_scoped
+    # Diff scope overlays the depth mode rather than replacing it.
+    assert "scan_modes/deep" in diff_scoped
+
+
+def test_resolve_skills_gates_source_aware_skills_on_whitebox() -> None:
+    blackbox = _resolve_skills(requested=None)
+    assert "analysis/fix_verification" not in blackbox
+    assert "analysis/source_aware_discovery" not in blackbox
+
+    whitebox = _resolve_skills(requested=None, is_whitebox=True)
+    assert "analysis/fix_verification" in whitebox
+    assert "analysis/source_aware_discovery" in whitebox
+
+
+def test_new_skill_files_load() -> None:
+    names = [
+        "analysis/counterevidence",
+        "analysis/severity_calibration",
+        "analysis/fix_verification",
+        "analysis/source_aware_discovery",
+        "scan_modes/diff",
+    ]
+    loaded = load_skills(names)
+    for name in names:
+        key = name.split("/")[-1]
+        assert loaded.get(key), f"{name} failed to load"
+
+
+def test_skill_turn_limit_matches_bare_and_qualified_names(tmp_path: Path) -> None:
+    _write_skill(tmp_path, "pr_review", "investigator", "---\nname: investigator\n---\nx")
+    _write_skill(tmp_path, "pr_review", "validator", "---\nname: validator\n---\nx")
+    register_skill_dir(tmp_path)
+    limits = {"pr_review/investigator": 25, "pr_review/validator": 40}
+
+    assert skill_turn_limit(["investigator"], limits) == 25
+    assert skill_turn_limit(["pr_review/validator", "idor"], limits) == 40
+    assert skill_turn_limit(["investigator", "validator"], limits) == 40
+    assert skill_turn_limit(["idor"], limits) is None
+    assert skill_turn_limit(["investigator"], {}) is None

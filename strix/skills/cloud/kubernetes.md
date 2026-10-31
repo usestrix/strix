@@ -32,6 +32,10 @@ Kubernetes clusters expose a large attack surface through their API server, kube
 
 ## Key Vulnerabilities
 
+### Ingress-NGINX Admission
+
+Inventory validating-webhook reachability from the pod network and the controller's service-account permissions. IngressNightmare illustrates controller execution without a Kubernetes account ([advisory](https://kubernetes.io/blog/2025/03/24/ingress-nginx-cve-2025-1974/)). Identify the controller implementation/image, then verify affected builds, backports, and maintenance status against current project or vendor notices; distinguish community ingress-nginx from other NGINX controllers and the Ingress API ([project notice](https://kubernetes.io/blog/2026/01/29/ingress-nginx-statement/)).
+
 ### RBAC Misconfigurations
 
 - Wildcard verbs or resources in ClusterRole/Role bindings: `verbs: ["*"]`, `resources: ["*"]`

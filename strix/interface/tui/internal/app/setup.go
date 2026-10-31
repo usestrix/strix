@@ -45,23 +45,20 @@ func (m *Model) submitSetupPrompt(value string) (tea.Model, tea.Cmd) {
 	if len(fields) > targets {
 		commands = append(commands, send(m.client, "setup.set_instruction", map[string]any{"instruction": value}))
 	}
-	// With a target, verify the model connection before the scan commits to it.
-	// A bare prompt launches optimistically, like a coding agent, and mounts the
-	// working directory - the backend asks about that from the live view, so the
-	// prompt is held here in case it is declined.
-	verify := targets > 0 || len(m.snapshot.Targets) > 0
-	payload := map[string]any{"verify": verify}
-	if verify {
-		m.setupMsg("Verifying model connection...", render.Col(amber))
-	} else {
+	// The backend verifies the model connection before either kind of launch
+	// and reports on it through the setup log. A bare prompt mounts the working
+	// directory - the backend asks about that from the live view, so the prompt
+	// is held here in case it is declined.
+	payload := map[string]any{}
+	if targets == 0 && len(m.snapshot.Targets) == 0 {
 		m.pendingPrompt = value
 		payload["mount_working_dir"] = true
 	}
 	commands = append(commands, send(m.client, "setup.start", payload))
 	// Ordered, not batched: setup.start leaves setup mode, so it must be the
-	// last command to reach the backend. Batched sends race, and once the
-	// preflight is skipped setup.start wins, making the target and instruction
-	// commands land after the guard closes and fail with a red error.
+	// last command to reach the backend. Batched sends race, and if setup.start
+	// wins the target and instruction commands land after the guard closes and
+	// fail with a red error.
 	return *m, tea.Sequence(commands...)
 }
 
@@ -129,11 +126,14 @@ func (m Model) statusVisible() bool {
 }
 
 func (m Model) layout() (showSidebar bool, sidebarWidth, chatWidth, chatHeight int) {
-	showSidebar = m.width >= 120
-	if showSidebar {
+	showSidebar = m.width >= 120 && !m.sidebarHidden
+	switch {
+	case showSidebar:
 		sidebarWidth = max(24, m.width/5)
 		chatWidth = m.width - sidebarWidth - 1
-	} else {
+	case m.railVisible():
+		chatWidth = m.width - sidebarRailWidth - 1
+	default:
 		chatWidth = m.width
 	}
 	statusH := 0
@@ -421,7 +421,7 @@ func (m Model) setupComposer(width int) string {
 	inner := max(1, width-4)
 	body := m.highlightInputSelection(m.input.View())
 	body += "\n\n" + m.setupSummaryView(inner)
-	if targets := m.setupTargetsView(inner); targets != "" {
+	if targets := m.targetsView(inner, maxTargetRows); targets != "" {
 		body += "\n" + targets
 	}
 	return lipgloss.NewStyle().Width(max(1, width-2)).Padding(0, 1).
@@ -454,15 +454,22 @@ func (m Model) setupSummaryView(width int) string {
 	return truncate(strings.Join(chips, render.Dim().Render(" · ")), max(1, width))
 }
 
-// setupTargetsView lists what the scan is pointed at, once anything is queued.
-func (m Model) setupTargetsView(width int) string {
-	if len(m.snapshot.Targets) == 0 {
+// maxTargetRows fits the header, four targets and the count of the rest.
+const maxTargetRows = 6
+
+// targetsView lists what the scan is pointed at, once anything is queued, in at
+// most maxRows rows. Targets that do not fit are counted on the last row.
+func (m Model) targetsView(width, maxRows int) string {
+	if len(m.snapshot.Targets) == 0 || maxRows < 2 {
 		return ""
 	}
-	const visible = 4
 	total := max(m.snapshot.TargetCount, len(m.snapshot.Targets))
+	visible := min(len(m.snapshot.Targets), maxTargetRows-2, maxRows-1)
+	if visible < total {
+		visible = min(visible, maxRows-2)
+	}
 	rows := []string{render.Bold(green).Render("Targets") + render.Dim().Render(fmt.Sprintf(" %d", total))}
-	for _, target := range m.snapshot.Targets[:min(visible, len(m.snapshot.Targets))] {
+	for _, target := range m.snapshot.Targets[:visible] {
 		rows = append(rows, render.Col(dim).Render("▸ ")+render.Col(white).Render(truncate(target, max(1, width-2))))
 	}
 	if hidden := total - visible; hidden > 0 {

@@ -23,9 +23,15 @@ strix -n --target ./app --scan-mode quick --scope-mode diff --diff-base origin/m
 
 | Code | Meaning |
 |------|---------|
-| 0 | No vulnerabilities found |
+| 0 | No vulnerabilities found (with `--fail-on`, none at or above the threshold) |
 | 1 | Execution error |
-| 2 | Vulnerabilities found |
+| 2 | Vulnerabilities found (with `--fail-on`, at least one at or above the threshold) |
+
+To fail only on serious findings, pass `--fail-on` with a minimum severity. Lower findings are still reported but exit `0`, so a passing job does not mean the report is empty.:
+
+```bash
+strix -n --target ./app --scan-mode quick --fail-on high
+```
 
 ## GitLab CI
 

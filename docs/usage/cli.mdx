@@ -57,7 +57,17 @@ strix (--target <target> | --target-list <path>) [options]
 </ParamField>
 
 <ParamField path="--non-interactive, -n" type="boolean">
-  Run in headless mode without TUI. Ideal for CI/CD.
+  Run in headless mode without TUI. Ideal for CI/CD. When no terminal is
+  attached (CI, `nohup`, pipes) and a target is given, Strix runs headless
+  automatically and says so on one line.
+</ParamField>
+
+<ParamField path="--fail-on" type="string">
+  Headless mode only (requires `-n`). Minimum severity that makes the run exit
+  `2`: `critical`, `high`, `medium`, `low`, or `info`. Findings below the
+  threshold are still written to every report artifact. A finding whose
+  severity Strix does not recognize always counts, so the gate never passes on a
+  value it cannot rank. Omit the flag to exit `2` on any finding.
 </ParamField>
 
 <ParamField path="--config" type="string">
@@ -132,6 +142,9 @@ strix --target api.example.com --instruction "Focus on IDOR and auth bypass"
 # CI/CD mode
 strix -n --target ./ --scan-mode quick
 
+# CI/CD mode, failing only on high or critical findings
+strix -n --target ./ --scan-mode quick --fail-on high
+
 # Cap cost and per-agent turns
 strix --target https://example.com --max-budget 25 --max-turns 300
 
@@ -159,6 +172,6 @@ strix --target https://app.com --workspace-file ./openapi.yaml:specs/openapi.yam
 
 | Code | Meaning |
 |------|---------|
-| 0 | Scan completed successfully (interactive mode always exits `0`; in headless mode, `0` means no vulnerabilities were found) |
+| 0 | Scan completed successfully (interactive mode always exits `0`; in headless mode, `0` means no vulnerabilities were found, or with `--fail-on`, none at or above the threshold; lower findings are still in the report) |
 | 1 | A fatal error occurred before or during the scan (e.g. missing environment variables, Docker unavailable, invalid config file, diff-scope resolution failure, or an unhandled error) |
-| 2 | Vulnerabilities found (headless mode only) |
+| 2 | Vulnerabilities found (headless mode only; with `--fail-on`, at least one finding at or above that severity) |

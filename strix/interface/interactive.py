@@ -17,12 +17,17 @@ class InteractiveSetupUnavailableError(RuntimeError):
     """Raised when the interactive TUI cannot be launched."""
 
 
+class InteractiveInterfaceExitedError(RuntimeError):
+    """Raised when the TUI process dies after it was up (no terminal, killed)."""
+
+
 async def run_tui(args: argparse.Namespace) -> None:
     """Run the Bubble Tea TUI."""
     from strix.interface.tui.runtime import (
         GoTuiPreActivationError,
         run_go_tui,
     )
+    from strix.interface.tui.sidecar import TuiProcessExitedError
 
     try:
         await run_go_tui(args)
@@ -30,9 +35,12 @@ async def run_tui(args: argparse.Namespace) -> None:
         raise InteractiveSetupUnavailableError(
             f"The interactive interface could not start: {exc}"
         ) from exc
+    except TuiProcessExitedError as exc:
+        raise InteractiveInterfaceExitedError(str(exc)) from exc
 
 
 __all__ = [
+    "InteractiveInterfaceExitedError",
     "InteractiveSetupUnavailableError",
     "run_tui",
 ]

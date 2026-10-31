@@ -12,9 +12,16 @@ import json
 import logging
 import re
 from pathlib import PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agents import RunContextWrapper, function_tool
+
+from strix.tools.nullish import clean_optional
+from strix.tools.proxy.tools import existing_request_ids
+
+
+if TYPE_CHECKING:
+    from strix.report.state import ReportState
 
 
 logger = logging.getLogger(__name__)
@@ -161,9 +168,616 @@ _REQUIRED_FIELDS = {
 }
 
 _VALID_FIX_EFFORT = frozenset({"trivial", "low", "medium", "high"})
+_VALID_CONFIDENCE = frozenset({"high", "medium", "low"})
+_MAX_HTTP_EXCHANGE_IDS = 10
+_MAX_HTTP_EXCHANGE_ID_CHARS = 128
 
 
-async def _do_create(  # noqa: PLR0912
+def _validate_required_text(fields: dict[str, str]) -> list[str]:
+    """Report every ``_REQUIRED_FIELDS`` entry that arrived blank."""
+    return [
+        msg for name, msg in _REQUIRED_FIELDS.items() if not str(fields.get(name) or "").strip()
+    ]
+
+
+def _normalize_http_exchange_ids(raw: Any) -> tuple[list[str] | None, list[str]]:
+    """Return distinct proxy exchange ids in their original order."""
+    if raw is None:
+        return None, []
+    if not isinstance(raw, list):
+        return None, ["http_exchange_ids must be a list of proxy request ids"]
+
+    normalized: list[str] = []
+    errors: list[str] = []
+    seen: set[str] = set()
+    for index, value in enumerate(raw):
+        if not isinstance(value, str):
+            errors.append(f"http_exchange_ids[{index}] must be a string")
+            continue
+        request_id = value.strip()
+        if not request_id:
+            errors.append(f"http_exchange_ids[{index}] cannot be empty")
+            continue
+        if len(request_id) > _MAX_HTTP_EXCHANGE_ID_CHARS:
+            errors.append(
+                f"http_exchange_ids[{index}] must be {_MAX_HTTP_EXCHANGE_ID_CHARS} "
+                "characters or fewer"
+            )
+            continue
+        if any(ord(char) < 0x21 or ord(char) > 0x7E for char in request_id):
+            errors.append(f"http_exchange_ids[{index}] must contain only visible ASCII characters")
+            continue
+        if not request_id.isdigit():
+            errors.append(f"http_exchange_ids[{index}] must be a numeric proxy request id")
+            continue
+        if request_id not in seen:
+            seen.add(request_id)
+            normalized.append(request_id)
+            if len(normalized) > _MAX_HTTP_EXCHANGE_IDS:
+                errors.append(
+                    f"http_exchange_ids can contain at most "
+                    f"{_MAX_HTTP_EXCHANGE_IDS} distinct request ids"
+                )
+                break
+    return normalized, errors
+
+
+_HTTP_EXCHANGE_UNVERIFIED_WARNING = (
+    "http_exchange_ids were stored without verification because the proxy project did "
+    "not respond in time. Ids that do not exist in the project will not render as evidence."
+)
+
+
+async def _verify_http_exchange_ids(
+    ctx: RunContextWrapper,
+    raw: Any,
+) -> tuple[list[str] | None, list[str], str | None]:
+    """Verify proxy exchange IDs against the current Caido project.
+
+    IDs the project does not know are rejected. When the proxy itself cannot be
+    queried the IDs are kept and a warning is returned instead: a slow or
+    unreachable proxy must never strip evidence from a finding, and consumers
+    resolve each id against the recorded traffic before rendering it.
+    """
+    request_ids, errors = _normalize_http_exchange_ids(raw)
+    if request_ids is None or errors or not request_ids:
+        return request_ids, errors, None
+
+    try:
+        existing_ids = await existing_request_ids(ctx, request_ids)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "Could not verify HTTP exchange IDs against the current Caido project",
+            exc_info=True,
+        )
+        return request_ids, [], _HTTP_EXCHANGE_UNVERIFIED_WARNING
+
+    missing_ids = [request_id for request_id in request_ids if request_id not in existing_ids]
+    if missing_ids:
+        return (
+            None,
+            [
+                "http_exchange_ids do not exist in the current proxy project: "
+                + ", ".join(missing_ids)
+            ],
+            None,
+        )
+    return request_ids, [], None
+
+
+def _with_warning(result: dict[str, Any], warning: str | None) -> dict[str, Any]:
+    if warning and result.get("success"):
+        result["warning"] = warning
+    return result
+
+
+def _validate_cvss_breakdown(breakdown: Any) -> list[str]:
+    """Check the 8 CVSS metrics are all present with legal values."""
+    if not isinstance(breakdown, dict) or not breakdown:
+        return ["cvss_breakdown: must be an object with the 8 CVSS metrics"]
+    return [
+        f"Invalid {name}: {breakdown.get(name)}. Must be one of: {valid}"
+        for name, valid in _CVSS_VALID.items()
+        if breakdown.get(name) not in valid
+    ]
+
+
+def _validate_identifiers(
+    cve: str | None, cwe: str | None
+) -> tuple[str | None, str | None, list[str]]:
+    """Normalize and validate the optional CVE / CWE identifiers."""
+    errors: list[str] = []
+    if cve:
+        cve = _extract_cve(cve)
+        cve_err = _validate_cve(cve)
+        if cve_err:
+            errors.append(cve_err)
+    if cwe:
+        cwe = _extract_cwe(cwe)
+        cwe_err = _validate_cwe(cwe)
+        if cwe_err:
+            errors.append(cwe_err)
+    return cve, cwe, errors
+
+
+def _validate_analysis_fields(
+    *,
+    counterevidence: str,
+    confidence: str,
+    confidence_rationale: str | None,
+    severity_change_conditions: str,
+) -> list[str]:
+    """Validate the counterevidence / confidence closure metadata."""
+    errors: list[str] = []
+    if not str(counterevidence or "").strip():
+        errors.append(
+            "Counterevidence cannot be empty - state the strongest evidence against "
+            "this finding, or what you checked and found none (e.g. 'no input "
+            "validation, WAF, or authorization check found on this path')"
+        )
+    if not str(severity_change_conditions or "").strip():
+        errors.append(
+            "severity_change_conditions cannot be empty - state the one concrete piece "
+            "of evidence that would raise or lower the severity"
+        )
+    if confidence not in _VALID_CONFIDENCE:
+        errors.append(
+            f"Invalid confidence: {confidence!r}. Must be one of: {sorted(_VALID_CONFIDENCE)}"
+        )
+    elif confidence != "high" and not str(confidence_rationale or "").strip():
+        errors.append(
+            "confidence_rationale is required when confidence is not 'high' - name the "
+            "gap (e.g. static-only trace, unconfirmed reachability, no runtime access)"
+        )
+    return errors
+
+
+def _validate_fix_verification(
+    locations: list[dict[str, Any]] | None,
+    fix_verification: str | None,
+) -> list[str]:
+    """Require a verification statement whenever an applyable fix is proposed."""
+    if not locations or not any(loc.get("fix_after") for loc in locations):
+        return []
+    if str(fix_verification or "").strip():
+        return []
+    return [
+        "fix_verification is REQUIRED when any code_location carries a 'fix_after' - "
+        "a suggestion a reviewer can click to apply must be verified first. State, in "
+        "order: (1) security closure - re-trace the source->sink path through the "
+        "PATCHED code and say why it is now blocked; (2) bypass review - re-read the "
+        "diff without your original rationale and name the equivalent sinks, sibling "
+        "call sites, and alternate malicious input classes you checked; (3) preserved "
+        "behavior - the legitimate inputs, APIs, and error semantics that still work; "
+        "(4) how each was checked (executed vs. reasoned), naming any unrun check as "
+        "an explicit gap. If you cannot make these statements, drop 'fix_after' and "
+        "leave the location informational."
+    ]
+
+
+def _finding_class_of(report: dict[str, Any]) -> str:
+    """Resolve the class of a stored finding.
+
+    A finding filed before ``finding_class`` was persisted still carries the
+    metadata of its class. A record with dependency metadata is a dependency
+    finding even when the field is absent, so read the metadata before falling
+    back to dynamic.
+    """
+    declared = str(report.get("finding_class") or "").lower()
+    if declared:
+        return declared
+    if report.get("dependency_metadata"):
+        return "dependency_cve"
+    return "dynamic"
+
+
+_UPDATE_TEXT_FIELDS = (
+    "title",
+    "description",
+    "impact",
+    "target",
+    "technical_analysis",
+    "poc_description",
+    "poc_script_code",
+    "remediation_steps",
+    "evidence",
+    "assumptions",
+    "counterevidence",
+    "confidence_rationale",
+    "severity_change_conditions",
+    "endpoint",
+    "method",
+    "fix_verification",
+    "fix_pr_body",
+    "contextual_cvss_reasoning",
+)
+
+
+def _collect_update_changes(  # noqa: PLR0912, PLR0915
+    fields: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """Validate the fields a revision replaces and return them with any errors."""
+    errors: list[str] = []
+    changes: dict[str, Any] = {}
+
+    for name in _UPDATE_TEXT_FIELDS:
+        value = clean_optional(fields.get(name))
+        if value is not None:
+            changes[name] = value
+
+    confidence = clean_optional(fields.get("confidence"))
+    if confidence is not None:
+        confidence = confidence.lower()
+        if confidence not in _VALID_CONFIDENCE:
+            errors.append(
+                f"Invalid confidence: {confidence!r}. Must be one of: {sorted(_VALID_CONFIDENCE)}"
+            )
+        else:
+            changes["confidence"] = confidence
+
+    fix_effort = clean_optional(fields.get("fix_effort"))
+    if fix_effort is not None:
+        fix_effort = fix_effort.lower()
+        if fix_effort not in _VALID_FIX_EFFORT:
+            errors.append(
+                f"Invalid fix_effort: {fix_effort!r}. Must be one of: {sorted(_VALID_FIX_EFFORT)}"
+            )
+        else:
+            changes["fix_effort"] = fix_effort
+
+    breakdown = fields.get("cvss_breakdown")
+    if breakdown is not None:
+        breakdown_errors = _validate_cvss_breakdown(breakdown)
+        errors.extend(breakdown_errors)
+        if not breakdown_errors:
+            try:
+                cvss_score, severity, _vector = _calculate_cvss(breakdown)
+            except ValueError as exc:
+                errors.append(str(exc))
+            else:
+                # The rating belongs to the vector, so a revised vector carries
+                # its own score and severity rather than leaving the old ones.
+                changes["cvss_breakdown"] = breakdown
+                changes["cvss"] = cvss_score
+                changes["severity"] = severity
+
+    raw_locations = fields.get("code_locations")
+    locations = _normalize_code_locations(raw_locations)
+    if locations:
+        errors.extend(_validate_code_locations(locations))
+        errors.extend(_validate_fix_verification(locations, changes.get("fix_verification")))
+        changes["code_locations"] = locations
+    elif raw_locations:
+        errors.append(
+            "code_locations were dropped as unusable - every location needs a relative "
+            "'file' and an integer 'start_line'"
+        )
+
+    cve, cwe, identifier_errors = _validate_identifiers(
+        clean_optional(fields.get("cve")), clean_optional(fields.get("cwe"))
+    )
+    errors.extend(identifier_errors)
+    if cve:
+        changes["cve"] = cve
+    if cwe:
+        changes["cwe"] = cwe
+
+    raw_http_exchange_ids = fields.get("http_exchange_ids")
+    http_exchange_ids, http_exchange_errors = _normalize_http_exchange_ids(raw_http_exchange_ids)
+    errors.extend(http_exchange_errors)
+    if raw_http_exchange_ids is not None and not http_exchange_errors:
+        changes["http_exchange_ids"] = http_exchange_ids or []
+
+    return changes, errors
+
+
+# Evidence that only a dynamic finding carries. A dependency finding describes a
+# package, not a request against an endpoint.
+_DYNAMIC_ONLY_UPDATE_FIELDS = (
+    "endpoint",
+    "method",
+    "poc_description",
+    "poc_script_code",
+    "http_exchange_ids",
+)
+
+# A dependency finding is rated in the context of the codebase that pins it, and
+# that rating is only shown with the reasoning behind it.
+_DEPENDENCY_ONLY_UPDATE_FIELDS = ("contextual_cvss_reasoning",)
+
+
+def _reject_cross_class_revision(
+    report_id: str,
+    matched_class: str,
+    offending: list[str],
+) -> dict[str, Any]:
+    logger.info(
+        "Revision of %s carries fields (%s) a %s finding does not hold; rejecting",
+        report_id,
+        ", ".join(offending),
+        matched_class,
+    )
+    return {
+        "success": False,
+        "error": (
+            f"Report '{report_id}' is a {matched_class} finding, so it cannot carry "
+            f"{', '.join(offending)}. File your proof as its own vulnerability report "
+            "instead of writing it onto this one."
+        ),
+        "report_id": report_id,
+        "finding_class": matched_class,
+        "rejected_fields": offending,
+    }
+
+
+def _rate_dependency_revision(
+    report_id: str,
+    matched: dict[str, Any],
+    changes: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Turn a replacement ``cvss_breakdown`` into the contextual rating of a dependency.
+
+    A dependency record keeps its rating as ``cvss``/``severity`` plus the
+    contextual breakdown, vector and reasoning inside ``dependency_metadata``.
+    The package identity in that metadata is copied over untouched. A new
+    breakdown needs its own reasoning. The reasoning alone can be corrected
+    when the record already carries the breakdown it explains.
+    """
+    breakdown = changes.pop("cvss_breakdown", None)
+    reasoning = changes.pop("contextual_cvss_reasoning", None)
+    if breakdown is None and reasoning is None:
+        return None
+
+    metadata = dict(matched.get("dependency_metadata") or {})
+    if breakdown is None and not metadata.get("contextual_cvss_breakdown"):
+        return {
+            "success": False,
+            "error": "Validation failed",
+            "errors": [
+                "cvss_breakdown is required: this dependency finding carries no "
+                "contextual rating yet, so contextual_cvss_reasoning has nothing to explain"
+            ],
+            "report_id": report_id,
+        }
+    if reasoning is None:
+        return {
+            "success": False,
+            "error": "Validation failed",
+            "errors": [
+                "contextual_cvss_reasoning is required: a dependency finding is re-rated "
+                "with the cvss_breakdown observed in this codebase together with the "
+                "reasoning a reader can check"
+            ],
+            "report_id": report_id,
+        }
+
+    if breakdown is not None:
+        score, _severity, vector = _calculate_cvss(breakdown)
+        metadata["contextual_cvss_breakdown"] = breakdown
+        metadata["contextual_cvss_score"] = score
+        metadata["contextual_cvss_vector"] = vector
+    metadata["contextual_cvss_reasoning"] = reasoning[:_MAX_CONTEXTUAL_REASONING_CHARS]
+    changes["dependency_metadata"] = metadata
+    return None
+
+
+def _fit_revision_to_class(
+    report_state: ReportState,
+    report_id: str,
+    changes: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Keep a revision inside the class of the finding it names.
+
+    A finding keeps its class and the metadata that belongs to it. Writing an
+    exploit onto a dependency record would leave it carrying a package pin next
+    to a request against an endpoint, so the proof belongs in its own dynamic
+    finding instead. A dependency finding is still re-rated, through the
+    contextual CVSS it was filed with.
+    """
+    matched = next(
+        (r for r in report_state.get_existing_vulnerabilities() if r.get("id") == report_id),
+        None,
+    )
+    if matched is None:
+        return None
+
+    matched_class = _finding_class_of(matched)
+    foreign = (
+        _DEPENDENCY_ONLY_UPDATE_FIELDS
+        if matched_class == "dynamic"
+        else _DYNAMIC_ONLY_UPDATE_FIELDS
+    )
+    offending = [name for name in foreign if name in changes]
+    if offending:
+        return _reject_cross_class_revision(report_id, matched_class, offending)
+    if matched_class == "dynamic":
+        return None
+    return _rate_dependency_revision(report_id, matched, changes)
+
+
+def _read_revision(
+    report_id: str, update_reason: str, fields: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Return the changes a revision asks for, or the reason it cannot be acted on."""
+    if not report_id or not str(update_reason or "").strip():
+        missing = "report_id" if not report_id else "update_reason"
+        return {}, {
+            "success": False,
+            "error": (
+                f"{missing} cannot be empty - name the report you are revising and state "
+                "what you learned that it does not yet carry"
+            ),
+        }
+
+    changes, errors = _collect_update_changes(fields)
+    if errors:
+        return {}, {"success": False, "error": "Validation failed", "errors": errors}
+    if not changes:
+        return {}, {
+            "success": False,
+            "error": "No fields to update - pass at least one field you want to replace",
+        }
+    return changes, None
+
+
+def _do_update(
+    *,
+    report_id: str,
+    update_reason: str,
+    fields: dict[str, Any],
+    agent_id: str | None = None,
+    agent_name: str | None = None,
+) -> dict[str, Any]:
+    """Apply an agent's own revision to a report it can name.
+
+    Editing a finding is its own operation and the only way a filed finding
+    changes. Deduplication never reaches this path: it only decides whether a
+    new candidate is a finding already on file.
+    """
+    report_id = (report_id or "").strip()
+    changes, rejection = _read_revision(report_id, update_reason, fields)
+    if rejection is not None:
+        return rejection
+
+    from strix.report.state import get_global_report_state
+
+    report_state = get_global_report_state()
+    if report_state is None:
+        return {
+            "success": False,
+            "error": "Report state unavailable - no reports have been filed yet",
+        }
+
+    class_error = _fit_revision_to_class(report_state, report_id, changes)
+    if class_error is not None:
+        return class_error
+
+    try:
+        updated = report_state.update_vulnerability_report(
+            report_id,
+            changes,
+            update_reason=update_reason,
+            updated_by_agent_id=agent_id,
+            updated_by_agent_name=agent_name,
+        )
+    except Exception as e:
+        logger.exception("update_vulnerability_report persistence failed")
+        return {
+            "success": False,
+            "error": (
+                f"Failed to revise report '{report_id}': {e!s}. "
+                "The report still carries its previous content; retry the update."
+            ),
+            "report_id": report_id,
+        }
+    if updated is None:
+        known = [r.get("id") for r in report_state.get_existing_vulnerabilities()]
+        if report_id not in known:
+            error = f"Report with id '{report_id}' not found"
+        else:
+            error = f"Report '{report_id}' already says this - nothing in your update changes it"
+        return {"success": False, "error": error, "report_id": report_id}
+
+    logger.info(
+        "Vulnerability report %s revised by its author: severity=%s cvss=%s fields=%s",
+        report_id,
+        updated.get("severity"),
+        updated.get("cvss"),
+        ", ".join(sorted(changes)),
+    )
+    return {
+        "success": True,
+        "action": "updated",
+        "message": f"Report '{report_id}' now carries your revision. Do not file it again.",
+        "report_id": report_id,
+        "updated_fields": sorted(changes),
+        "severity": updated.get("severity"),
+        "cvss_score": updated.get("cvss"),
+    }
+
+
+def _do_delete(
+    *,
+    report_id: str,
+    delete_reason: str,
+    agent_id: str | None = None,
+    agent_name: str | None = None,
+) -> dict[str, Any]:
+    """Withdraw a report an agent filed and has since disproved.
+
+    Deletion is for a finding that is not a vulnerability at all. A finding
+    that is real but weaker than filed is revised, not deleted.
+    """
+    report_id = (report_id or "").strip()
+    delete_reason = (delete_reason or "").strip()
+    if not report_id or not delete_reason:
+        missing = "report_id" if not report_id else "delete_reason"
+        return {
+            "success": False,
+            "error": (
+                f"{missing} cannot be empty - name the report you are withdrawing and state "
+                "what disproved it"
+            ),
+        }
+
+    from strix.report.state import ReportRollbackError, get_global_report_state
+
+    report_state = get_global_report_state()
+    if report_state is None:
+        return {
+            "success": False,
+            "error": "Report state unavailable - no reports have been filed yet",
+        }
+
+    try:
+        deleted = report_state.delete_vulnerability_report(
+            report_id,
+            delete_reason=delete_reason,
+            deleted_by_agent_id=agent_id,
+            deleted_by_agent_name=agent_name,
+        )
+    except Exception as e:
+        logger.exception("delete_vulnerability_report persistence failed")
+        if isinstance(e, ReportRollbackError):
+            outcome = (
+                f"{e.cause!s}. The report is still on file, but its on-disk indexes could "
+                "not be rewritten and may be stale until the next report is saved"
+            )
+        else:
+            outcome = f"{e!s}. The report is still on file"
+        return {
+            "success": False,
+            "error": f"Failed to delete report '{report_id}': {outcome}; retry the deletion.",
+            "report_id": report_id,
+        }
+    if deleted is None:
+        return {
+            "success": False,
+            "error": f"Report with id '{report_id}' not found",
+            "report_id": report_id,
+        }
+
+    logger.info(
+        "Vulnerability report %s deleted by %s: %s",
+        report_id,
+        agent_name or agent_id or "an agent",
+        delete_reason[:200],
+    )
+    return {
+        "success": True,
+        "action": "deleted",
+        "message": (
+            f"Report '{report_id}' ({deleted.get('title')}) is withdrawn and no longer "
+            "counts as a finding of this scan. Do not file it again unless new evidence "
+            "proves it."
+        ),
+        "report_id": report_id,
+        "title": deleted.get("title"),
+        "severity": deleted.get("severity"),
+    }
+
+
+async def _do_create(
     *,
     title: str,
     description: str,
@@ -175,6 +789,9 @@ async def _do_create(  # noqa: PLR0912
     remediation_steps: str,
     evidence: str,
     assumptions: str,
+    counterevidence: str,
+    confidence: str,
+    severity_change_conditions: str,
     fix_effort: str,
     cvss_breakdown: dict[str, str],
     endpoint: str | None,
@@ -182,26 +799,37 @@ async def _do_create(  # noqa: PLR0912
     cve: str | None,
     cwe: str | None,
     code_locations: list[dict[str, Any]] | None,
+    http_exchange_ids: list[str] | None = None,
+    confidence_rationale: str | None = None,
+    fix_verification: str | None = None,
     fix_pr_body: str | None = None,
     agent_id: str | None = None,
     agent_name: str | None = None,
 ) -> dict[str, Any]:
-    errors: list[str] = []
-    fields = {
-        "title": title,
-        "description": description,
-        "impact": impact,
-        "target": target,
-        "technical_analysis": technical_analysis,
-        "poc_description": poc_description,
-        "poc_script_code": poc_script_code,
-        "remediation_steps": remediation_steps,
-        "evidence": evidence,
-        "assumptions": assumptions,
-    }
-    for name, msg in _REQUIRED_FIELDS.items():
-        if not str(fields.get(name) or "").strip():
-            errors.append(msg)
+    errors: list[str] = _validate_required_text(
+        {
+            "title": title,
+            "description": description,
+            "impact": impact,
+            "target": target,
+            "technical_analysis": technical_analysis,
+            "poc_description": poc_description,
+            "poc_script_code": poc_script_code,
+            "remediation_steps": remediation_steps,
+            "evidence": evidence,
+            "assumptions": assumptions,
+        }
+    )
+
+    confidence = (confidence or "").strip().lower()
+    errors.extend(
+        _validate_analysis_fields(
+            counterevidence=counterevidence,
+            confidence=confidence,
+            confidence_rationale=confidence_rationale,
+            severity_change_conditions=severity_change_conditions,
+        )
+    )
 
     fix_effort = (fix_effort or "").strip().lower()
     if fix_effort not in _VALID_FIX_EFFORT:
@@ -209,28 +837,18 @@ async def _do_create(  # noqa: PLR0912
             f"Invalid fix_effort: {fix_effort!r}. Must be one of: {sorted(_VALID_FIX_EFFORT)}"
         )
 
-    if not isinstance(cvss_breakdown, dict) or not cvss_breakdown:
-        errors.append("cvss_breakdown: must be an object with the 8 CVSS metrics")
-        cvss_breakdown = {}
-    else:
-        for name, valid in _CVSS_VALID.items():
-            value = cvss_breakdown.get(name)
-            if value not in valid:
-                errors.append(f"Invalid {name}: {value}. Must be one of: {valid}")
+    errors.extend(_validate_cvss_breakdown(cvss_breakdown))
 
     parsed_locations = _normalize_code_locations(code_locations)
     if parsed_locations:
         errors.extend(_validate_code_locations(parsed_locations))
-    if cve:
-        cve = _extract_cve(cve)
-        cve_err = _validate_cve(cve)
-        if cve_err:
-            errors.append(cve_err)
-    if cwe:
-        cwe = _extract_cwe(cwe)
-        cwe_err = _validate_cwe(cwe)
-        if cwe_err:
-            errors.append(cwe_err)
+    errors.extend(_validate_fix_verification(parsed_locations, fix_verification))
+    cve, cwe, identifier_errors = _validate_identifiers(cve, cwe)
+    errors.extend(identifier_errors)
+    normalized_http_exchange_ids, http_exchange_errors = _normalize_http_exchange_ids(
+        http_exchange_ids
+    )
+    errors.extend(http_exchange_errors)
 
     if errors:
         return {"success": False, "error": "Validation failed", "errors": errors}
@@ -266,9 +884,38 @@ async def _do_create(  # noqa: PLR0912
             "endpoint": endpoint,
             "method": method,
         }
+        report_fields: dict[str, Any] = {
+            "title": title,
+            "description": description,
+            "severity": severity,
+            "impact": impact,
+            "target": target,
+            "technical_analysis": technical_analysis,
+            "poc_description": poc_description,
+            "poc_script_code": poc_script_code,
+            "remediation_steps": remediation_steps,
+            "evidence": evidence,
+            "assumptions": assumptions,
+            "counterevidence": counterevidence,
+            "confidence": confidence,
+            "confidence_rationale": confidence_rationale,
+            "severity_change_conditions": severity_change_conditions,
+            "fix_effort": fix_effort,
+            "cvss": cvss_score,
+            "cvss_breakdown": cvss_breakdown,
+            "endpoint": endpoint,
+            "method": method,
+            "cve": cve,
+            "cwe": cwe,
+            "code_locations": parsed_locations,
+            "fix_verification": fix_verification,
+            "fix_pr_body": fix_pr_body,
+            "http_exchange_ids": normalized_http_exchange_ids,
+        }
+
         dedupe = await check_duplicate(candidate, existing)
         if dedupe.get("is_duplicate"):
-            duplicate_id = dedupe.get("duplicate_id", "")
+            duplicate_id = str(dedupe.get("duplicate_id") or "")
             duplicate_title = next(
                 (r.get("title", "Unknown") for r in existing if r.get("id") == duplicate_id),
                 "",
@@ -286,32 +933,19 @@ async def _do_create(  # noqa: PLR0912
             }
 
         report_id = report_state.add_vulnerability_report(
-            title=title,
-            description=description,
-            severity=severity,
-            impact=impact,
-            target=target,
-            technical_analysis=technical_analysis,
-            poc_description=poc_description,
-            poc_script_code=poc_script_code,
-            remediation_steps=remediation_steps,
-            evidence=evidence,
-            assumptions=assumptions,
-            fix_effort=fix_effort,
-            cvss=cvss_score,
-            cvss_breakdown=cvss_breakdown,
-            endpoint=endpoint,
-            method=method,
-            cve=cve,
-            cwe=cwe,
-            code_locations=parsed_locations,
-            fix_pr_body=fix_pr_body,
+            **report_fields,
             agent_id=agent_id if isinstance(agent_id, str) else None,
             agent_name=agent_name if isinstance(agent_name, str) else None,
         )
-    except (ImportError, AttributeError) as e:
+    except Exception as e:
         logger.exception("create_vulnerability_report persistence failed")
-        return {"success": False, "error": f"Failed to create vulnerability report: {e!s}"}
+        return {
+            "success": False,
+            "error": (
+                f"Failed to create vulnerability report: {e!s}. "
+                "The finding was not stored; file it again."
+            ),
+        }
     else:
         logger.info(
             "Vulnerability report created: id=%s severity=%s cvss=%.1f title=%s",
@@ -357,6 +991,9 @@ async def create_vulnerability_report(
     remediation_steps: str,
     evidence: str,
     assumptions: str,
+    counterevidence: str,
+    confidence: str,
+    severity_change_conditions: str,
     fix_effort: str,
     cvss_breakdown: dict[str, str],
     endpoint: str | None = None,
@@ -364,6 +1001,9 @@ async def create_vulnerability_report(
     cve: str | None = None,
     cwe: str | None = None,
     code_locations: list[dict[str, Any]] | None = None,
+    http_exchange_ids: list[str] | None = None,
+    confidence_rationale: str | None = None,
+    fix_verification: str | None = None,
     fix_pr_body: str | None = None,
 ) -> str:
     """File a vulnerability report — one report per fully-verified finding.
@@ -409,7 +1049,18 @@ async def create_vulnerability_report(
     Automatic LLM-based **deduplication** rejects reports that describe
     the same root cause on the same asset as an existing report. If you
     get a ``duplicate_of`` response, do NOT retry — move on to other
-    areas.
+    areas. When you have learned something a filed finding does not yet
+    carry, revise that finding with ``update_vulnerability_report``
+    instead of filing this report again.
+
+    **Counterevidence pass (required before filing)**: actively build the
+    strongest case that this finding is NOT exploitable, or less severe
+    than you think — then record the result in ``counterevidence``, set
+    ``confidence`` honestly, and state what would move the severity in
+    ``severity_change_conditions``. These three fields are mandatory and
+    validated. A finding you could not execute is at best
+    ``confidence: medium``, with the gap named in
+    ``confidence_rationale``.
 
     **Report output rules** (this content may be rendered into generated
     reports):
@@ -424,11 +1075,11 @@ async def create_vulnerability_report(
       "Techniques" that read like an engineering runbook rather than a
       client deliverable.
     - **Use markdown in every text field**: ``**bold**`` for emphasis,
-      ``inline code`` for identifiers/values/parameters, and fenced
-      code blocks (```` ```language ````) for any code/payload/HTTP
+      ``inline code`` for identifiers/values/parameters, and
+      language-tagged fenced code blocks for any code/payload/HTTP
       excerpt. Never leave code bare/unformatted. When referencing a
-      file, annotate the fence, e.g.
-      ```` ```python title=app.py startLineNumber=42 endLineNumber=50 ````.
+      file, annotate the opening fence with
+      ``title=app.py startLineNumber=42 endLineNumber=50`` after the language.
     - Field discipline: ``poc_description`` is steps only — NO code (all
       code goes in ``poc_script_code``); ``remediation_steps`` is prose
       only — NO code/diffs (code fixes go in ``code_locations``).
@@ -540,6 +1191,57 @@ async def create_vulnerability_report(
       Broken / Risky Crypto, CWE-311 Missing Encryption, CWE-916 Weak
       Password Hashing.
 
+    Example (abbreviated — mirror this structure)::
+
+        title: "Reflected XSS in /search q parameter"
+        description:
+            The **`q`** parameter of `/search` reflects user input into
+            the HTML response without encoding, allowing script
+            injection.
+        technical_analysis:
+            The handler interpolates `q` directly into the page body:
+
+            ```python title=views.py startLineNumber=42 endLineNumber=44
+            html = f"<h2>Results for {q}</h2>"
+            return HttpResponse(html)
+            ```
+
+            No output encoding is applied, so `<script>` executes.
+        poc_description:
+            1. Navigate to `/search?q=<payload>`.
+            2. Observe the payload executes in the victim's browser.
+        poc_script_code:
+            ```
+            GET /search?q=<script>alert(document.domain)</script>
+            ```
+        evidence:
+            Response echoes the payload verbatim:
+
+            ```html
+            <h2>Results for <script>alert(document.domain)</script></h2>
+            ```
+        assumptions:
+            Assumes a victim can be induced to open a crafted link.
+        remediation_steps:
+            Context-encode all user input rendered into HTML; prefer the
+            template engine's auto-escaping over string interpolation.
+        counterevidence:
+            No output encoding, CSP, or WAF observed on this response;
+            payload executed in a current browser. The parameter is
+            reflected on an unauthenticated route, so no privileged
+            position is required.
+        confidence: "high"
+        severity_change_conditions:
+            A restrictive CSP that blocks inline script execution would
+            reduce impact and lower the severity.
+        fix_effort: "low"
+
+    Nice to have: for code findings, if the checkout has git history, a quick
+    ``git blame`` (quote the paths) on the vulnerable line is worth weaving into
+    ``technical_analysis`` — who last touched it, when, and in which commit, as
+    part of the prose, not a separate section. Skip it if the line is
+    uncommitted or the command fails.
+
     Args:
         title: Specific finding title (e.g.
             ``"SQL Injection in /api/users login parameter"``). Don't
@@ -563,6 +1265,31 @@ async def create_vulnerability_report(
         assumptions: Short note on the assumptions/prerequisites that
             make this finding impactful or exploitable (e.g. "assumes an
             authenticated low-privilege user").
+        counterevidence: REQUIRED. The strongest case *against* this
+            finding, after actively looking for it — the guard you might
+            have missed, the deployment constraint, the precondition. If
+            you genuinely found nothing, say what you checked (e.g. "no
+            input validation, WAF, or authorization check found on this
+            path; tested authenticated and unauthenticated"), not just
+            "none". A generic trust claim ("the framework escapes this")
+            is not counterevidence unless you confirmed that specific
+            call in this context.
+        confidence: REQUIRED. Your calibrated confidence that this is a
+            real, exploitable issue: ``high`` (working PoC against the
+            live target, or a complete reachable source→sink trace),
+            ``medium`` (strong static evidence you could not fully
+            execute), or ``low`` (plausible with a material unresolved
+            gap). Do not inflate — an accurate ``medium`` is more useful
+            than a ``high`` that fails triage.
+        confidence_rationale: Required when ``confidence`` is not
+            ``high``. Name the specific gap (e.g. "static-only trace,
+            could not stand up the service to reproduce"; "reachability
+            of this route from unauthenticated traffic unconfirmed").
+        severity_change_conditions: REQUIRED. One concrete sentence on
+            what single piece of additional evidence would raise or
+            lower the severity (e.g. "confirmation this route is exposed
+            to unauthenticated internet traffic would raise this to
+            critical").
         fix_effort: One of ``trivial`` / ``low`` / ``medium`` / ``high``.
         cvss_breakdown: 8-metric object per the format above.
         endpoint: API path / Git path (e.g. ``/api/login``).
@@ -570,6 +1297,18 @@ async def create_vulnerability_report(
         cve: ``CVE-YYYY-NNNNN`` if certain, else omit.
         cwe: ``CWE-NNN`` (most specific child) if certain, else omit.
         code_locations: White-box findings — list of location objects.
+        http_exchange_ids: Proxy request IDs that prove this finding.
+            Copy these IDs from ``list_requests`` or ``view_request``.
+            For a finding validated over HTTP, capture and inspect the
+            supporting exchanges and include their IDs here before filing.
+            Include relevant baseline/control requests as well as the exploit.
+            Omit only when the finding has no captured HTTP evidence (for
+            example a static-only code finding). Never invent IDs or drop
+            them to bypass a verification error; retry the capture instead.
+            If the result carries a ``warning`` that the IDs were not
+            stored, the finding is filed without them: attach them with
+            ``update_vulnerability_report`` once the proxy responds.
+            Keep IDs out of ``evidence`` and all other report text.
 
             **How ``fix_before`` / ``fix_after`` work**: they're used as
             literal GitHub/GitLab PR suggestion blocks. When a reviewer
@@ -632,48 +1371,62 @@ async def create_vulnerability_report(
             - Padding ``fix_before`` with surrounding context lines
               that aren't part of the fix.
             - Duplicating the same change across multiple locations.
+        fix_verification: REQUIRED whenever any ``code_locations`` entry
+            carries a ``fix_after``. A reviewer can apply that
+            suggestion with one click, so an unverified fix ships
+            straight into the codebase. Before writing this field, work
+            the gates **in order** and never trade an earlier one for a
+            later one:
+
+            1. **Security closure** — re-trace the source → sink path
+               through the *patched* code and state why it is now
+               blocked. Re-run the PoC against the fix if you can.
+            2. **Bypass review** — re-read the diff *without* leaning on
+               the rationale that produced it. Name the sibling call
+               sites, equivalent sinks, and alternate malicious input
+               classes you checked, and try at least one.
+            3. **Preserved behavior** — name the legitimate inputs,
+               public APIs, and error semantics that must keep working,
+               and confirm the patch leaves them intact. A fix that
+               breaks the feature is not a fix.
+            4. **Repository checks** — run the narrowest relevant
+               syntax / type / lint / test check that covers the
+               changed lines.
+
+            Then write what you did: the commands you ran and their
+            results, and every gate you could only reason about rather
+            than execute, marked explicitly as a gap. Do not claim a
+            gate passed because it looks right. If a gate fails, revise
+            the patch or drop ``fix_after`` and leave the location
+            informational — never compensate for a failed security
+            closure with a smaller diff or extra prose.
+
+            Also use this field to record the narrowest-complete-change
+            judgement: prefer the smallest repository-native fix that
+            fully enforces the invariant, using existing helpers, with
+            no unrelated refactors folded in.
         fix_pr_body: Optional. When source is available and you have a
             concrete fix, a markdown PR-description body proposing the
             fix (summary + rationale). Prose/markdown only — the code
             change itself belongs in ``code_locations``. Omit for
             black-box findings.
-
-    Example (abbreviated — mirror this structure)::
-
-        title: "Reflected XSS in /search q parameter"
-        description:
-            The **`q`** parameter of `/search` reflects user input into
-            the HTML response without encoding, allowing script
-            injection.
-        technical_analysis:
-            The handler interpolates `q` directly into the page body:
-
-            ```python title=views.py startLineNumber=42 endLineNumber=44
-            html = f"<h2>Results for {q}</h2>"
-            return HttpResponse(html)
-            ```
-
-            No output encoding is applied, so `<script>` executes.
-        poc_description:
-            1. Navigate to `/search?q=<payload>`.
-            2. Observe the payload executes in the victim's browser.
-        poc_script_code:
-            ```
-            GET /search?q=<script>alert(document.domain)</script>
-            ```
-        evidence:
-            Response echoes the payload verbatim:
-
-            ```html
-            <h2>Results for <script>alert(document.domain)</script></h2>
-            ```
-        assumptions:
-            Assumes a victim can be induced to open a crafted link.
-        remediation_steps:
-            Context-encode all user input rendered into HTML; prefer the
-            template engine's auto-escaping over string interpolation.
-        fix_effort: "low"
     """
+    (
+        http_exchange_ids,
+        http_exchange_errors,
+        http_exchange_warning,
+    ) = await _verify_http_exchange_ids(ctx, http_exchange_ids)
+    if http_exchange_errors:
+        return json.dumps(
+            {
+                "success": False,
+                "error": "Validation failed",
+                "errors": http_exchange_errors,
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+
     agent_id, agent_name = _caller_identity(ctx)
 
     result = await _do_create(
@@ -687,6 +1440,10 @@ async def create_vulnerability_report(
         remediation_steps=remediation_steps,
         evidence=evidence,
         assumptions=assumptions,
+        counterevidence=counterevidence,
+        confidence=confidence,
+        confidence_rationale=confidence_rationale,
+        severity_change_conditions=severity_change_conditions,
         fix_effort=fix_effort,
         cvss_breakdown=cvss_breakdown,
         endpoint=endpoint,
@@ -694,7 +1451,220 @@ async def create_vulnerability_report(
         cve=cve,
         cwe=cwe,
         code_locations=code_locations,
+        http_exchange_ids=http_exchange_ids,
+        fix_verification=fix_verification,
         fix_pr_body=fix_pr_body,
+        agent_id=agent_id,
+        agent_name=agent_name,
+    )
+    return json.dumps(_with_warning(result, http_exchange_warning), ensure_ascii=False, default=str)
+
+
+@function_tool(timeout=60, strict_mode=False)
+async def update_vulnerability_report(
+    ctx: RunContextWrapper,
+    report_id: str,
+    update_reason: str,
+    title: str | None = None,
+    description: str | None = None,
+    impact: str | None = None,
+    target: str | None = None,
+    technical_analysis: str | None = None,
+    poc_description: str | None = None,
+    poc_script_code: str | None = None,
+    remediation_steps: str | None = None,
+    evidence: str | None = None,
+    assumptions: str | None = None,
+    counterevidence: str | None = None,
+    confidence: str | None = None,
+    confidence_rationale: str | None = None,
+    severity_change_conditions: str | None = None,
+    fix_effort: str | None = None,
+    cvss_breakdown: dict[str, str] | None = None,
+    endpoint: str | None = None,
+    method: str | None = None,
+    cve: str | None = None,
+    cwe: str | None = None,
+    code_locations: list[dict[str, Any]] | None = None,
+    http_exchange_ids: list[str] | None = None,
+    fix_verification: str | None = None,
+    fix_pr_body: str | None = None,
+    contextual_cvss_reasoning: str | None = None,
+) -> str:
+    """Revise a vulnerability report that is already filed, keeping its id.
+
+    Use this when you learn something a filed finding does not yet carry:
+
+    - You built the working exploit after filing the finding on static
+      evidence, so the PoC and the confidence change.
+    - You chained the finding with another one and the real impact is
+      higher, so the impact narrative and the CVSS vector change.
+    - Further testing narrowed or weakened the finding, so the severity
+      must come down.
+    - Counterevidence, remediation, or a code location was wrong or
+      incomplete.
+
+    This is not deduplication. You do not need a duplicate verdict to
+    revise your own finding, and you must not file a second report for a
+    finding you can revise. Call ``list_reports`` or ``get_report`` first
+    to find the id and read what the report already says.
+
+    Pass only the fields you want to replace. Every other field stays as
+    it is. Reporting rules of ``create_vulnerability_report`` apply to
+    every field you pass, including the markdown and tone rules.
+
+    Notes on specific fields:
+
+    - ``cvss_breakdown`` replaces the whole vector. The score and the
+      severity are recalculated from it, so pass all 8 metrics. On a
+      dependency finding it replaces the contextual rating and needs
+      ``contextual_cvss_reasoning`` with it. Pass the reasoning alone to
+      correct only the explanation of the rating already on file.
+    - A dependency finding never carries ``endpoint``, ``method`` or a PoC.
+      File a proven exploit of the package as its own report.
+    - A field that only explains another field is dropped when the field
+      it explains changes and you pass no replacement. Pass
+      ``confidence_rationale`` with a new ``confidence``, and
+      ``severity_change_conditions`` with a new ``cvss_breakdown``.
+    - ``code_locations`` replaces the whole list. A location carrying
+      ``fix_after`` needs ``fix_verification``.
+
+    The report keeps its id, its original author, and its filing time. The
+    revision is recorded in the report as update history, so state the
+    reason plainly.
+
+    Args:
+        report_id: Id of the report to revise (format ``vuln-NNNN``).
+        update_reason: What you learned that the report does not yet
+            carry, in one or two sentences.
+        title: Replacement title.
+        description: Replacement overview.
+        impact: Replacement impact narrative.
+        target: Replacement affected asset.
+        technical_analysis: Replacement technical details.
+        poc_description: Replacement PoC steps (no code).
+        poc_script_code: Replacement exploit script or payload.
+        remediation_steps: Replacement remediation prose (no code).
+        evidence: Replacement evidence.
+        assumptions: Replacement exploitability prerequisites.
+        counterevidence: Replacement case against the finding.
+        confidence: ``high`` / ``medium`` / ``low``.
+        confidence_rationale: The gap behind a confidence below ``high``.
+        severity_change_conditions: What would move the severity now.
+        fix_effort: ``trivial`` / ``low`` / ``medium`` / ``high``.
+        cvss_breakdown: All 8 CVSS metrics. Replaces the score and the
+            severity too.
+        endpoint: Replacement endpoint.
+        method: Replacement HTTP method.
+        cve: Replacement CVE id.
+        cwe: Replacement CWE id.
+        code_locations: Replacement code locations.
+        http_exchange_ids: Replacement proxy request ids. Pass an empty
+            list to remove all linked exchanges.
+        fix_verification: Verification statement for an applyable fix.
+        fix_pr_body: Replacement fix PR body.
+        contextual_cvss_reasoning: Dependency findings only. What you
+            observed in this codebase that justifies the contextual
+            ``cvss_breakdown``.
+    """
+    (
+        http_exchange_ids,
+        http_exchange_errors,
+        http_exchange_warning,
+    ) = await _verify_http_exchange_ids(ctx, http_exchange_ids)
+    if http_exchange_errors:
+        return json.dumps(
+            {
+                "success": False,
+                "error": "Validation failed",
+                "errors": http_exchange_errors,
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+
+    fields = {
+        "title": title,
+        "description": description,
+        "impact": impact,
+        "target": target,
+        "technical_analysis": technical_analysis,
+        "poc_description": poc_description,
+        "poc_script_code": poc_script_code,
+        "remediation_steps": remediation_steps,
+        "evidence": evidence,
+        "assumptions": assumptions,
+        "counterevidence": counterevidence,
+        "confidence": confidence,
+        "confidence_rationale": confidence_rationale,
+        "severity_change_conditions": severity_change_conditions,
+        "fix_effort": fix_effort,
+        "cvss_breakdown": cvss_breakdown,
+        "endpoint": endpoint,
+        "method": method,
+        "cve": cve,
+        "cwe": cwe,
+        "code_locations": code_locations,
+        "http_exchange_ids": http_exchange_ids,
+        "fix_verification": fix_verification,
+        "fix_pr_body": fix_pr_body,
+        "contextual_cvss_reasoning": contextual_cvss_reasoning,
+    }
+    if http_exchange_warning and all(value is None for value in fields.values()):
+        return json.dumps(
+            {"success": False, "error": http_exchange_warning, "report_id": report_id},
+            ensure_ascii=False,
+            default=str,
+        )
+
+    agent_id, agent_name = _caller_identity(ctx)
+    result = await asyncio.to_thread(
+        _do_update,
+        report_id=report_id,
+        update_reason=update_reason,
+        fields=fields,
+        agent_id=agent_id,
+        agent_name=agent_name,
+    )
+    return json.dumps(_with_warning(result, http_exchange_warning), ensure_ascii=False, default=str)
+
+
+@function_tool(timeout=60)
+async def delete_vulnerability_report(
+    ctx: RunContextWrapper,
+    report_id: str,
+    delete_reason: str,
+) -> str:
+    """Withdraw a vulnerability report that later testing disproved.
+
+    Use this when a finding you filed turns out not to be a vulnerability
+    at all: the exploit only worked because of a mistake in your own test
+    setup (a mixed-up session, a self-inflicted state change, a misread
+    response), the behaviour is documented and intended, or the control
+    you believed was missing is in fact enforced. The report is removed
+    from the scan; it does not stay behind as a zero-severity entry.
+
+    Do NOT use this for a finding that is real but weaker than filed —
+    revise it with ``update_vulnerability_report`` so the severity, the
+    impact and the counterevidence come down together. Do NOT rewrite a
+    report into a "retracted" or "false positive" note either: delete it.
+
+    Only withdraw a report you have re-tested yourself, whoever filed it.
+    Call ``get_report`` first to read what it claims, then state in
+    ``delete_reason`` exactly what disproved it, so the scan history shows
+    who withdrew the finding and why. A withdrawn report cannot be restored; if new
+    evidence later proves the issue, file it again.
+
+    Args:
+        report_id: Id of the report to withdraw (format ``vuln-NNNN``).
+        delete_reason: What disproved the finding, in one or two
+            sentences.
+    """
+    agent_id, agent_name = _caller_identity(ctx)
+    result = await asyncio.to_thread(
+        _do_delete,
+        report_id=report_id,
+        delete_reason=delete_reason,
         agent_id=agent_id,
         agent_name=agent_name,
     )
@@ -906,14 +1876,10 @@ def _build_dependency_evidence(
         evidence += f"\n\n**Usage analysis:** {label}."
         if reachability_evidence and reachability_evidence.strip():
             evidence += f" {reachability_evidence.strip()}"
-        evidence += (
-            " This is a prioritization signal from static analysis, not a"
-            " proof of exploitability or of safety."
-        )
     return evidence
 
 
-async def _do_create_dependency(  # noqa: PLR0912
+async def _do_create_dependency(  # noqa: PLR0912, PLR0915
     *,
     title: str,
     description: str,
@@ -935,6 +1901,8 @@ async def _do_create_dependency(  # noqa: PLR0912
     manifest_path: str | None = None,
     reachability: str = "unknown",
     reachability_evidence: str | None = None,
+    code_locations: list[dict[str, Any]] | None = None,
+    fix_verification: str | None = None,
     contextual_cvss_breakdown: dict[str, str] | None = None,
     contextual_cvss_reasoning: str | None = None,
     agent_id: str | None = None,
@@ -976,6 +1944,16 @@ async def _do_create_dependency(  # noqa: PLR0912
     manifest_err = _validate_manifest_path(manifest_path)
     if manifest_err:
         errors.append(manifest_err)
+
+    parsed_locations = _normalize_code_locations(code_locations)
+    if parsed_locations:
+        errors.extend(_validate_code_locations(parsed_locations))
+    elif code_locations:
+        errors.append(
+            "code_locations were dropped as unusable - every location needs a relative "
+            "'file' and an integer 'start_line'"
+        )
+    errors.extend(_validate_fix_verification(parsed_locations, fix_verification))
 
     reachability = (reachability or "unknown").strip().lower()
     if reachability not in _VALID_REACHABILITY:
@@ -1083,14 +2061,22 @@ async def _do_create_dependency(  # noqa: PLR0912
             cvss=cvss_score if advisory_cvss is not None else None,
             cve=parsed_cve,
             cwe=cwe,
+            code_locations=parsed_locations,
+            fix_verification=fix_verification,
             finding_class="dependency_cve",
             dependency_metadata=dependency_metadata,
             agent_id=agent_id if isinstance(agent_id, str) else None,
             agent_name=agent_name if isinstance(agent_name, str) else None,
         )
-    except (ImportError, AttributeError) as e:
+    except Exception as e:
         logger.exception("create_dependency_report persistence failed")
-        return {"success": False, "error": f"Failed to create dependency report: {e!s}"}
+        return {
+            "success": False,
+            "error": (
+                f"Failed to create dependency report: {e!s}. "
+                "The finding was not stored; file it again."
+            ),
+        }
     else:
         logger.info(
             "Dependency report created: id=%s cve=%s package=%s severity=%s",
@@ -1131,6 +2117,8 @@ async def create_dependency_report(
     dependency_path: str | None = None,
     reachability: str = "unknown",
     reachability_evidence: str | None = None,
+    code_locations: list[dict[str, Any]] | None = None,
+    fix_verification: str | None = None,
     contextual_cvss_breakdown: dict[str, str] | None = None,
     contextual_cvss_reasoning: str | None = None,
 ) -> str:
@@ -1241,6 +2229,23 @@ async def create_dependency_report(
             is off in production), and say who controls the input. State
             it plainly when no entry point reaches the sink — that is the
             most useful result a reader can get.
+        code_locations: Where application code imports or calls the package —
+            the evidence behind your ``reachability`` claim. List of dicts,
+            same shape as ``create_vulnerability_report``::
+
+                {"file": "src/api/client.ts", "start_line": 14, "end_line": 14,
+                 "snippet": "const x = require('pkg')", "label": "imports it"}
+
+            Cite the repo-relative ``file`` and the exact 1-based
+            ``start_line`` where ``snippet`` actually sits — verify against
+            the real file, never guess. A location may also propose
+            the fix itself: ``fix_before`` (verbatim current code, e.g. the
+            manifest pin line) + ``fix_after`` (same lines with the fixed
+            version) — that combination requires ``fix_verification``.
+        fix_verification: Required whenever any ``code_locations`` entry
+            carries ``fix_after``. Same bar as a normal finding: security
+            closure, bypass review, preserved behavior, and how each was
+            checked.
         contextual_cvss_breakdown: **Required.** Full CVSS v3.1 rating of this
             CVE **in this codebase** — the same 8-metric object as
             ``create_vulnerability_report``'s ``cvss_breakdown``:
@@ -1301,6 +2306,8 @@ async def create_dependency_report(
         manifest_path=manifest_path,
         reachability=reachability,
         reachability_evidence=reachability_evidence,
+        code_locations=code_locations,
+        fix_verification=fix_verification,
         contextual_cvss_breakdown=contextual_cvss_breakdown,
         contextual_cvss_reasoning=contextual_cvss_reasoning,
         agent_id=agent_id,
@@ -1327,6 +2334,7 @@ _REPORT_SUMMARY_FIELDS = (
     "title",
     "severity",
     "cvss",
+    "confidence",
     "finding_class",
     "cve",
     "cwe",
@@ -1421,12 +2429,12 @@ def _do_list_reports(
     caller_agent_id: str | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = []
-    severity = (severity or "").strip().lower() or None
+    severity = (clean_optional(severity) or "").lower() or None
     if severity and severity not in _VALID_SEVERITIES:
         errors.append(
             f"Invalid severity: {severity!r}. Must be one of: {sorted(_VALID_SEVERITIES)}"
         )
-    finding_class = (finding_class or "").strip().lower() or None
+    finding_class = (clean_optional(finding_class) or "").lower() or None
     if finding_class and finding_class not in _VALID_FINDING_CLASSES:
         errors.append(
             f"Invalid finding_class: {finding_class!r}. "
@@ -1456,8 +2464,8 @@ def _do_list_reports(
             r,
             severity=severity,
             finding_class=finding_class,
-            target=(target or "").strip() or None,
-            search=(search or "").strip() or None,
+            target=clean_optional(target),
+            search=clean_optional(search),
         )
     ]
     matched.sort(key=lambda r: (_report_severity_rank(r), str(r.get("id", ""))))
@@ -1528,8 +2536,8 @@ async def list_reports(
     findings, and build the ``finish_scan`` executive summary.
 
     By default each entry is compact: ``id``, ``title``, ``severity``,
-    ``cvss``, ``finding_class``, ``cve`` / ``cwe``, ``target`` /
-    ``endpoint``, ``fix_effort``, ``agent_name`` (who filed it), ``timestamp``,
+    ``cvss``, ``confidence``, ``finding_class``, ``cve`` / ``cwe``,
+    ``target`` / ``endpoint``, ``fix_effort``, ``agent_name`` (who filed it), ``timestamp``,
     plus a 280-char ``description_preview``. Entries you filed yourself are
     flagged ``by_you: true``. The response also carries
     ``total_count`` and ``severity_counts`` (counts per severity across all

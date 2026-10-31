@@ -77,7 +77,7 @@ com.app://callback  (mobile custom scheme)
 
 ### State and Nonce
 
-- Missing, predictable, or reusable `state` → CSRF on OAuth login (session fixation, account linking)
+- Missing, predictable, or reusable `state` → test CSRF on OAuth login (session fixation, account linking); RFC 9700 also permits correctly bound PKCE, or OIDC `nonce`, to provide CSRF protection, so establish whether that protection survives a cross-session callback
 - Missing `nonce` in OIDC → ID token injection/replay
 - `state` not bound to client session or PKCE verifier
 
@@ -102,7 +102,7 @@ com.app://callback  (mobile custom scheme)
 ### Scope and Token Issues
 
 - Scope escalation: request `admin`/`offline_access`/`openid profile email` beyond app need; server grants all requested scopes
-- Refresh token not rotated or reuse not detected → persistent access
+- Public-client refresh tokens neither sender-constrained nor rotated with reuse detection → persistent access; a non-rotating token bound to the client's key is permitted by RFC 9700, so test replay without that key
 - Access token accepted across services (missing audience/resource binding)
 - Token introspection returns `active:true` without proper auth on introspection endpoint
 
@@ -112,6 +112,10 @@ com.app://callback  (mobile custom scheme)
 - `acr`, `amr`, `auth_time` not validated for step-up requirements
 - Userinfo endpoint returns PII without matching access token scope
 - `sub` collision across issuers if `iss` not validated
+
+### OAuth Security BCP (RFC 9700)
+
+Authorization servers must support PKCE, public clients must use it, and confidential clients are also recommended to use it. Test challenge stripping and verifier injection across both client types. Resource-owner-password grants must not be used; implicit access-token responses are discouraged because tokens can leak or be replayed. For mix-up defenses, bind the selected issuer and endpoints to the authorization transaction; validate an authorization-response `iss` when that defense is used, rather than merely checking the issuer of a later ID token ([RFC 9700](https://www.rfc-editor.org/rfc/rfc9700.html)).
 
 ## Advanced Techniques
 

@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/usestrix/strix/tui/internal/render"
 )
 
 type selectionCopiedMsg struct{ err error }
@@ -206,7 +207,7 @@ func (m *Model) toggleEventAtLine(line int) {
 
 func (m Model) selectedText() string {
 	fromLine, fromCol, toLine, toCol := m.selection.bounds()
-	source := m.viewportContent
+	source := render.StopSpinners(m.viewportContent)
 	if m.selection.region == regionInput {
 		source = m.inputText()
 	}

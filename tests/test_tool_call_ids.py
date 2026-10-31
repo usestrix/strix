@@ -1,11 +1,12 @@
-"""Tests for tool-call id uniqueness.
+"""Tests for tool-call id presence and uniqueness.
 
 Providers that number tool calls per turn (``exec_command:0``, ``:1``, ...)
 restart the counter on every turn, so the same id eventually appears twice in
-one conversation. Strict providers then reject the whole request, and because
-the history is replayed on every retry the agent can never recover. A gateway
-that validates id uniqueness the way those providers do proves both the
-failure and the fix.
+one conversation. Others hand back a tool call with no id at all, leaving the
+paired tool message with a blank ``tool_call_id``. Strict providers reject the
+whole request either way, and because the history is replayed on every retry
+the agent can never recover. Gateways that validate ids the way those
+providers do prove both failures and their fixes.
 """
 
 from __future__ import annotations
@@ -125,10 +126,51 @@ class _StrictHandler(BaseHTTPRequestHandler):
         self.wfile.write(encoded)
 
 
-@pytest.fixture
-def strict_gateway() -> Iterator[str]:
+class _BlankIdHandler(BaseHTTPRequestHandler):
+    """Gateway that hands out an id-less tool call and rejects blank ids, like GLM does."""
+
+    def log_message(self, *args: Any) -> None:
+        pass
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length) or b"{}")
+        messages = body.get("messages", [])
+        _REQUESTS.append(messages)
+
+        for index, message in enumerate(messages):
+            if message.get("role") == "tool" and not message.get("tool_call_id"):
+                self._respond(
+                    400,
+                    {
+                        "error": {
+                            "message": (
+                                f"messages[{index}]: tool messages must include "
+                                "a non-empty string tool_call_id"
+                            ),
+                            "code": 400,
+                        }
+                    },
+                )
+                return
+
+        if len(_REQUESTS) == 1:
+            self._respond(200, _tool_call_completion(""))
+        else:
+            self._respond(200, _text_completion("all done"))
+
+    def _respond(self, status: int, payload: dict[str, Any]) -> None:
+        encoded = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+
+def _serve(handler: type[BaseHTTPRequestHandler]) -> Iterator[str]:
     _REQUESTS.clear()
-    server = HTTPServer(("127.0.0.1", 0), _StrictHandler)
+    server = HTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -136,6 +178,16 @@ def strict_gateway() -> Iterator[str]:
     finally:
         server.shutdown()
         server.server_close()
+
+
+@pytest.fixture
+def strict_gateway() -> Iterator[str]:
+    yield from _serve(_StrictHandler)
+
+
+@pytest.fixture
+def blank_id_gateway() -> Iterator[str]:
+    yield from _serve(_BlankIdHandler)
 
 
 def _model(base_url: str) -> Model:
@@ -222,6 +274,61 @@ def test_history_dedupe_pairs_parallel_calls_by_order() -> None:
     assert rebuilt[1]["call_id"] != "dup"
 
 
+@pytest.mark.asyncio
+async def test_blank_call_id_is_rejected_by_the_provider_without_the_wrapper(
+    blank_id_gateway: str,
+) -> None:
+    # Repro: the model answers with a tool call carrying no id, so the paired
+    # tool result goes back as a ``tool`` message with a blank ``tool_call_id``
+    # and the provider rejects the whole replayed history with a 400.
+    with pytest.raises(Exception, match="non-empty string tool_call_id"):
+        await _run_agent(blank_id_gateway, wrap=False)
+
+
+@pytest.mark.asyncio
+async def test_blank_call_id_is_filled_in_so_the_history_stays_valid(
+    blank_id_gateway: str,
+) -> None:
+    result = await _run_agent(blank_id_gateway, wrap=True)
+
+    assert result.final_output == "all done"
+    call_ids = _assistant_call_ids(_REQUESTS[-1])
+    assert len(call_ids) == 1
+    assert call_ids[0].startswith("call_")
+    assert _tool_results(_REQUESTS[-1]) == ["did 1"]
+
+
+def test_history_dedupe_fills_in_blank_ids_and_keeps_outputs_paired() -> None:
+    items = [
+        {"type": "function_call", "call_id": "", "name": "a", "arguments": "{}"},
+        {"type": "function_call", "call_id": "", "name": "b", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "", "output": "for-a"},
+        {"type": "function_call_output", "call_id": "", "output": "for-b"},
+    ]
+
+    rebuilt, changed = dedupe_history_call_ids(items)
+
+    assert changed
+    ids = [item["call_id"] for item in rebuilt]
+    assert all(call_id.startswith("call_") for call_id in ids)
+    assert ids[0] == ids[2]
+    assert ids[1] == ids[3]
+    assert ids[0] != ids[1]
+
+
+def test_history_dedupe_fills_in_a_missing_call_id_key() -> None:
+    items = [
+        {"type": "function_call", "name": "a", "arguments": "{}"},
+        {"type": "function_call_output", "output": "x"},
+    ]
+
+    rebuilt, changed = dedupe_history_call_ids(items)
+
+    assert changed
+    assert rebuilt[0]["call_id"] == rebuilt[1]["call_id"]
+    assert rebuilt[0]["call_id"].startswith("call_")
+
+
 def test_history_dedupe_leaves_unique_ids_alone() -> None:
     items = [
         {"type": "function_call", "call_id": "call_a", "name": "a", "arguments": "{}"},
@@ -247,3 +354,29 @@ def test_turn_rewriter_is_stable_across_repeated_sightings() -> None:
 
     assert first.call_id != "exec_command:0"
     assert second.call_id == first.call_id
+
+
+def test_turn_rewriter_fills_in_a_blank_id_stably() -> None:
+    rewriter = TurnCallIdRewriter([])
+    call = ResponseFunctionToolCall(
+        id="fc_1", call_id="", name="a", arguments="{}", type="function_call"
+    )
+
+    first = rewriter.rewrite_item(call)
+    second = rewriter.rewrite_item(call)
+
+    assert first.call_id.startswith("call_")
+    assert second.call_id == first.call_id
+    assert rewriter.rewrite_item(first).call_id == first.call_id
+
+
+def test_turn_rewriter_gives_parallel_blank_calls_distinct_ids() -> None:
+    rewriter = TurnCallIdRewriter([])
+    a = ResponseFunctionToolCall(
+        id="fc_1", call_id="", name="a", arguments="{}", type="function_call"
+    )
+    b = ResponseFunctionToolCall(
+        id="fc_2", call_id="", name="b", arguments="{}", type="function_call"
+    )
+
+    assert rewriter.rewrite_item(a).call_id != rewriter.rewrite_item(b).call_id

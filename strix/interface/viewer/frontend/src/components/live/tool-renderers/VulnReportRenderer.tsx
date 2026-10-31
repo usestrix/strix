@@ -11,6 +11,11 @@ const SEVERITY_COLORS: Record<string, string> = {
   low: "text-blue-400", info: "text-cyan-400",
 };
 
+/** Anything below high is a claim the reader still has to check. */
+const CONFIDENCE_COLORS: Record<string, string> = {
+  high: "text-emerald-400", medium: "text-yellow-400", low: "text-orange-400",
+};
+
 export default function VulnReportRenderer({ args, result }: ToolRendererProps) {
   const title = (args.title as string) ?? "";
   const description = (args.description as string) ?? "";
@@ -24,6 +29,11 @@ export default function VulnReportRenderer({ args, result }: ToolRendererProps) 
   const remediation = (args.remediation_steps as string) ?? "";
   const cve = (args.cve as string) ?? "";
   const cwe = (args.cwe as string) ?? "";
+  const counterevidence = (args.counterevidence as string) ?? "";
+  const confidence = ((args.confidence as string) ?? "").toLowerCase();
+  const confidenceRationale = (args.confidence_rationale as string) ?? "";
+  const severityChangeConditions = (args.severity_change_conditions as string) ?? "";
+  const fixVerification = (args.fix_verification as string) ?? "";
 
   const res = result as Record<string, unknown> | null;
   const rawSev = (res && typeof res === "object" ? res.severity : null) ?? args.severity ?? "medium";
@@ -38,6 +48,11 @@ export default function VulnReportRenderer({ args, result }: ToolRendererProps) 
         {cvss != null && <span className="text-[#888] text-[13px]">CVSS {cvss}</span>}
         {cve && <span className="text-[#888] font-mono text-[13px]">{cve}</span>}
         {cwe && <span className="text-[#888] font-mono text-[13px]">{cwe}</span>}
+        {confidence && (
+          <span className={`text-[13px] ${CONFIDENCE_COLORS[confidence] ?? "text-[#888]"}`}>
+            {confidence} confidence
+          </span>
+        )}
       </div>
       {title && <div className="text-[15px] text-white/80 font-semibold">{title}</div>}
       {(target || endpoint) && (
@@ -56,6 +71,23 @@ export default function VulnReportRenderer({ args, result }: ToolRendererProps) 
           <div className="mt-1"><TruncatedText text={technicalAnalysis} maxLines={20} /></div>
         </div>
       )}
+      {confidenceRationale && (
+        <div className="text-[#777] text-xs leading-snug">{confidenceRationale}</div>
+      )}
+      {/* The case against the finding sits beside the case for it: whoever
+          triages this needs both to decide whether to act. */}
+      {counterevidence && (
+        <div>
+          <span className="text-emerald-400/60 text-sm font-semibold">Counterevidence</span>
+          <div className="mt-1"><TruncatedText text={counterevidence} maxLines={12} /></div>
+        </div>
+      )}
+      {severityChangeConditions && (
+        <div>
+          <span className="text-emerald-400/60 text-sm font-semibold">Severity would change if</span>
+          <div className="mt-1"><TruncatedText text={severityChangeConditions} maxLines={10} /></div>
+        </div>
+      )}
       {(pocDescription || pocCode) && (
         <div>
           <span className="text-emerald-400/60 text-sm font-semibold">Proof of Concept</span>
@@ -67,6 +99,14 @@ export default function VulnReportRenderer({ args, result }: ToolRendererProps) 
         <div>
           <span className="text-emerald-400/60 text-sm font-semibold">Remediation</span>
           <div className="mt-1"><TruncatedText text={remediation} maxLines={15} /></div>
+        </div>
+      )}
+      {/* An applyable fix is one click from the user's codebase, so how it was
+          verified belongs next to it. */}
+      {fixVerification && (
+        <div>
+          <span className="text-emerald-400/60 text-sm font-semibold">Fix verification</span>
+          <div className="mt-1"><TruncatedText text={fixVerification} maxLines={12} /></div>
         </div>
       )}
     </div>

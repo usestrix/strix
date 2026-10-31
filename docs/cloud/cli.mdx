@@ -1,0 +1,103 @@
+---
+title: "Cloud CLI"
+description: "Drive app.strix.ai from the terminal with strix cloud"
+---
+
+The `strix cloud` commands drive the managed platform ([app.strix.ai](https://app.strix.ai)) from the terminal. You do not need Docker or an LLM key.
+
+## Sign In
+
+Sign in once with the browser device flow. The sign-in creates your account and workspace on first use, and it stores a personal API token in `~/.strix/platform-auth.json`.
+
+```bash
+strix cloud login                         # browser approval, then workspace and scope profile
+strix cloud login --workspace "My Team"   # select a workspace by name or ID
+strix cloud whoami                        # local account and workspace status
+strix cloud session                       # verify the remote session and consent ceiling
+strix cloud logout                        # revoke remotely, then remove the local token
+```
+
+A browser sign-in creates one reusable credential for each CLI installation. A second sign-in on the same installation replaces the secret instead of adding another key. `strix cloud logout` revokes the server session before it deletes the local token. Use `--local-only` when you cannot reach the server.
+
+## Scopes
+
+The default **Recommended** preset covers normal scan work, local source uploads, workspace switching, and user-approved credit top-ups. It excludes credential creation, so request `tokens:write` when you need it.
+
+```bash
+strix cloud login --scopes scans:read scans:write uploads:write billing:read
+strix cloud login --scope-profile minimal   # also accepts recommended or full
+strix cloud session scopes                  # granted scopes and the login ceiling
+strix cloud session scopes set minimal      # narrow without another browser sign-in
+```
+
+A workspace switch keeps the credential and its expiry, preserves the server-side scope preference, and caps access by the target role. A switch can never exceed the login consent ceiling. Each process pins the workspace it started with, so a concurrent switch fails safely instead of sending a stale command to another organization.
+
+## Commands
+
+Every operation of the [REST API](https://docs.app.strix.ai) has a matching command in the form `strix cloud <resource> <verb>`.
+
+```bash
+strix cloud                                   # list all resources
+strix cloud scans                             # run the safe default (scans list)
+strix cloud scans help                        # list the verbs of a resource
+strix cloud domains add --domain example.com --asset-type web_app
+strix cloud scans start --engagement-type live_test --domain-ids <uuid> --wait
+strix cloud vulns list --severity critical
+strix cloud credits                           # credit balance
+```
+
+Write commands take request fields as flags. Every write command also accepts one JSON object with `--data`:
+
+```bash
+strix cloud scans start --data '{"engagement_type":"code_review"}'   # literal JSON
+strix cloud scans start --data @request.json                         # read a file
+cat request.json | strix cloud scans start --data -                  # read standard input
+```
+
+`--token` and `STRIX_API_TOKEN` are stateless overrides for a single command, and they never replace the stored sign-in. Pair a CLI-session override with `--workspace-id` or `STRIX_WORKSPACE_ID`.
+
+## Workspaces And Account Setup
+
+```bash
+strix cloud workspaces list                       # numbered list; workspace is also accepted
+strix cloud workspaces create --name "My Team"    # needs admin and organizations:write
+strix cloud workspaces use 2                      # switch by list number, exact name, or ID
+strix cloud billing topup --credits 20 --yes      # approve an agent payment after HTTP 402
+strix cloud billing subscribe --plan strix_cloud  # opens the hosted checkout page
+strix cloud billing portal                        # opens the billing portal
+strix cloud integrations install github           # opens the app installation page
+strix cloud domains verify <domain-id>            # prints the DNS record to add
+```
+
+The last four commands end at a person. Strix creates the link, opens the browser for an interactive terminal, and always prints the URL. The user enters the card, approves the installation, or adds the DNS record. Pass `--no-browser` to print the URL only.
+
+## Output And Exit Codes
+
+The commands work for people and for agents. Terminal output favors names, branches, lifecycle states, and numbered selectors. Redirected output, and `--json`, preserve the complete machine-readable record.
+
+- Human lists keep the selectors that follow-up commands need, and they omit internal organization and user IDs. A selector that is too long for the compact table is repeated losslessly in a copyable block.
+- Paginated lists print the next `--page` or `--offset`. Detail views keep useful prose within a safe terminal bound, so use `--json` for the complete record.
+- Token lists separate API keys from named CLI device sessions.
+- Binary downloads are the exception to JSON output. Redirect the raw bytes on purpose, or use `--output FILE --json` to write the file and receive structured download metadata.
+- There are no prompts when stdin is not a terminal.
+
+Exit codes: `0` success, `1` error, `2` invalid usage, `4` authentication or plan limit, `5` payment required.
+
+## Credits And Plan Limits
+
+Non-Enterprise scans consume the deterministic estimate shown for their scope. A source-only code review at the default `ultra` tier currently starts at 60 credits. Enterprise scans are plan-included and do not consume the credit wallet.
+
+Report downloads need Enterprise, schedules need Pro, and billing writes need an admin token. A plan block exits `4`. An insufficient credit wallet exits `5` without the creation of a scan and without a charge.
+
+## Local Source Scans
+
+See [Scan Local Source](/cloud/overview#scan-local-source) for the upload approval flow, the exclusion rules, and the size limits.
+
+## Tab Completion
+
+Enable native tab completion once for each shell session:
+
+```bash
+source <(strix completions zsh)       # use bash instead of zsh when appropriate
+strix completions fish | source
+```

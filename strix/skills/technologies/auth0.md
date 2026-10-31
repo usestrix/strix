@@ -86,12 +86,14 @@ Authorization: Bearer <token_with_audience_A>
 
 ### Rules and Actions Abuse
 
+Inventory which Rules, Hooks, and Actions actually execute in the tenant. Check the current Auth0 lifecycle notice and tenant capabilities for retirement or read-only restrictions. During migration, compare claim assignment, MFA, denial decisions, and account-linking checks across every connection; distinguish secret/configuration access from source-code modification ([lifecycle notice](https://auth0.com/docs/troubleshoot/product-lifecycle/deprecations-and-migrations#rules-and-hooks-deprecations)).
+
 **Post-Login Rule/Action Injection**
 - Rules that add claims based on unvalidated user metadata:
   ```javascript
   user.app_metadata.role = 'admin'  // if user can set app_metadata via signup/API
   ```
-- `context.authorization` manipulation in Actions
+- Rules use `context`; Actions receive `event` and enforce token/MFA/denial changes through `api` methods. Test migrated checks that only mutate event data: those mutations do not propagate to other Actions or substitute for the corresponding enforcement API ([migration behavior](https://auth0.com/docs/customize/actions/migrate/migrate-from-rules-to-actions)).
 - Secrets in Rule code exposed to tenant admins or via Management API leak
 
 **Signup / Registration Actions**

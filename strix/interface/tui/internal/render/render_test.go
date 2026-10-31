@@ -136,7 +136,12 @@ func TestToolDispatchCoversKnownTools(t *testing.T) {
 			[]string{"report read", "not found"},
 		},
 		{
-			"respond_to_user",
+			"wait_for_user",
+			tool("wait_for_user", map[string]any{}, nil, "completed"),
+			[]string{"waiting for your reply"},
+		},
+		{
+			"respond_to_user (recorded runs)",
 			tool("respond_to_user", map[string]any{"message": "Here is the answer"}, nil, "completed"),
 			[]string{"Here is the answer", "waiting for your reply"},
 		},
@@ -203,7 +208,7 @@ func TestToolDispatchCoversKnownTools(t *testing.T) {
 		{
 			"unknown tool falls back to generic",
 			tool("brand_new_tool", map[string]any{"alpha": "1"}, "done", "completed"),
-			[]string{"brand_new_tool", "alpha", "Result:", "done"},
+			[]string{"brand_new_tool", "alpha", "Done"},
 		},
 	}
 
@@ -211,6 +216,78 @@ func TestToolDispatchCoversKnownTools(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			requireContains(t, Tool(tc.data), tc.wants...)
 		})
+	}
+}
+
+func TestGenericToolOmitsRawResult(t *testing.T) {
+	// The generic renderer shows tool name, args, and a status line only, never
+	// the raw result payload.
+	long := strings.Repeat("x", 5000)
+	out := ansi.Strip(Tool(tool("db_query", map[string]any{"query": "select 1"}, long, "completed")))
+
+	requireContains(t, out, "db_query", "query", "Done")
+	if strings.Contains(out, "Result:") || strings.Contains(out, strings.Repeat("x", 20)) {
+		t.Fatalf("generic result body must not be rendered:\n%s", out)
+	}
+}
+
+func TestMcpToolLeadsWithActionAndNamesTheServer(t *testing.T) {
+	// call_mcp is the dispatch tool; the connection and the server's own tool
+	// name are tagged onto the event from its arguments.
+	data := tool("call_mcp", map[string]any{"path": "/etc/hosts"}, "file body", "completed")
+	data["mcp_connection"] = "local_fs"
+	data["mcp_tool"] = "read_file"
+
+	out := ansi.Strip(Tool(data))
+
+	// The action leads; the server is context that trails it.
+	if !strings.HasPrefix(out, mcpIcon+"read_file") {
+		t.Fatalf("MCP render must lead with the tool's own name:\n%s", out)
+	}
+	requireContains(t, out, "local_fs", "path", "/etc/hosts", "Done")
+	// Untrusted server output stays off the terminal, as for the generic render.
+	if strings.Contains(out, "file body") {
+		t.Fatalf("MCP result body must not be rendered:\n%s", out)
+	}
+}
+
+func TestMcpToolWithoutTaggedToolFallsBackToDispatchName(t *testing.T) {
+	// A call_mcp whose underlying tool could not be read still renders as an MCP
+	// row, falling back to the dispatch tool name.
+	data := tool("call_mcp", nil, nil, "running")
+	data["mcp_connection"] = "local_fs"
+
+	requireContains(t, ansi.Strip(Tool(data)), mcpIcon+"call_mcp", "local_fs", "In progress")
+}
+
+func TestMcpDescribeInspectsConnection(t *testing.T) {
+	// describe_mcp inspects a connection; the connection is the subject and the
+	// dispatch tool name is not shown as if it were a server tool.
+	data := tool("describe_mcp", nil, nil, "completed")
+	data["mcp_connection"] = "local_fs"
+
+	out := ansi.Strip(Tool(data))
+	requireContains(t, out, mcpIcon, "Inspecting MCP server", "local_fs", "Done")
+	if strings.Contains(out, "describe_mcp") {
+		t.Fatalf("describe_mcp must read as inspecting the connection, not name the dispatch tool:\n%s", out)
+	}
+}
+
+func TestMcpListMarksDeadConnectionsOffline(t *testing.T) {
+	// list_mcps carries a per-connection dead flag; a dead connection reads as
+	// offline in the inventory while a live one shows normally.
+	result := map[string]any{
+		"connections": []any{
+			map[string]any{"name": "supabase", "tool_count": float64(3), "dead": false},
+			map[string]any{"name": "vercel", "tool_count": float64(1), "dead": true},
+		},
+	}
+	data := tool("list_mcps", nil, result, "completed")
+
+	out := ansi.Strip(Tool(data))
+	requireContains(t, out, "Listing MCP servers", "supabase", "vercel", "offline")
+	if strings.Count(out, "offline") != 1 {
+		t.Fatalf("only the dead connection should read offline:\n%s", out)
 	}
 }
 
@@ -247,5 +324,41 @@ func TestCollapseToolOnlyOutputHeavyTools(t *testing.T) {
 	}
 	if out, expandable := CollapseTool(full, "respond_to_user", false); expandable || out != full {
 		t.Fatal("respond_to_user must never collapse")
+	}
+	if out, expandable := CollapseTool(full, "wait_for_user", false); expandable || out != full {
+		t.Fatal("wait_for_user must never collapse")
+	}
+}
+
+func TestReportSectionsRenderMarkdown(t *testing.T) {
+	body := "**Systemic themes:** zero auth on `/share`\n\n# Recommendations\n1. Merge the **ejs 3.1.10** fix"
+	cases := map[string]string{
+		"finish_scan":                 renderFinishScan(map[string]any{"executive_summary": body}),
+		"create_vulnerability_report": renderVulnerabilityReport(map[string]any{"title": "x", "description": body}, nil),
+		"create_dependency_report":    renderDependencyReport(map[string]any{"title": "x", "description": body}, nil),
+	}
+	for name, out := range cases {
+		plain := ansi.Strip(out)
+		for _, raw := range []string{"**", "`", "# Recommendations"} {
+			if strings.Contains(plain, raw) {
+				t.Fatalf("%s left raw markdown %q in %q", name, raw, plain)
+			}
+		}
+		for _, want := range []string{"Systemic themes:", "/share", "Recommendations", "1. Merge the ejs 3.1.10 fix"} {
+			if !strings.Contains(plain, want) {
+				t.Fatalf("%s lost %q in %q", name, want, plain)
+			}
+		}
+	}
+}
+
+func TestReportSectionsKeepBlankLinesInFencedCode(t *testing.T) {
+	body := "Intro.\n\n\n\nRequest:\n```http\nGET /share HTTP/1.1\nHost: target\n\n\nbody\n```\n\n\n\nAfter."
+	plain := ansi.Strip(renderVulnerabilityReport(map[string]any{"title": "x", "technical_analysis": body}, nil))
+	if !strings.Contains(plain, "Host: target\n\n\nbody") {
+		t.Fatalf("fenced code lost its blank lines in %q", plain)
+	}
+	if strings.Contains(plain, "Intro.\n\n\n") || strings.Contains(plain, "\n\n\nAfter.") {
+		t.Fatalf("blank-line runs outside fenced code were not collapsed in %q", plain)
 	}
 }

@@ -32,6 +32,7 @@ from openai.types.responses import (
 from strix.config import codex, loader
 from strix.config.loader import load_settings
 from strix.config.models import StrixProvider, _NonStreamingModel, _TurnGuardModel
+from strix.llm.request_log import RequestLoggingModel
 
 
 if TYPE_CHECKING:
@@ -312,7 +313,8 @@ def test_get_model_keeps_streaming_by_default(
 
     model = StrixProvider().get_model("openai/gpt-4o-mini")
     assert isinstance(model, _TurnGuardModel)
-    assert model._inner is inner
+    assert isinstance(model._inner, RequestLoggingModel)
+    assert model._inner._inner is inner
 
 
 def test_get_model_guards_subscription_model_but_keeps_it_streaming(

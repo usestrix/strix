@@ -8,7 +8,7 @@ Configure Strix using environment variables or a config file.
 ## LLM Configuration
 
 <ParamField path="STRIX_LLM" type="string" required>
-  Model name in LiteLLM format (e.g., `openai/gpt-5.4`, `anthropic/claude-sonnet-4-6`).
+  Model name in LiteLLM format (e.g., `openrouter/z-ai/glm-5.3`, `openai/gpt-6.1-sol`).
 </ParamField>
 
 <ParamField path="LLM_API_KEY" type="string">
@@ -19,6 +19,31 @@ Configure Strix using environment variables or a config file.
   Custom API base URL. Also accepts `OPENAI_API_BASE`, `LITELLM_BASE_URL`, or `OLLAMA_API_BASE`.
 </ParamField>
 
+<ParamField path="STRIX_LLM_INPUT_COST_PER_MTOK" type="number">
+  Price per 1M input tokens in USD for `STRIX_LLM`. Use it for gateway or self-hosted model ids that LiteLLM can't price.
+</ParamField>
+
+<ParamField path="STRIX_LLM_OUTPUT_COST_PER_MTOK" type="number">
+  Price per 1M output tokens in USD for `STRIX_LLM`.
+</ParamField>
+
+<ParamField path="STRIX_LLM_CACHED_INPUT_COST_PER_MTOK" type="number">
+  Price per 1M cached input tokens in USD for `STRIX_LLM`. If unset, cached tokens use the input price.
+</ParamField>
+
+<Note>
+  Setting any of these prices replaces the provider-reported and LiteLLM cost for `STRIX_LLM` in reports and `--max-budget`. An unset input or output price counts as `0`, so set both. A separate `STRIX_DEDUPE_MODEL` keeps its LiteLLM price.
+</Note>
+
+<ParamField path="STRIX_API_TYPE" type="string">
+  Select the OpenAI API path for the model: `responses` or `chat_completions`.
+  By default the model decides: Responses when LiteLLM's model catalog lists
+  `/v1/responses` for it (e.g. `gpt-5`), chat completions otherwise. A custom
+  `LLM_API_BASE` does not change this, so set `STRIX_API_TYPE=chat_completions`
+  when your gateway only serves chat completions. Applies to bare and `openai/`
+  model names. Also accepts `STRIX_FORCE_API`.
+</ParamField>
+
 <ParamField path="LLM_EXTRA_HEADERS" type="string">
   Extra HTTP headers sent on every LLM request, as a JSON object (e.g.
   `{"X-Feature-Key":"value","X-Tenant":"acme"}`). Useful for OpenAI-compatible
@@ -27,8 +52,25 @@ Configure Strix using environment variables or a config file.
   the LiteLLM and native OpenAI routing paths.
 </ParamField>
 
+<ParamField path="LLM_EXTRA_BODY" type="string">
+  Extra fields merged into the JSON body of every request to the main model, as a JSON object
+  (e.g. `{"service_tier":"flex","safety_identifier":"9f86d081..."}`). Use it
+  for provider parameters Strix doesn't expose, such as OpenAI's `service_tier`
+  or `safety_identifier`. Applies to both the LiteLLM and native OpenAI routing
+  paths. Fields are not validated, so the provider or gateway must accept them;
+  unknown fields are usually rejected. Extra fields can override fields Strix
+  sends and break requests, so don't set request-shaping fields such as `model`, `messages`, `input`,
+  `tools` or `stream`, and use `STRIX_REASONING_EFFORT` rather than
+  `reasoning_effort`.
+</ParamField>
+
 <ParamField path="LLM_TIMEOUT" default="300" type="integer">
   Request timeout in seconds for LLM calls.
+</ParamField>
+
+<ParamField path="LLM_PREFLIGHT_TIMEOUT" default="30" type="integer">
+  Seconds the startup connection check waits for the model to answer before
+  failing with `LLM CONNECTION FAILED`. Scan requests use `LLM_TIMEOUT`.
 </ParamField>
 
 <ParamField path="STRIX_LLM_MAX_RETRIES" default="5" type="integer">
@@ -41,6 +83,14 @@ Configure Strix using environment variables or a config file.
 
 <ParamField path="STRIX_MEMORY_COMPRESSOR_TIMEOUT" default="30" type="integer">
   Timeout in seconds for memory compression operations (context summarization).
+</ParamField>
+
+<ParamField path="STRIX_OPENROUTER_STICKY_SESSIONS" default="false" type="boolean">
+  Send a per-agent `session_id` on OpenRouter requests, so each agent's calls stay on one upstream provider and its prompt cache carries over between turns. When unset, OpenRouter routes every request freely.
+</ParamField>
+
+<ParamField path="STRIX_CACHE_BLOCK_TOKENS" default="128" type="integer">
+  Token block size that providers cache prompts in. A turn counts as a cache miss in the run report only when the cached tokens fall at least this many tokens short of the previous prompt and the prompt did not shrink. Lower it for providers with smaller blocks (DeepSeek and GLM use 64; vLLM defaults to 16).
 </ParamField>
 
 ### Dedicated deduplication model
@@ -69,6 +119,12 @@ affecting the agents that do the actual testing.
   inherits `LLM_EXTRA_HEADERS`; set this when its endpoint needs custom headers.
 </ParamField>
 
+<ParamField path="DEDUPE_LLM_EXTRA_BODY" type="string">
+  Optional JSON object of extra request-body fields sent on every
+  deduplication-model request. A dedicated dedupe model never inherits
+  `LLM_EXTRA_BODY`; set this when its endpoint needs them too.
+</ParamField>
+
 <ParamField path="STRIX_DEDUPE_REASONING_EFFORT" type="string">
   Reasoning effort for the deduplication model. Defaults to the model's own
   baseline when unset.
@@ -80,12 +136,32 @@ affecting the agents that do the actual testing.
   API key for Perplexity AI. Enables real-time web search during scans for OSINT and vulnerability research.
 </ParamField>
 
+<ParamField path="EXA_API_KEY" type="string">
+  API key for Exa. Enables real-time web search through the Exa `/search` endpoint. Exa also powers the `web_get_contents` tool, which fetches the full text of a page through the Exa `/contents` endpoint. This is the preferred web search provider.
+</ParamField>
+
+<ParamField path="STRIX_WEB_SEARCH_PROVIDER" default="auto" type="string">
+  Web search provider: `auto`, `perplexity`, or `exa`. With `auto`, Strix uses Exa when `EXA_API_KEY` is set, and Perplexity otherwise. Set an explicit provider to pin one when you configure both keys.
+</ParamField>
+
+<ParamField path="STRIX_EXA_SEARCH_TYPE" default="auto" type="string">
+  Exa search mode: `auto`, `fast`, `instant`, `deep-lite`, `deep`, or `deep-reasoning`. Lower modes return results faster. Higher modes plan across more steps and take more time. This setting applies only to the Exa provider.
+</ParamField>
+
+<ParamField path="STRIX_EXA_NUM_RESULTS" default="5" type="integer">
+  Number of Exa results to return, from `1` to `100`. Each result includes a title, a URL, and a short security-focused summary. To read a full page, the agent calls `web_get_contents` with the result URL. This setting applies only to the Exa provider.
+</ParamField>
+
 <ParamField path="POSTMAN_API_KEY" type="string">
   Postman API key (`PMAK-…`). Enables fetching Postman collections by id as a target (`postman://<collection-uid>`), and Postman environments (`postman://<collection-uid>?env=<environment-uid>`) to resolve collection variables. Not needed when passing a local collection export file.
 </ParamField>
 
 <ParamField path="STRIX_TELEMETRY" default="1" type="string">
   Telemetry toggle. Set to `0`, `false`, `no`, or `off` to disable telemetry (PostHog, Scarf, OTEL).
+</ParamField>
+
+<ParamField path="STRIX_RUN_RECORD_TIMINGS" default="false" type="boolean">
+  Record every LLM request's and tool call's timing in `run.json`, under `llm_requests` and `tool_calls`. Adds about 0.5 MB to a typical scan's `run.json`.
 </ParamField>
 
 <ParamField path="TRACELOOP_BASE_URL" type="string">
@@ -110,12 +186,12 @@ When remote vars are set, Strix dual-writes telemetry to both local JSONL and th
 
 ## Docker Configuration
 
-<ParamField path="STRIX_IMAGE" default="ghcr.io/usestrix/strix-sandbox:1.3.0" type="string">
+<ParamField path="STRIX_IMAGE" default="ghcr.io/usestrix/strix-sandbox:1.3.1" type="string">
   Docker image to use for the sandbox container.
 </ParamField>
 
 <ParamField path="DOCKER_HOST" type="string">
-  Docker daemon socket path. Use for remote Docker hosts or custom configurations.
+  Docker daemon address, for example `unix:///var/run/docker.sock` or `tcp://10.0.0.5:2375`. When not set, Strix connects to the same daemon as the `docker` CLI: the current docker context (`docker context use`), then the default socket. Docker Desktop, OrbStack and Colima register their sockets as contexts, so no extra configuration is needed for them.
 </ParamField>
 
 <ParamField path="STRIX_RUNTIME_BACKEND" default="docker" type="string">
@@ -145,7 +221,7 @@ strix --target ./app --config /path/to/config.json
 ```json
 {
   "env": {
-    "STRIX_LLM": "openai/gpt-5.4",
+    "STRIX_LLM": "openrouter/z-ai/glm-5.3",
     "LLM_API_KEY": "sk-...",
     "STRIX_REASONING_EFFORT": "high"
   }
@@ -156,10 +232,11 @@ strix --target ./app --config /path/to/config.json
 
 ```bash
 # Required
-export STRIX_LLM="openai/gpt-5.4"
+export STRIX_LLM="openrouter/z-ai/glm-5.3"
 export LLM_API_KEY="sk-..."
 
-# Optional: Enable web search
+# Optional: Enable web search (Exa preferred, Perplexity supported)
+export EXA_API_KEY="..."
 export PERPLEXITY_API_KEY="pplx-..."
 
 # Optional: Custom timeouts

@@ -12,7 +12,7 @@ Security testing for Next.js applications. Focus on authorization drift across r
 **Routers**
 - App Router (`app/`) and Pages Router (`pages/`) often coexist
 - Route Handlers (`app/api/**`) and API routes (`pages/api/**`)
-- Middleware: `middleware.ts` at project root
+- Middleware/proxy: inspect `middleware.ts`, `proxy.ts`, installed Next.js metadata, and runtime configuration. Check the matching framework docs for supported filenames, Node/Edge behavior, and feature status before selecting runtime-specific probes ([migration guide](https://nextjs.org/docs/app/guides/upgrading/version-16)).
 
 **Runtimes**
 - Node.js (full API access)
@@ -42,6 +42,8 @@ Security testing for Next.js applications. Focus on authorization drift across r
 - Edge-only features (bot protection, IP gates) and their Node equivalents
 
 ## Reconnaissance
+
+At each assessment, establish the deployed build from package metadata, lockfiles, or runtime evidence. Verify release/support status and applicable fixes through current official docs, advisories, or upstream source; linked advisories are starting points, not a complete or permanently current list. Recheck when the target build or proposed remediation changes, and mark status unverified if evidence is unavailable.
 
 **Route Discovery**
 
@@ -83,10 +85,15 @@ Inspect Network tab for POST requests with `Next-Action` header. Extract action 
 
 ## Key Vulnerabilities
 
+### RSC and Image Processing
+
+- **React2Shell (CVE-2025-55182):** App Router applications can expose the vulnerable RSC decoder without explicit Server Actions. Identify the bundled `react-server-dom-*` implementation and trace requests into decoding; client-only React and Pages-only apps have different exposure. Check the framework's patched branch, including source-disclosure and DoS fixes ([RCE advisory](https://react.dev/blog/2025/12/03/critical-security-vulnerability-in-react-server-components), [RSC advisories](https://react.dev/blog/2025/12/11/denial-of-service-and-source-code-exposure-in-react-server-components)).
+- Treat `/_next/image` optimization and Node `next/og` `ImageResponse` as separate input paths. Trace attacker-controlled image bytes into native decoders, and SVG content/attributes/styles into image construction. URL allowlisting does not make image contents trusted; match the decoder, runtime, and Next.js version to the relevant advisory ([optimizer](https://nextjs.org/blog/august-2026-security-release), [ImageResponse](https://github.com/vercel/next.js/security/advisories/GHSA-vcvr-r3jv-pc5j)).
+
 ### Middleware Bypass
 
 **Known Techniques**
-- `x-middleware-subrequest` header crafting (CVE-class bypass)
+- `x-middleware-subrequest` header crafting (CVE-2025-29927): middleware-only authorization can be skipped on affected deployments. Resolve the installed branch and hosting protections from the advisory and provider configuration, then check whether external headers reach the origin and the destination enforces authorization independently ([advisory](https://github.com/vercel/next.js/security/advisories/GHSA-f82v-jwr5-mffw)).
 - `x-nextjs-data` probing
 - Look for 307 + `x-middleware-rewrite`/`x-nextjs-redirect` headers
 
@@ -118,7 +125,7 @@ Middleware checks first value, handler uses last or array.
 **Cache Boundary Failures**
 - User-bound data cached without identity keys (ETag/Set-Cookie unaware)
 - Personalized content served from shared cache/CDN
-- Missing `no-store` on sensitive fetches
+- Missing `no-store` on sensitive fetches matters only when they enter a shared cache. Determine `fetch` and GET Route Handler defaults for the deployed version from docs/configuration and observed responses. Where Cache Components are enabled, inspect `use cache` arguments/closed-over values, `cacheTag`, `cacheLife`, and invalidation for user/tenant separation ([caching documentation](https://nextjs.org/docs/app/getting-started/cache-components)).
 
 **Flight Data Leakage**
 

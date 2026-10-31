@@ -3,18 +3,10 @@ title: "Google Vertex AI"
 description: "Configure Strix with Gemini models via Google Cloud"
 ---
 
-## Installation
-
-Vertex AI requires the Google Cloud dependency. Install Strix with the vertex extra:
-
-```bash
-pipx install "strix-agent[vertex]"
-```
-
 ## Setup
 
 ```bash
-export STRIX_LLM="vertex_ai/gemini-3-pro-preview"
+export STRIX_LLM="vertex_ai/gemini-4-argon"
 ```
 
 No API key required—uses Google Cloud Application Default Credentials.
@@ -37,8 +29,12 @@ export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
 
 | Model | Description |
 |-------|-------------|
-| `vertex_ai/gemini-3-pro-preview` | Best overall performance for security testing |
-| `vertex_ai/gemini-3-flash-preview` | Faster and cheaper |
+| `vertex_ai/gemini-4-argon` | Best overall performance for security testing |
+| `vertex_ai/gemini-3.8-flash` | Faster and cheaper |
+
+<Note>
+Security testing with Gemini needs the [Fairwind Program](https://deepmind.google/fairwind-program/). Without it the cyber guardrails block most offensive tasks.
+</Note>
 
 ## Project Configuration
 

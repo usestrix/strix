@@ -13,7 +13,7 @@ func renderFinishScan(args map[string]any) string {
 	b.WriteString(Col(Green).Render("◆ ") + Bold(Green).Render("Penetration test completed"))
 	section := func(label, value string) {
 		if value != "" {
-			b.WriteString("\n\n" + Bold(Field).Render(label) + "\n" + value)
+			b.WriteString("\n\n" + Bold(Field).Render(label) + "\n" + renderAssistantMarkdown(value))
 		}
 	}
 	es := StringValue(args["executive_summary"])

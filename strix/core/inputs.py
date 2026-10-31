@@ -10,14 +10,14 @@ from openai.types.shared import Reasoning
 
 from strix.config.models import (
     DEFAULT_MODEL_RETRY,
-    OPENROUTER_ATTRIBUTION_HEADERS,
+    attribution_headers,
     bedrock_route_supports_prompt_caching,
     is_bedrock_route,
     is_claude_model,
     is_known_openai_bare_model,
-    is_openrouter_model,
     model_supports_reasoning,
     request_timeout_extra_args,
+    routes_through_litellm,
 )
 from strix.core.sessions import scrub_images_from_items
 
@@ -219,11 +219,26 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
             )
 
     return {
-        "scope_source": "system_scan_config",
-        "authorization_source": "strix_platform_verified_targets",
+        "scope_source": "user_scan_config",
         "authorized_targets": authorized,
-        "user_instructions_do_not_expand_scope": True,
     }
+
+
+def build_scan_targets(scan_config: dict[str, Any]) -> list[str]:
+    """One canonical string per authorized target.
+
+    Agents refer to the target in whatever words they were handed, so anything
+    keyed on a target the model types drifts apart across a run. This is the
+    scan's own spelling, which target-keyed tools resolve against. A checkout is
+    named by its workspace path rather than its remote URL, so the local tree —
+    and its revision — is what gets inspected.
+    """
+    targets: list[str] = []
+    for target in build_scope_context(scan_config)["authorized_targets"]:
+        value = target["workspace_path"] or target["value"]
+        if value and value not in targets:
+            targets.append(value)
+    return targets
 
 
 def make_model_settings(
@@ -231,18 +246,21 @@ def make_model_settings(
     *,
     model_name: str,
     force_required_tool_choice: bool = False,
+    parallel_tool_calls: bool = False,
     request_timeout: float | None = None,
     prompt_cache: bool = True,
     extra_headers: dict[str, str] | None = None,
+    extra_body: dict[str, Any] | None = None,
     has_tools: bool = True,
 ) -> ModelSettings:
     headers = _request_headers(model_name, extra_headers)
     model_settings = ModelSettings(
-        parallel_tool_calls=False if has_tools else None,
+        parallel_tool_calls=parallel_tool_calls if has_tools else None,
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
         extra_args=request_timeout_extra_args(request_timeout),
         extra_headers=headers,
+        extra_body=dict(extra_body) if extra_body else None,
     )
     if (
         reasoning_effort is not None
@@ -250,7 +268,7 @@ def make_model_settings(
         and model_supports_reasoning(model_name)
     ):
         model_settings = model_settings.resolve(
-            _reasoning_settings(reasoning_effort, model_settings.extra_args),
+            _reasoning_settings(reasoning_effort, extra_body),
         )
     if force_required_tool_choice and _accepts_required_tool_choice(model_name):
         model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
@@ -268,49 +286,57 @@ def make_model_settings(
 def _request_headers(
     model_name: str, extra_headers: dict[str, str] | None
 ) -> dict[str, str] | None:
-    headers: dict[str, str] = {}
-    if is_openrouter_model(model_name):
-        headers.update(OPENROUTER_ATTRIBUTION_HEADERS)
+    headers: dict[str, str] = dict(attribution_headers(model_name))
     if extra_headers:
         headers.update(extra_headers)
     return headers or None
 
 
 def _reasoning_settings(
-    effort: ReasoningEffort,
-    extra_args: dict[str, Any] | None,
+    effort: ReasoningEffort, extra_body: dict[str, Any] | None = None
 ) -> ModelSettings:
     """``max`` is not in the OpenAI SDK's ``Reasoning.effort`` enum, so send it as
     a raw body field instead — also keeping it clear of LiteLLM's DeepSeek mapping,
     which collapses every ``reasoning_effort`` level to plain thinking-enabled.
     Providers that don't support ``max`` reject the request.
+
+    It goes in ``extra_body``, the field every model implementation forwards as the
+    request's ``extra_body``; the same value under ``extra_args`` collides with that
+    keyword and raises before a request is ever sent. ``resolve`` replaces
+    ``extra_body`` wholesale, so the user's ``LLM_EXTRA_BODY`` fields are carried
+    over, with ``reasoning_effort`` taking precedence.
     """
     if effort != "max":
         return ModelSettings(reasoning=Reasoning(effort=effort))
-    return ModelSettings(
-        extra_args={**(extra_args or {}), "extra_body": {"reasoning_effort": "max"}},
-    )
+    return ModelSettings(extra_body={**(extra_body or {}), "reasoning_effort": "max"})
 
 
 def _prompt_cache_extra_args(model_name: str) -> dict[str, Any] | None:
     """LiteLLM ``cache_control_injection_points`` for Claude prompt caching.
 
-    System prompt + rolling last-message breakpoint everywhere; ``tool_config``
-    only on Bedrock Converse (the only route whose LiteLLM transform consumes
-    it — elsewhere it leaks onto the wire and native Anthropic 400s). Unmapped
-    Bedrock models get no points at all: Bedrock rejects the passed-through
-    field outright.
+    A breakpoint on each system message, plus a rolling last-message one. The
+    system prompt is split into up to three messages, which with the last
+    message uses all four breakpoints Claude allows. There is none on
+    ``tool_config``: the tools come before the system prompt, so its first
+    breakpoint caches them too. Unmapped Bedrock models get no points at all:
+    Bedrock rejects the passed-through field outright.
+
+    The field is LiteLLM's own, consumed by its transform, so it only goes to
+    routes LiteLLM serves. A bare ``claude-...`` name is served by the SDK's
+    OpenAI client instead (a gateway in front of Claude), and that client raises
+    ``TypeError`` on request kwargs it does not know.
     """
-    if not is_claude_model(model_name):
+    if not is_claude_model(model_name) or not routes_through_litellm(model_name):
         return None
     if is_bedrock_route(model_name) and not bedrock_route_supports_prompt_caching(model_name):
         return None
 
-    points: list[dict[str, Any]] = [{"location": "message", "role": "system"}]
-    if is_bedrock_route(model_name):
-        points.append({"location": "tool_config"})
-    points.append({"location": "message", "index": -1})
-    return {"cache_control_injection_points": points}
+    return {
+        "cache_control_injection_points": [
+            {"location": "message", "role": "system"},
+            {"location": "message", "index": -1},
+        ]
+    }
 
 
 def child_initial_input(

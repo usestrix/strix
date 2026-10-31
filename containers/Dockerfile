@@ -176,7 +176,7 @@ USER root
 # overwrite a root-owned binary under /usr/local/bin, which otherwise fails with
 # "cannot move binary" and aborts the scan. Pin the initial version for
 # reproducible builds; self-update then pulls fresh detectors at runtime.
-ARG TRUFFLEHOG_VERSION=3.95.9
+ARG TRUFFLEHOG_VERSION=3.99.2
 RUN curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /home/pentester/.local/bin "v${TRUFFLEHOG_VERSION}" && \
     chown -R pentester:pentester /home/pentester/.local
 RUN set -eux; \
@@ -195,6 +195,22 @@ RUN set -eux; \
 RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
 RUN apt-get install -y wapiti
+
+# CVE-2026-111497: out-of-bounds write in the brotli decoder, fixed in brotli
+# 1.2.1 / Debian 1.2.0-4.1. kali-rolling still ships 1.2.0-4, and node, curl and
+# python3 in this image all load the shared libbrotlidec, so every HTTP client here
+# would decode a malicious `Content-Encoding: br` response with the vulnerable
+# code. Install the fixed Debian packages until Kali picks them up.
+ARG BROTLI_DEB_VERSION=1.2.0-4.1
+RUN set -eux; \
+    ARCH="$(dpkg --print-architecture)"; \
+    for pkg in libbrotli1 python3-brotli; do \
+        curl -fsSL "https://deb.debian.org/debian/pool/main/b/brotli/${pkg}_${BROTLI_DEB_VERSION}_${ARCH}.deb" -o "/tmp/${pkg}.deb"; \
+    done; \
+    dpkg -i /tmp/libbrotli1.deb /tmp/python3-brotli.deb; \
+    rm -f /tmp/libbrotli1.deb /tmp/python3-brotli.deb; \
+    test "$(dpkg-query -W -f='${Version}' libbrotli1)" = "${BROTLI_DEB_VERSION}"; \
+    node -e 'const z=require("zlib");z.brotliDecompressSync(z.brotliCompressSync(Buffer.from("ok")))'
 
 USER pentester
 

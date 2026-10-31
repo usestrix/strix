@@ -18,7 +18,7 @@ Get the findings from wherever the scan ran:
 - **OSS CLI** — artifacts in `strix_runs/<run-name>/`:
   - `vulnerabilities/*.md` — one finding per file: description, severity, PoC steps or script, affected code locations, remediation guidance.
   - `vulnerabilities.json` — the same findings as JSON (ids, severity, CWE/CVE, `code_locations` with `fix_before`/`fix_after` suggestions when available).
-- **Cloud (app.strix.ai)** — fetch the scan's `vulnerabilities[]` via `GET /api/v1/scans/{scanId}` (or `GET /api/v1/vulnerabilities` org-wide). Each carries `severity, cwe, endpoint, method, impact, technical_analysis, poc_description, poc_script_code` and, for code findings, `code_file`/`code_diff`/`code_before`/`code_after`. See the **managed-pentesting-with-strix** skill for auth.
+- **Cloud (app.strix.ai)** — pull findings with the CLI: `strix cloud vulns list --scan-id <scan-id> --json` (or `strix cloud scans get <scan-id> --json | jq '.vulnerabilities'`, or `strix cloud vulns list --severity critical` org-wide). Each finding carries `severity, cwe, endpoint, method, impact, technical_analysis, poc_description, poc_script_code` and, for code findings, `code_file`/`code_diff`/`code_before`/`code_after`. After a fix is verified, mark it with `strix cloud vulns update <id> --status fixed`. See the **managed-pentesting-with-strix** skill for `strix cloud login` and scopes.
 
 Order work by severity: critical → high → medium → low. Every Strix finding was validated with a working proof-of-concept, so do not dismiss findings as false positives without re-testing the PoC yourself.
 
@@ -27,7 +27,7 @@ Order work by severity: critical → high → medium → low. Every Strix findin
 For each finding:
 
 1. Reproduce it with the PoC from the finding file when feasible.
-2. Fix the root cause, not the specific payload (e.g. parameterize all queries, don't blocklist one string; enforce authorization in the handler, don't hide the endpoint).
+2. Fix the root cause, not the specific payload (parameterize every query instead of blocking one string, and enforce authorization in the handler instead of hiding the endpoint).
 3. Prefer the framework's built-in defense (ORM parameterization, template auto-escaping, CSRF middleware, centralized authz) over ad-hoc sanitization.
 4. Keep the diff minimal and apply the repo's existing patterns. Finding files often include `fix_before`/`fix_after` snippets — use them as a starting point, not verbatim.
 
@@ -70,7 +70,7 @@ new_id=$(curl -sS "$BASE/scans/$scan_id/rerun" "${auth[@]}" -X POST | jq -r .sca
 Or, if the cloud scan came from a repo/PR, trigger a fresh PR review on the fix branch (`POST /pr-reviews/start`). The platform also retests a single finding directly: `POST /api/v1/vulnerabilities/{vulnerabilityId}/retest`.
 
 - Also re-run the PoC manually when it is a simple request/script — fastest signal.
-- Run the project's own test suite to make sure the fix doesn't break behavior.
+- Run the project's own test suite to make sure the fix does not break behavior.
 
 ## 4. Report
 

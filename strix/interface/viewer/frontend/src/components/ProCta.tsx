@@ -48,23 +48,40 @@ export function ProInlineCta({
   slug,
   icon: Icon,
   surface,
+  href = SIGNUP_URL,
+  primary = false,
 }: {
   label: string;
   desc: string;
   slug: string;
   icon: React.ElementType;
   surface?: string;
+  /** Destination before attribution params. Defaults to cloud sign-up. */
+  href?: string;
+  /** Solid white button instead of the outlined default. */
+  primary?: boolean;
 }) {
   return (
     <Tooltip text={desc}>
       <a
-        href={ctaUrl(SIGNUP_URL, slug)}
+        href={ctaUrl(href, slug)}
         target="_blank"
         rel="noopener noreferrer"
         onClick={() => trackCta(slug, surface)}
-        className="group inline-flex items-center gap-2 rounded-lg border border-[#222] bg-[rgba(255,255,255,0.02)] px-3 py-2 text-sm text-[#aaa] transition-colors hover:border-[#444] hover:text-white"
+        className={
+          primary
+            ? "group inline-flex items-center gap-2 rounded-lg border border-white bg-white px-3 py-2 text-sm font-semibold text-black transition-colors hover:bg-[#e5e5e5]"
+            : "group inline-flex items-center gap-2 rounded-lg border border-[#222] bg-[rgba(255,255,255,0.02)] px-3 py-2 text-sm text-[#aaa] transition-colors hover:border-[#444] hover:text-white"
+        }
       >
-        <Icon className="h-4 w-4 text-[#888] transition-colors group-hover:text-white" aria-hidden="true" />
+        <Icon
+          className={
+            primary
+              ? "h-4 w-4 text-black"
+              : "h-4 w-4 text-[#888] transition-colors group-hover:text-white"
+          }
+          aria-hidden="true"
+        />
         <span>{label}</span>
       </a>
     </Tooltip>

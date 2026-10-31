@@ -49,12 +49,14 @@ Weak or default credentials remain one of the most prevalent and high-impact vul
 
 ### Weak Password Policies
 
-- No minimum length or complexity requirements
+- Insufficient minimum length for the authentication mode; NIST SP 800-63B-4 requires 15 characters for single-factor passwords and permits a minimum of eight when the password is only used as part of MFA
 - Allowing common passwords: `password`, `123456`, `qwerty`, `admin`, `letmein`
 - Not checking against breached password databases (Have I Been Pwned)
 - Case-insensitive password storage
-- No password history enforcement
+- Forced periodic changes without compromise evidence, which encourage predictable password changes
 - Excessively short maximum length (indicates plaintext or weak hashing)
+
+NIST SP 800-63B-4 recommends allowing a maximum of at least 64 characters and requires screening against common/compromised passwords and checking the entire password without truncation. Missing character-class rules is not a weakness: the standard prohibits mandatory composition rules and periodic resets without evidence of compromise. Apply these requirements when that standard is the target's policy baseline ([NIST SP 800-63B-4](https://pages.nist.gov/800-63-4/sp800-63b.html#passwordver)).
 
 ### Default and Hardcoded Credentials
 
@@ -191,7 +193,7 @@ No password wordlists ship in the sandbox by default — download what you need 
 5. Test for password spraying (one password, many users) before targeted brute-force
 6. Check for concurrent session limits; successful logins may kick out legitimate users
 7. GraphQL batching can test multiple credentials in a single request, bypassing per-request limits
-8. Document the password policy and recommend minimum standards (length, complexity, breach checking)
+8. Document the password policy and recommend minimum standards (length appropriate to single-factor/MFA use, breach checking, and resistance to online guessing)
 9. For web logins prefer `ffuf`; for other services use `nmap` NSE `*-brute` scripts or custom scripts with equivalent logic
 10. Combine with MFA testing: weak passwords plus missing MFA is a critical finding
 

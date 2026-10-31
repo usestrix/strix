@@ -1,22 +1,30 @@
 import logging
 import re
-import threading
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import TypeGuard
 
 import yaml
+from jinja2 import Environment, StrictUndefined
 
-from strix.telemetry import posthog, scarf
 from strix.utils.resource_paths import get_strix_resource_path
 
 
 logger = logging.getLogger(__name__)
 
 _FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(?P<body>.*?)\n---\s*\n", re.DOTALL)
+# Only skills with `template: jinja` in their frontmatter are rendered; the rest hold
+# literal `{{ }}` payloads.
+_SKILL_TEMPLATES = Environment(
+    autoescape=False,  # noqa: S701  # nosec B701 - prompts, not HTML
+    undefined=StrictUndefined,
+    trim_blocks=True,
+    lstrip_blocks=True,
+    keep_trailing_newline=True,
+)
 
-_INTERNAL_SKILL_CATEGORIES: frozenset[str] = frozenset({"scan_modes", "coordination"})
+_INTERNAL_SKILL_CATEGORIES: frozenset[str] = frozenset({"scan_modes", "coordination", "analysis"})
 _ROOT_SKILL_CATEGORY = "root"
 
 _EXTRA_SKILL_DIRS: list[Path] = []
@@ -241,16 +249,19 @@ def validate_requested_skills(skill_list: list[str], max_skills: int = 5) -> str
     return None
 
 
+_LOADED_SKILLS: set[str] = set()
+
+
 def _track_skill_loaded(skill_name: str, file_path: Path) -> None:
     builtin = get_strix_resource_path("skills")
     if not file_path.is_relative_to(builtin):
         skill_name = "custom"
+    _LOADED_SKILLS.add(skill_name)
 
-    def _send() -> None:
-        posthog.skill_loaded(skill_name)
-        scarf.skill_loaded(skill_name)
 
-    threading.Thread(target=_send, daemon=True).start()
+def get_loaded_skill_names() -> list[str]:
+    """Distinct skills loaded so far in this process (custom skills collapse to ``"custom"``)."""
+    return sorted(_LOADED_SKILLS)
 
 
 def _candidate_skill_files(skill_name: str) -> list[Path]:
@@ -260,7 +271,22 @@ def _candidate_skill_files(skill_name: str) -> list[Path]:
     return _bare_skill_files(skill_name)
 
 
-def load_skills(skill_names: list[str]) -> dict[str, str]:
+def skill_turn_limit(skill_names: list[str], turn_limits: Mapping[str, int]) -> int | None:
+    """Largest of ``turn_limits`` (keyed by skill name) among these skills, if any."""
+    files = {path for name in skill_names for path in _candidate_skill_files(name)}
+    return max(
+        (
+            limit
+            for name, limit in turn_limits.items()
+            if files.intersection(_candidate_skill_files(name))
+        ),
+        default=None,
+    )
+
+
+def load_skills(
+    skill_names: list[str], *, supports_images: bool = True, coverage_tools: bool = True
+) -> dict[str, str]:
     """Load skill markdown bodies (frontmatter stripped) by name.
 
     Skill files live at ``strix/skills/<category>/<name>.md`` (or any
@@ -290,7 +316,11 @@ def load_skills(skill_names: list[str]) -> dict[str, str]:
             continue
 
         var_name = skill_name.split("/")[-1]
-        _, skill_body = _parse_skill_content(content, file_path)
+        metadata, skill_body = _parse_skill_content(content, file_path)
+        if metadata.get("template") == "jinja":
+            skill_body = _SKILL_TEMPLATES.from_string(skill_body).render(
+                supports_images=supports_images, coverage_tools=coverage_tools
+            )
         skill_content[var_name] = skill_body
         logger.debug("Loaded skill: %s -> %s", skill_name, var_name)
         _track_skill_loaded(var_name, file_path)

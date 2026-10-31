@@ -1,0 +1,37 @@
+name: Workflows
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    env:
+      ACTIONLINT_VERSION: 1.7.12
+      ACTIONLINT_SCRIPT_REF: 914e7df21a07ef503a81201c76d2b11c789d3fca  # v1.7.12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install actionlint
+        run: |
+          mkdir -p "$RUNNER_TEMP/actionlint"
+          curl -fsSL --retry 5 -o "$RUNNER_TEMP/actionlint/download.bash" \
+            "https://raw.githubusercontent.com/rhysd/actionlint/$ACTIONLINT_SCRIPT_REF/scripts/download-actionlint.bash"
+          bash "$RUNNER_TEMP/actionlint/download.bash" "$ACTIONLINT_VERSION" "$RUNNER_TEMP/actionlint"
+      - run: |
+          "$RUNNER_TEMP/actionlint/actionlint" -color
+
+  zizmor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482  # v0.6.4
+        with:
+          advanced-security: false
+          version: 1.22.0
