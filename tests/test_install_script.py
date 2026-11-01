@@ -152,3 +152,42 @@ def test_installer_rejects_unsupported_architecture(tmp_path: Path) -> None:
     assert "Unsupported OS/Arch: linux/riscv64" in result.stdout
     assert not curl_log_path.exists()
     assert not (home_path / ".strix").exists()
+
+
+def test_installer_symlinks_local_bin_and_updates_all_existing_shell_configs(
+    tmp_path: Path,
+) -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    archive_path = _create_release_archive(tmp_path)
+    mock_bin = _create_mock_commands(tmp_path, machine="aarch64")
+    environment, home_path, _ = _create_installer_environment(
+        tmp_path,
+        archive_path,
+        mock_bin,
+    )
+
+    local_bin = home_path / ".local/bin"
+    local_bin.mkdir(parents=True)
+    environment["PATH"] = f"{local_bin}:{environment['PATH']}"
+
+    bashrc = home_path / ".bashrc"
+    profile = home_path / ".profile"
+    bashrc.write_text("# existing bashrc\n", encoding="utf-8")
+    profile.write_text("# existing profile\n", encoding="utf-8")
+
+    result = _run_installer(repository_root, environment)
+    assert result.returncode == 0, result.stderr
+
+    expected_path_line = f"export PATH={home_path}/.strix/bin:$PATH"
+    assert expected_path_line in bashrc.read_text(encoding="utf-8")
+    assert expected_path_line in profile.read_text(encoding="utf-8")
+
+    symlink_path = local_bin / "strix"
+    assert symlink_path.is_symlink()
+    assert symlink_path.resolve() == (home_path / ".strix/bin/strix").resolve()
+
+    rerun_result = _run_installer(repository_root, environment)
+    assert rerun_result.returncode == 0, rerun_result.stderr
+    assert "Removing old pipx installation" not in rerun_result.stdout
+    assert symlink_path.is_symlink()
+
