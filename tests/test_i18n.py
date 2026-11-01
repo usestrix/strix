@@ -501,6 +501,110 @@ class TestArgparseBuiltins:
             assert cli_args._translate_argparse("usage: ") == "usage: "
             assert cli_args._translate_argparse("options") == "options"
 
+    @pytest.mark.parametrize(
+        "cluster_argv",
+        [
+            ["strix", "-nl", "es", "--target", "https://example.com"],
+            ["strix", "-nles", "--target", "https://example.com"],
+        ],
+    )
+    def test_combined_short_flags_set_spanish_and_parse_end_to_end(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        cluster_argv: list[str],
+    ) -> None:
+        monkeypatch.setattr(sys, "argv", cluster_argv)
+        cli_args._pre_resolve_language()
+        assert get_language() == "es"
+
+        args = cli_args.parse_arguments()
+        assert args.non_interactive is True
+        assert args.language == "es"
+        assert get_language() == "es"
+
+    def test_vnl_cluster_sets_spanish_in_pre_resolve_and_exits_with_version(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setattr(sys, "argv", ["strix", "-vnl", "es"])
+        cli_args._pre_resolve_language()
+        assert get_language() == "es"
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli_args.parse_arguments()
+        assert exc_info.value.code == 0
+        assert capsys.readouterr().out.startswith("strix ")
+
+    @pytest.mark.parametrize(
+        "help_argv",
+        [
+            ["strix", "-nhl", "es"],
+            ["strix", "-hl", "es"],
+            ["strix", "-hvl", "es"],
+        ],
+    )
+    def test_combined_short_help_flags_render_spanish(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        help_argv: list[str],
+    ) -> None:
+        monkeypatch.setattr(sys, "argv", help_argv)
+        with pytest.raises(SystemExit) as exc_info:
+            cli_args.parse_arguments()
+        assert exc_info.value.code == 0
+        out = capsys.readouterr().out
+        assert "uso: " in out
+        assert "opciones:" in out
+
+    @pytest.mark.parametrize("cluster_flag", ["-rl", "-tl", "-ml"])
+    def test_option_value_taking_short_flags_do_not_falsely_trigger_spanish(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        cluster_flag: str,
+    ) -> None:
+        # `-rl es`, `-tl es`, `-ml es` pass `"l"` as the value of `-r`/`-t`/`-m`, NOT `-l es`!
+        monkeypatch.setattr(sys, "argv", ["strix", cluster_flag, "es"])
+        with patch.dict(os.environ, {}, clear=True):
+            cli_args._pre_resolve_language()
+            set_config_path(tmp_path / "missing.json")
+            assert get_language() == "en"
+
+            with pytest.raises(SystemExit) as exc_info:
+                cli_args.parse_arguments()
+            assert exc_info.value.code == 2
+            err = capsys.readouterr().err
+            assert "usage: " in err
+
+    def test_valid_language_followed_by_missing_config_value_emits_spanish_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setattr(sys, "argv", ["strix", "-l", "es", "--config"])
+        with pytest.raises(SystemExit) as exc_info:
+            cli_args.parse_arguments()
+        assert exc_info.value.code == 2
+        err = capsys.readouterr().err
+        assert "uso: " in err
+        assert "argumento --config: se espera un argumento" in err
+
+    def test_ambiguous_option_before_language_flag_emits_spanish_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setattr(sys, "argv", ["strix", "--max", "10", "-l", "es"])
+        with pytest.raises(SystemExit) as exc_info:
+            cli_args.parse_arguments()
+        assert exc_info.value.code == 2
+        err = capsys.readouterr().err
+        assert "uso: " in err
+        assert "opción ambigua: --max podría coincidir con" in err
+
 
 class TestPyInstallerSpecPackaging:
     def test_strix_spec_bundles_locales_and_hiddenimport(self) -> None:

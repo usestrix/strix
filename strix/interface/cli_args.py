@@ -42,6 +42,7 @@ _ARGPARSE_MESSAGE_KEYS: dict[str, str] = {
     "expected at most one argument": "cli.argparse_expected_at_most",
     "expected at least one argument": "cli.argparse_expected_at_least",
     "unexpected option string: %s": "cli.argparse_unexpected_option",
+    "ambiguous option: %(option)s could match %(matches)s": "cli.argparse_ambiguous_option",
 }
 
 
@@ -58,13 +59,21 @@ argparse._ = _translate_argparse  # type: ignore[attr-defined]
 
 
 # A minimal parser used to resolve --language/--config BEFORE the full parser
-# renders help text. It reuses argparse's own abbreviation rules (e.g.
-# ``--conf`` -> ``--config``), so language resolution accepts exactly what the
-# real parse accepts. ``exit_on_error=False`` makes a malformed known option
-# raise instead of printing, so the full parser reports it once.
+# renders help or error text. Registering every short option from the full
+# parser with matching arity (plus ``nargs="?"`` on value-taking options) lets
+# argparse split valid short-flag clusters (e.g. ``-nl es`` -> ``-n -l es``),
+# avoid misreading ``-rl es`` as ``-l``, and survive missing or ambiguous other
+# flags (e.g. ``strix -l es --config`` or ``strix --max 10 -l es``) so the full
+# parser reports the error in the resolved language.
 _ABBREV_PARSER = argparse.ArgumentParser(add_help=False, allow_abbrev=True, exit_on_error=False)
-_ABBREV_PARSER.add_argument("-l", "--language")
-_ABBREV_PARSER.add_argument("--config")
+_ABBREV_PARSER.add_argument("-h", action="store_true")
+_ABBREV_PARSER.add_argument("-v", action="store_true")
+_ABBREV_PARSER.add_argument("-n", action="store_true")
+_ABBREV_PARSER.add_argument("-t", nargs="?", action="append")
+_ABBREV_PARSER.add_argument("-m", nargs="?")
+_ABBREV_PARSER.add_argument("-r", nargs="?")
+_ABBREV_PARSER.add_argument("-l", "--language", nargs="?")
+_ABBREV_PARSER.add_argument("--config", nargs="?")
 
 
 def _pre_resolve_language() -> None:
@@ -72,7 +81,8 @@ def _pre_resolve_language() -> None:
 
     Argparse evaluates help text at parse time, so we must resolve the language
     BEFORE parse_args() is called. A minimal parser resolves the same option
-    abbreviations the real parse accepts (e.g. ``--conf`` -> ``--config``).
+    abbreviations and short-flag clusters the real parse accepts (e.g.
+    ``--conf`` -> ``--config``, ``-nl es`` -> ``-n -l es``).
     Priority matches ``_detect_language``: --language > STRIX_LANGUAGE env >
     --config file > default config > system locale.
     """
@@ -89,7 +99,6 @@ def _pre_resolve_language() -> None:
     try:
         namespace, _ = _ABBREV_PARSER.parse_known_args(pre_args)
     except argparse.ArgumentError:
-        # A malformed --language/--config; the full parser reports it.
         return
 
     if namespace.language:
@@ -353,8 +362,15 @@ Strix Cloud:
     args.diff_scope = {"active": False}
     args.run_name = None
 
+    from strix.i18n import set_config_path, set_language
+
+    if args.language:
+        set_language(args.language)
+
     if args.config:
-        apply_config_override(validate_config_file(args.config))
+        config_file = validate_config_file(args.config)
+        apply_config_override(config_file)
+        set_config_path(config_file)
 
     if args.mcp_config:
         mcp_config_path = Path(args.mcp_config).expanduser()

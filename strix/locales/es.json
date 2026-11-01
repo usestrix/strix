@@ -32,6 +32,7 @@
   "cli.argparse_expected_at_most": "se espera como máximo un argumento",
   "cli.argparse_expected_at_least": "se espera al menos un argumento",
   "cli.argparse_unexpected_option": "opción inesperada: %s",
+  "cli.argparse_ambiguous_option": "opción ambigua: %(option)s podría coincidir con %(matches)s",
   "cli.invalid_float": "valor float inválido: {value!r}",
   "cli.finite_number": "debe ser un número finito mayor que 0",
   "cli.invalid_int": "valor entero inválido: {value!r}",
