@@ -16,7 +16,8 @@ from strix.config.models import (
     configure_sdk_model_defaults,
 )
 from strix.core.inputs import make_model_settings
-from strix.report.state import get_global_report_state
+from strix.llm import request_log
+from strix.report.state import get_global_report_state, sdk_response_id
 
 
 if TYPE_CHECKING:
@@ -367,18 +368,22 @@ async def check_duplicate(
         configure_sdk_model_defaults(settings)
         resolved_model = model_name.strip()
         model = resolve_dedupe_model(dedupe, resolved_model)
-        response = await model.get_response(
-            system_instructions=DEDUPE_SYSTEM_PROMPT,
-            input=user_msg,
-            model_settings=_dedupe_model_settings(dedupe, resolved_model, settings.llm.timeout),
-            tools=[],
-            output_schema=None,
-            handoffs=[],
-            tracing=ModelTracing.DISABLED,
-            previous_response_id=None,
-            conversation_id=None,
-            prompt=None,
-        )
+        token = request_log.bind_call_context("dedupe", "dedupe")
+        try:
+            response = await model.get_response(
+                system_instructions=DEDUPE_SYSTEM_PROMPT,
+                input=user_msg,
+                model_settings=_dedupe_model_settings(dedupe, resolved_model, settings.llm.timeout),
+                tools=[],
+                output_schema=None,
+                handoffs=[],
+                tracing=ModelTracing.DISABLED,
+                previous_response_id=None,
+                conversation_id=None,
+                prompt=None,
+            )
+        finally:
+            request_log.reset_call_context(token)
         report_state = get_global_report_state()
         if report_state is not None:
             report_state.record_sdk_usage(
@@ -386,6 +391,7 @@ async def check_duplicate(
                 agent_name="dedupe",
                 model=resolved_model,
                 usage=response.usage,
+                response_id=sdk_response_id(response),
             )
         content = _extract_text(response)
         if not content:

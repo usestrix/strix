@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 from agents.usage import Usage, deserialize_usage, serialize_usage
@@ -67,7 +68,15 @@ class LLMUsageLedger:
         self._agent_estimated_cost: dict[str, float] = {}
         self._observed_cost = 0.0
         self._estimated_cost = 0.0
-        self._has_observed_cost = False
+        # A provider callback and the SDK usage hook can describe the same
+        # response. Match them by response id so an observed charge replaces
+        # that response's estimate, while an unpriced response keeps its own
+        # estimate. This matters when only some OpenRouter calls report cost.
+        # What cannot be matched by id (no id on one side) keeps the upstream
+        # contract, see ``total_cost``.
+        self._estimated_by_response: dict[str, float] = {}
+        self._observed_by_response: dict[str, float] = {}
+        self._persisted_cost = 0.0
         # Keyed by upstream provider name, e.g. "Z.AI" or "DeepInfra".
         self._providers: dict[str, ProviderUsage] = {}
         # Each agent's last prompt size, which its next call should find cached.
@@ -83,6 +92,7 @@ class LLMUsageLedger:
         usage: Usage | None,
         agent_name: str | None = None,
         model: str | None = None,
+        response_id: str | None = None,
     ) -> bool:
         if usage is None or not _usage_has_activity(usage):
             return False
@@ -99,20 +109,25 @@ class LLMUsageLedger:
 
         if not self.zero_cost:
             estimated = _estimate_litellm_cost(usage, model)
-            if estimated:
-                self._estimated_cost += estimated
+            if estimated and math.isfinite(estimated):
+                if response_id:
+                    self._estimated_by_response[response_id] = estimated
+                else:
+                    self._estimated_cost += estimated
                 self._agent_estimated_cost[normalized_agent_id] = (
                     self._agent_estimated_cost.get(normalized_agent_id, 0.0) + estimated
                 )
 
         return True
 
-    def record_observed_cost(self, cost: float) -> None:
+    def record_observed_cost(self, cost: float, *, response_id: str | None = None) -> None:
         if self.zero_cost:
             return
-        if isinstance(cost, int | float) and cost > 0:
-            self._observed_cost += float(cost)
-            self._has_observed_cost = True
+        if isinstance(cost, int | float) and math.isfinite(cost) and cost > 0:
+            if response_id:
+                self._observed_by_response[response_id] = float(cost)
+            else:
+                self._observed_cost += float(cost)
 
     def record_provider(
         self,
@@ -150,7 +165,28 @@ class LLMUsageLedger:
             return _round_cost(
                 sum(self._configured_agent_cost(aid, model, prices) for aid in self._agent_usage)
             )
-        return _round_cost(self._observed_cost if self._has_observed_cost else self._estimated_cost)
+        # Copies: tool threads read the total while the event loop records new
+        # responses, and iterating a dict that grows raises RuntimeError.
+        estimated_by_response = dict(self._estimated_by_response)
+        observed_by_response = dict(self._observed_by_response)
+        # Matched by response id: the provider's charge replaces that response's
+        # estimate, and a response without a charge keeps its own estimate.
+        paired = sum(
+            observed_by_response.get(response_id, estimate)
+            for response_id, estimate in estimated_by_response.items()
+        )
+        # Whatever id matching cannot settle keeps the upstream contract: a
+        # provider charge with no estimate to match replaces the unkeyed
+        # estimates instead of adding to them, because without a shared id they
+        # may describe the same response. Adding both would overstate the spend
+        # and stop a scan early at --max-budget.
+        unpaired_observed = self._observed_cost + sum(
+            cost
+            for response_id, cost in observed_by_response.items()
+            if response_id not in estimated_by_response
+        )
+        unpaired = unpaired_observed if unpaired_observed > 0 else self._estimated_cost
+        return _round_cost(self._persisted_cost + paired + unpaired)
 
     def _configured_agent_cost(self, agent_id: str, model: str | None, prices: Prices) -> float:
         if self._agent_metadata.get(agent_id, {}).get("model") == model:
@@ -198,7 +234,9 @@ class LLMUsageLedger:
         self._agent_estimated_cost.clear()
         self._observed_cost = 0.0
         self._estimated_cost = 0.0
-        self._has_observed_cost = False
+        self._estimated_by_response.clear()
+        self._observed_by_response.clear()
+        self._persisted_cost = 0.0
         self._providers = {}
 
         if not isinstance(raw_usage, dict):
@@ -216,8 +254,7 @@ class LLMUsageLedger:
             self._total_usage = Usage()
 
         persisted_cost = _float_or_zero(raw_usage.get("cost"))
-        self._observed_cost = persisted_cost
-        self._estimated_cost = persisted_cost
+        self._persisted_cost = persisted_cost
 
         for raw_agent in raw_usage.get("agents") or []:
             if not isinstance(raw_agent, dict):
