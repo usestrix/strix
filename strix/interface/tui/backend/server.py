@@ -70,15 +70,18 @@ class TuiBackendServer:
         self.activated = False
         controller.set_change_callback(self.notify_changed)
 
-    async def start(self, connection: socket.socket) -> None:
+    async def start(
+        self, connection: socket.socket, handshake_timeout: float | None = None
+    ) -> None:
         """Negotiate protocol v3 before activating command or state traffic."""
         if self._socket is not None:
             raise RuntimeError("TUI backend is already started")
         connection.setblocking(False)  # noqa: FBT003
         self._socket = connection
+        timeout = _HANDSHAKE_TIMEOUT if handshake_timeout is None else handshake_timeout
         try:
             await self._send(envelope("hello", {"capabilities": list(PROTOCOL_CAPABILITIES)}))
-            await asyncio.wait_for(self._receive_ready(), timeout=_HANDSHAKE_TIMEOUT)
+            await asyncio.wait_for(self._receive_ready(), timeout=timeout)
         except TimeoutError as exc:
             raise ProtocolHandshakeError("Timed out waiting for TUI protocol ready") from exc
         except (EOFError, ConnectionError, OSError) as exc:
