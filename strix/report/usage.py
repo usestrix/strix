@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 from typing import Any
 
 from agents.usage import Usage, deserialize_usage, serialize_usage
@@ -76,6 +77,14 @@ class LLMUsageLedger:
         # contract, see ``total_cost``.
         self._estimated_by_response: dict[str, float] = {}
         self._observed_by_response: dict[str, float] = {}
+        # Running totals over the two maps, kept in step on every write so
+        # reading ``total_cost`` (each save, each budget check) is O(1):
+        # the cost of id-matched responses, and charges with no estimate.
+        self._paired_cost = 0.0
+        self._unpaired_observed_by_id = 0.0
+        # Estimates arrive from the event loop, charges from provider
+        # callbacks; one lock keeps a map and its running total in step.
+        self._response_lock = threading.Lock()
         self._persisted_cost = 0.0
         # Keyed by upstream provider name, e.g. "Z.AI" or "DeepInfra".
         self._providers: dict[str, ProviderUsage] = {}
@@ -111,7 +120,7 @@ class LLMUsageLedger:
             estimated = _estimate_litellm_cost(usage, model)
             if estimated and math.isfinite(estimated):
                 if response_id:
-                    self._estimated_by_response[response_id] = estimated
+                    self._set_response_cost(response_id, estimated=estimated)
                 else:
                     self._estimated_cost += estimated
                 self._agent_estimated_cost[normalized_agent_id] = (
@@ -125,9 +134,34 @@ class LLMUsageLedger:
             return
         if isinstance(cost, int | float) and math.isfinite(cost) and cost > 0:
             if response_id:
-                self._observed_by_response[response_id] = float(cost)
+                self._set_response_cost(response_id, observed=float(cost))
             else:
                 self._observed_cost += float(cost)
+
+    def _response_contribution(self, response_id: str) -> tuple[float, float]:
+        """This response's share of (paired cost, unpaired keyed charges)."""
+        observed = self._observed_by_response.get(response_id)
+        estimated = self._estimated_by_response.get(response_id)
+        if estimated is not None:
+            return (estimated if observed is None else observed), 0.0
+        return 0.0, (observed or 0.0)
+
+    def _set_response_cost(
+        self,
+        response_id: str,
+        *,
+        estimated: float | None = None,
+        observed: float | None = None,
+    ) -> None:
+        with self._response_lock:
+            old_paired, old_unpaired = self._response_contribution(response_id)
+            if estimated is not None:
+                self._estimated_by_response[response_id] = estimated
+            if observed is not None:
+                self._observed_by_response[response_id] = observed
+            new_paired, new_unpaired = self._response_contribution(response_id)
+            self._paired_cost += new_paired - old_paired
+            self._unpaired_observed_by_id += new_unpaired - old_unpaired
 
     def record_provider(
         self,
@@ -165,26 +199,16 @@ class LLMUsageLedger:
             return _round_cost(
                 sum(self._configured_agent_cost(aid, model, prices) for aid in self._agent_usage)
             )
-        # Copies: tool threads read the total while the event loop records new
-        # responses, and iterating a dict that grows raises RuntimeError.
-        estimated_by_response = dict(self._estimated_by_response)
-        observed_by_response = dict(self._observed_by_response)
         # Matched by response id: the provider's charge replaces that response's
         # estimate, and a response without a charge keeps its own estimate.
-        paired = sum(
-            observed_by_response.get(response_id, estimate)
-            for response_id, estimate in estimated_by_response.items()
-        )
         # Whatever id matching cannot settle keeps the upstream contract: a
         # provider charge with no estimate to match replaces the unkeyed
         # estimates instead of adding to them, because without a shared id they
         # may describe the same response. Adding both would overstate the spend
         # and stop a scan early at --max-budget.
-        unpaired_observed = self._observed_cost + sum(
-            cost
-            for response_id, cost in observed_by_response.items()
-            if response_id not in estimated_by_response
-        )
+        with self._response_lock:
+            paired = self._paired_cost
+            unpaired_observed = self._observed_cost + self._unpaired_observed_by_id
         unpaired = unpaired_observed if unpaired_observed > 0 else self._estimated_cost
         return _round_cost(self._persisted_cost + paired + unpaired)
 
@@ -236,6 +260,8 @@ class LLMUsageLedger:
         self._estimated_cost = 0.0
         self._estimated_by_response.clear()
         self._observed_by_response.clear()
+        self._paired_cost = 0.0
+        self._unpaired_observed_by_id = 0.0
         self._persisted_cost = 0.0
         self._providers = {}
 

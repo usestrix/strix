@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -159,3 +160,28 @@ def test_sdk_usage_correlates_request_ids_per_agent_and_keeps_upstream_contract_
     state.record_observed_llm_cost(0.2, response_id="ambiguous-b")
     state.record_sdk_usage(agent_id="root", usage=_usage(500), model="model")
     assert state.get_total_llm_cost() == pytest.approx(0.97)
+
+
+def test_running_totals_match_a_full_recount(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        usage_module,
+        "_estimate_litellm_cost",
+        lambda used, _model: used.input_tokens / 1000,
+    )
+    rng = random.Random(1642)  # noqa: S311 - a seeded, repeatable test sequence
+    ledger = LLMUsageLedger()
+    estimated: dict[str, float] = {}
+    observed: dict[str, float] = {}
+    for _ in range(500):
+        response_id = f"r{rng.randrange(60)}"
+        if rng.random() < 0.5:
+            tokens = rng.randrange(1, 900)
+            ledger.record(agent_id="a", usage=_usage(tokens), model="m", response_id=response_id)
+            estimated[response_id] = tokens / 1000
+        else:
+            cost = rng.randrange(1, 900) / 1000
+            ledger.record_observed_cost(cost, response_id=response_id)
+            observed[response_id] = cost
+        paired = sum(observed.get(rid, est) for rid, est in estimated.items())
+        unpaired = sum(cost for rid, cost in observed.items() if rid not in estimated)
+        assert ledger.total_cost == pytest.approx(paired + unpaired, abs=1e-9)
