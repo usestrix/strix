@@ -191,3 +191,37 @@ def test_installer_symlinks_local_bin_and_updates_all_existing_shell_configs(
     assert "Removing old pipx installation" not in rerun_result.stdout
     assert symlink_path.is_symlink()
 
+
+def test_installer_repairs_missing_profile_when_install_dir_in_path_and_tolerates_readonly_local_bin(
+    tmp_path: Path,
+) -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    archive_path = _create_release_archive(tmp_path)
+    mock_bin = _create_mock_commands(tmp_path, machine="aarch64")
+    environment, home_path, _ = _create_installer_environment(
+        tmp_path,
+        archive_path,
+        mock_bin,
+    )
+
+    install_dir = home_path / ".strix/bin"
+    local_bin = home_path / ".local/bin"
+    local_bin.mkdir(parents=True)
+    local_bin.chmod(stat.S_IRUSR | stat.S_IXUSR)
+    environment["PATH"] = f"{install_dir}:{local_bin}:{environment['PATH']}"
+
+    bashrc = home_path / ".bashrc"
+    profile = home_path / ".profile"
+    expected_path_line = f"export PATH={install_dir}:$PATH"
+    bashrc.write_text(f"# existing bashrc\n{expected_path_line}\n", encoding="utf-8")
+    profile.write_text("# existing profile without strix\n", encoding="utf-8")
+
+    try:
+        result = _run_installer(repository_root, environment)
+        assert result.returncode == 0, result.stderr
+        assert expected_path_line in profile.read_text(encoding="utf-8")
+        assert bashrc.read_text(encoding="utf-8").count(expected_path_line) == 1
+    finally:
+        local_bin.chmod(stat.S_IRWXU)
+
+

@@ -240,10 +240,10 @@ setup_path() {
             config_files="$HOME/.bashrc $HOME/.bash_profile $HOME/.profile $XDG_CONFIG_HOME/bash/.bashrc $XDG_CONFIG_HOME/bash/.bash_profile"
             ;;
         ash)
-            config_files="$HOME/.ashrc $HOME/.profile /etc/profile"
+            config_files="$HOME/.ashrc $HOME/.profile"
             ;;
         sh)
-            config_files="$HOME/.ashrc $HOME/.profile /etc/profile"
+            config_files="$HOME/.ashrc $HOME/.profile"
             ;;
         *)
             config_files="$HOME/.bashrc $HOME/.bash_profile $XDG_CONFIG_HOME/bash/.bashrc $XDG_CONFIG_HOME/bash/.bash_profile"
@@ -254,23 +254,26 @@ setup_path() {
     for file in $config_files; do
         if [[ -f $file ]]; then
             found_config=true
-            if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-                case $current_shell in
-                    fish)
-                        add_to_path "$file" "fish_add_path $INSTALL_DIR"
-                        ;;
-                    zsh|bash|ash|sh)
-                        add_to_path "$file" "export PATH=$INSTALL_DIR:\$PATH"
-                        ;;
-                    *)
-                        export PATH=$INSTALL_DIR:$PATH
-                        print_message warning "Manually add the directory to $file (or similar):"
-                        print_message info "  export PATH=$INSTALL_DIR:\$PATH"
-                        ;;
-                esac
-            fi
+            case $current_shell in
+                fish)
+                    add_to_path "$file" "fish_add_path $INSTALL_DIR"
+                    ;;
+                zsh|bash|ash|sh)
+                    add_to_path "$file" "export PATH=$INSTALL_DIR:\$PATH"
+                    ;;
+                *)
+                    export PATH=$INSTALL_DIR:$PATH
+                    print_message warning "Manually add the directory to $file (or similar):"
+                    print_message info "  export PATH=$INSTALL_DIR:\$PATH"
+                    ;;
+            esac
         fi
     done
+
+    if [[ "$found_config" == false ]] && [[ "$current_shell" == "ash" || "$current_shell" == "sh" ]] && [[ -f /etc/profile ]]; then
+        found_config=true
+        add_to_path "/etc/profile" "export PATH=$INSTALL_DIR:\$PATH"
+    fi
 
     if [[ "$found_config" == false ]]; then
         print_message warning "No config file found for $current_shell. You may need to manually add to PATH:"
@@ -280,9 +283,14 @@ setup_path() {
     if [ "$os" != "windows" ] && [[ -x "$INSTALL_DIR/strix" ]]; then
         local local_bin="$HOME/.local/bin"
         if [[ -d "$local_bin" || ":$PATH:" == *":$local_bin:"* ]]; then
-            mkdir -p "$local_bin"
-            if [[ ! -e "$local_bin/strix" || -L "$local_bin/strix" ]]; then
-                ln -sf "$INSTALL_DIR/strix" "$local_bin/strix"
+            if mkdir -p "$local_bin" 2>/dev/null && [[ -w "$local_bin" ]]; then
+                if [[ ! -e "$local_bin/strix" || -L "$local_bin/strix" ]]; then
+                    if ! ln -sf "$INSTALL_DIR/strix" "$local_bin/strix" 2>/dev/null; then
+                        print_message warning "Could not create symlink in $local_bin/strix; continuing."
+                    fi
+                fi
+            else
+                print_message warning "Skipping symlink in $local_bin (directory is not writable)."
             fi
         fi
     fi
