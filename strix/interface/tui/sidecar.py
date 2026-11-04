@@ -9,12 +9,14 @@ import os
 import secrets
 import socket
 import subprocess
+import time
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
 
 _WINDOWS_AUTH_TIMEOUT = 10.0
+_WINDOWS_ACCEPT_POLL_INTERVAL = 0.2
 _PROCESS_EXIT_TIMEOUT = 5.0
 _SENSITIVE_ENV_SUFFIXES = ("_API_KEY", "_ACCESS_KEY")
 _SENSITIVE_ENV_PARTS = frozenset(
@@ -86,10 +88,28 @@ def _authenticate_connection(
 def _accept_authenticated_connection(
     listener: socket.socket,
     expected_token: str,
+    process: subprocess.Popen[bytes] | None = None,
+    connect_timeout: float | None = None,
 ) -> socket.socket:
-    """Accept and authenticate the one Windows loopback connection."""
-    listener.settimeout(_WINDOWS_AUTH_TIMEOUT)
-    connection, address = listener.accept()
+    """Accept and authenticate the one Windows loopback connection.
+
+    Unlike the POSIX socketpair, a listener gets no EOF when the child dies, so
+    poll for its exit instead of waiting out the whole limit.
+    """
+    timeout = _WINDOWS_AUTH_TIMEOUT if connect_timeout is None else connect_timeout
+    deadline = time.monotonic() + timeout
+    listener.settimeout(min(timeout, _WINDOWS_ACCEPT_POLL_INTERVAL))
+    while True:
+        try:
+            connection, address = listener.accept()
+            break
+        except TimeoutError:
+            if process is not None and process.poll() is not None:
+                raise ConnectionError(
+                    f"TUI exited with status {process.returncode} before connecting"
+                ) from None
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Timed out waiting for the TUI to connect") from None
     try:
         _authenticate_connection(connection, address, expected_token)
     except BaseException:
@@ -126,9 +146,10 @@ async def launch_tui_process(
     command: list[str],
     env: dict[str, str],
     cwd: str | None,
+    connect_timeout: float | None = None,
 ) -> tuple[asyncio.subprocess.Process | subprocess.Popen[bytes], socket.socket]:
     if os.name == "nt":
-        return await _launch_windows_tui_process(command, env, cwd)
+        return await _launch_windows_tui_process(command, env, cwd, connect_timeout)
     return await _launch_posix_tui_process(command, env, cwd)
 
 
@@ -155,6 +176,7 @@ async def _launch_windows_tui_process(
     command: list[str],
     env: dict[str, str],
     cwd: str | None,
+    connect_timeout: float | None = None,
 ) -> tuple[subprocess.Popen[bytes], socket.socket]:
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     windows_process: subprocess.Popen[bytes] | None = None
@@ -167,7 +189,9 @@ async def _launch_windows_tui_process(
         host, port = listener.getsockname()[:2]
         env.update({"STRIX_TUI_ADDR": f"{host}:{port}", "STRIX_TUI_TOKEN": token})
         windows_process = subprocess.Popen(command, env=env, cwd=cwd)  # noqa: S603
-        connection = await asyncio.to_thread(_accept_authenticated_connection, listener, token)
+        connection = await asyncio.to_thread(
+            _accept_authenticated_connection, listener, token, windows_process, connect_timeout
+        )
     except BaseException:
         await terminate_process(windows_process)
         raise
