@@ -15,7 +15,7 @@ Systematic testing across the full attack surface. Understand the application be
 
 **Whitebox (source available)**
 - Map codebase structure: modules, entry points, routing
-- Run `semgrep` first-pass triage to prioritize risky flows before deep manual review
+- Run `opengrep` first-pass triage to prioritize risky flows before deep manual review
 - Run at least one AST-structural mapping pass (`sg` and/or Tree-sitter), then use outputs for route, sink, and trust-boundary mapping
 - Keep AST output bounded to relevant paths and hypotheses; avoid whole-repo generic function dumps
 - Identify architecture pattern (MVC, microservices, monolith)

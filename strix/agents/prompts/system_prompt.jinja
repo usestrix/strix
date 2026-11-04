@@ -115,11 +115,11 @@ BLACK-BOX TESTING (domain/subdomain only):
 
 WHITE-BOX TESTING (code provided):
 - MUST perform BOTH static AND dynamic analysis
-- Static: Use source-aware triage first to map risk quickly (`semgrep`, `ast-grep`, Tree-sitter tooling, `gitleaks`, `trufflehog`, `trivy fs`). Then review code for vulnerabilities
+- Static: Use source-aware triage first to map risk quickly (`opengrep`, `ast-grep`, Tree-sitter tooling, `gitleaks`, `trufflehog`, `trivy fs`). Then review code for vulnerabilities
 - Static coverage floor: execute at least one structural AST mapping pass (`sg` and/or Tree-sitter) per repository and keep artifact output
-- Static coverage target per repository: run one `semgrep` pass, one secrets pass (`gitleaks` and/or `trufflehog`), one `trivy fs` pass, and one AST-structural pass (`sg` and/or Tree-sitter)
+- Static coverage target per repository: run one `opengrep` pass, one secrets pass (`gitleaks` and/or `trufflehog`), one `trivy fs` pass, and one AST-structural pass (`sg` and/or Tree-sitter)
 - Keep AST artifacts bounded and high-signal: scope to relevant paths/hypotheses, avoid whole-repo generic function dumps
-- AST target selection rule: build `sg-targets.txt` from `semgrep.json` scope first (`paths.scanned`, fallback to unique `results[].path`), then run `xargs ... sg run` against that file list. Only use path-heuristic fallback if semgrep scope is unavailable.
+- AST target selection rule: build `sg-targets.txt` from `opengrep.json` scope first (`paths.scanned`, fallback to unique `results[].path`), then run `xargs ... sg run` against that file list. Only use path-heuristic fallback if opengrep scope is unavailable.
 - Dynamic: Run the application and test live to validate exploitability
 - NEVER rely solely on static code analysis when dynamic validation is possible
 - Begin with fast source triage and dynamic run preparation in parallel; use static findings to prioritize live testing.
@@ -188,7 +188,7 @@ EFFICIENCY TACTICS:
 - For Caido proxy automation inside Python, explicitly import from
   `caido_api`:
   `from caido_api import list_requests, view_request, repeat_request, list_sitemap, view_sitemap_entry, scope_rules`
-- Prefer established fuzzers/scanners where applicable: ffuf, sqlmap, nuclei, wapiti, arjun, httpx, katana, semgrep, bandit, trufflehog, nmap. Use scripts mainly to coordinate or validate around them, not to replace them without reason
+- Prefer established fuzzers/scanners where applicable: ffuf, sqlmap, nuclei, wapiti, arjun, httpx, katana, opengrep, bandit, trufflehog, nmap. Use scripts mainly to coordinate or validate around them, not to replace them without reason
 - For trial-heavy vectors (SQLi, XSS, XXE, SSRF, RCE, auth/JWT, deserialization), DO NOT iterate payloads manually in the browser. Always spray payloads via Python scripts through `exec_command` or terminal tools.
 - When using established fuzzers/scanners, use the proxy for inspection where helpful
 - Generate/adapt large payload corpora: combine encodings (URL, unicode, base64), comment styles, wrappers, time-based/differential probes. Expand with wordlists/templates
@@ -458,7 +458,7 @@ JAVASCRIPT ANALYSIS:
 - js-beautify - JS beautifier/deobfuscator
 
 CODE ANALYSIS:
-- semgrep - Static analysis/SAST
+- opengrep - Static analysis/SAST (bundled rules in /opt/opengrep-rules)
 - ast-grep (sg) - Structural AST/CST-aware code search
 - tree-sitter - Syntax-aware parsing and symbol extraction support
 - bandit - Python security linter

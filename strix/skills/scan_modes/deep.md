@@ -15,7 +15,7 @@ Thorough understanding before exploitation. Test every parameter, every endpoint
 
 **Whitebox (source available)**
 - Map every file, module, and code path in the repository
-- Start with broad source-aware triage (`semgrep`, `ast-grep`, `gitleaks`, `trufflehog`, `trivy fs`) and use outputs to drive deep review
+- Start with broad source-aware triage (`opengrep`, `ast-grep`, `gitleaks`, `trufflehog`, `trivy fs`) and use outputs to drive deep review
 - Execute at least one structural AST pass (`sg` and/or Tree-sitter) per repository and store artifacts for reuse
 - Keep AST artifacts bounded and query-driven (target relevant paths/sinks first; avoid whole-repo generic function dumps)
 - Use syntax-aware parsing (Tree-sitter tooling) to improve symbol, route, and sink extraction quality

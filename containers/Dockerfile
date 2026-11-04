@@ -186,13 +186,27 @@ RUN set -eux; \
         aarch64|arm64) GITLEAKS_ARCH="arm64" ;; \
         *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;; \
     esac; \
-    TAG="$(curl -fsSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest | jq -r .tag_name)"; \
+    TAG="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/gitleaks/gitleaks/releases/latest | sed 's#.*/##')"; \
     curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/${TAG}/gitleaks_${TAG#v}_linux_${GITLEAKS_ARCH}.tar.gz" -o /tmp/gitleaks.tgz; \
     tar -xzf /tmp/gitleaks.tgz -C /tmp; \
     install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks; \
     rm -f /tmp/gitleaks /tmp/gitleaks.tgz
 
-RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+ARG TRIVY_VERSION=0.76.1
+ARG TRIVY_SHA256_X86=c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0
+ARG TRIVY_SHA256_AARCH64=e174dff2a6dba5e3ae41f8d0537a6324405bd08132497340304c6b20e0f16a1f
+RUN set -eux; \
+    case "$(uname -m)" in \
+        x86_64) TRIVY_ARCH="64bit"; TRIVY_SHA256="${TRIVY_SHA256_X86}" ;; \
+        aarch64|arm64) TRIVY_ARCH="ARM64"; TRIVY_SHA256="${TRIVY_SHA256_AARCH64}" ;; \
+        *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-${TRIVY_ARCH}.tar.gz" -o /tmp/trivy.tgz; \
+    echo "${TRIVY_SHA256}  /tmp/trivy.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/trivy.tgz -C /tmp trivy; \
+    install -m 0755 /tmp/trivy /usr/local/bin/trivy; \
+    rm -f /tmp/trivy /tmp/trivy.tgz; \
+    trivy --version
 
 RUN apt-get install -y wapiti
 
@@ -212,10 +226,44 @@ RUN set -eux; \
     test "$(dpkg-query -W -f='${Version}' libbrotli1)" = "${BROTLI_DEB_VERSION}"; \
     node -e 'const z=require("zlib");z.brotliDecompressSync(z.brotliCompressSync(Buffer.from("ok")))'
 
+ARG OPENGREP_VERSION=1.31.0
+ARG OPENGREP_SHA256_X86=dbbe3c2058dbe600c449a8ba22ea79a1643a6660658400090d0323a8d0d31147
+ARG OPENGREP_SHA256_AARCH64=2b713a29a00237f85408b83002fc111db5b94c7fa8d263f0a93184a960655d9d
+RUN set -eux; \
+    case "$(uname -m)" in \
+        x86_64) OPENGREP_ARCH="x86"; OPENGREP_SHA256="${OPENGREP_SHA256_X86}" ;; \
+        aarch64|arm64) OPENGREP_ARCH="aarch64"; OPENGREP_SHA256="${OPENGREP_SHA256_AARCH64}" ;; \
+        *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/opengrep/opengrep/releases/download/v${OPENGREP_VERSION}/opengrep_manylinux_${OPENGREP_ARCH}" -o /tmp/opengrep; \
+    echo "${OPENGREP_SHA256}  /tmp/opengrep" | sha256sum -c -; \
+    install -m 0755 /tmp/opengrep /usr/local/bin/opengrep; \
+    rm -f /tmp/opengrep; \
+    opengrep --version
+
+# Opengrep ships no rule registry of its own; bake the community ruleset so
+# scans run offline. Keep only rule YAML and LICENSE; drop tests, fixtures,
+# tooling, and rules marked with a proprietary license.
+ARG OPENGREP_RULES_REF=f1d2b562b414783763fd02a6ed2736eaed622efa
+RUN set -eux; \
+    mkdir -p /opt/opengrep-rules; \
+    curl -fsSL "https://codeload.github.com/opengrep/opengrep-rules/tar.gz/${OPENGREP_RULES_REF}" \
+        | tar -xz --strip-components=1 -C /opt/opengrep-rules; \
+    cd /opt/opengrep-rules; \
+    rm -rf .github scripts stats; \
+    find . -maxdepth 1 -type f ! -name LICENSE -delete; \
+    find . -mindepth 2 -type f \( ! \( -name '*.yaml' -o -name '*.yml' \) -o -name '*.test.yaml' -o -name '*.test.yml' -o -name '.*' \) -delete; \
+    grep -rlZ 'license: proprietary' . | xargs -0 -r rm -f; \
+    find . -type d -empty -delete; \
+    chmod -R a+rX /opt/opengrep-rules
+
+# Strix-authored rules that close gaps in the community ruleset.
+COPY containers/opengrep-rules/ /opt/opengrep-rules/strix/
+RUN chmod -R a+rX /opt/opengrep-rules/strix
+
 USER pentester
 
-RUN pipx install semgrep && \
-    pipx install bandit
+RUN pipx install bandit
 
 RUN npm install -g jshint
 
