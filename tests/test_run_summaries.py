@@ -6,13 +6,13 @@ import json
 import os
 from typing import TYPE_CHECKING
 
+import pytest
+
 from strix.report.runs import list_run_summaries
 
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 def _write_run(
@@ -161,3 +161,38 @@ def test_title_is_the_instruction_else_the_most_severe_finding(tmp_path: Path) -
         "focus on auth",
         "SQL injection",
     ]
+
+
+@pytest.mark.parametrize("filename", ["run.json", "vulnerabilities.json"])
+def test_invalid_utf8_in_one_run_does_not_hide_other_runs(tmp_path: Path, filename: str) -> None:
+    base = tmp_path / "strix_runs"
+    _write_run(base, "healthy_1111", {"status": "completed"}, modified=2)
+    _write_run(base, "damaged_2222", {"status": "failed"}, modified=1)
+    (base / "damaged_2222" / filename).write_bytes(b"\xff")
+
+    runs = {run.run_name: run for run in list_run_summaries(cwd=tmp_path)}
+
+    assert set(runs) == {"healthy_1111", "damaged_2222"}
+    assert runs["healthy_1111"].status == "completed"
+    assert runs["damaged_2222"].findings == 0
+    assert runs["damaged_2222"].target == ""
+    assert runs["damaged_2222"].status == ("unknown" if filename == "run.json" else "failed")
+
+
+@pytest.mark.parametrize("targets", [123, True, None, "old-format", {"original": "legacy"}])
+def test_non_list_target_metadata_uses_the_existing_fallback(
+    tmp_path: Path, targets: object
+) -> None:
+    base = tmp_path / "strix_runs"
+    _write_run(base, "healthy_1111", {"status": "completed"}, modified=2)
+    _write_run(
+        base,
+        "legacy_2222",
+        {"targets_info": targets, "workspace_mount": "/project"},
+        modified=1,
+    )
+
+    runs = {run.run_name: run for run in list_run_summaries(cwd=tmp_path)}
+
+    assert runs["healthy_1111"].status == "completed"
+    assert runs["legacy_2222"].target == "/project (workspace)"
