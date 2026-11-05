@@ -25,6 +25,14 @@ from strix.utils.api_spec import detect_spec_format
 
 logger = logging.getLogger(__name__)
 
+DOCKER_PERMISSION_ERROR_MARKERS = ("permission denied", "operation not permitted")
+DOCKER_LOCAL_SOCKET_SCHEME = "unix://"
+DOCKER_SOCKET_ACCESS_HINT = (
+    "Docker is installed, but Strix cannot access the Docker socket. "
+    "Run Strix with a user that can access Docker, or add your user to the docker group "
+    "and restart your shell before trying again.\n"
+)
+
 
 def get_severity_color(severity: str) -> str:
     severity_colors = {
@@ -1598,6 +1606,24 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
         ) from e
 
 
+def _is_docker_permission_error(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return any(marker in message for marker in DOCKER_PERMISSION_ERROR_MARKERS)
+
+
+def _is_docker_socket_permission_error(exc: Any) -> bool:
+    """A permission error against the *local* Docker socket.
+
+    The docker-group remedy only applies to a Unix-socket daemon. A permission
+    failure against a remote DOCKER_HOST (TCP/SSH) endpoint is not fixed by
+    group membership, so the socket hint must not be shown for it.
+    """
+    if not _is_docker_permission_error(exc):
+        return False
+    host = exc.endpoint.host
+    return host is None or host.startswith(DOCKER_LOCAL_SOCKET_SCHEME)
+
+
 def check_docker_connection() -> Any:
     from strix.runtime.docker_connection import DockerConnectionError, connect_docker
 
@@ -1611,6 +1637,8 @@ def check_docker_connection() -> Any:
         error_text.append("\n\n", style="white")
         error_text.append(f"Cannot connect to Docker at {exc.endpoint.label}.\n", style="white")
         error_text.append(f"{exc.detail}\n\n", style="dim red")
+        if _is_docker_socket_permission_error(exc):
+            error_text.append(DOCKER_SOCKET_ACCESS_HINT, style="white")
         error_text.append(
             "Make sure Docker is running. If `docker info` works in this shell, strix uses "
             "the same daemon. Otherwise set DOCKER_HOST.\n",
