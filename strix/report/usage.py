@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from agents.usage import Usage, deserialize_usage, serialize_usage
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -58,13 +58,21 @@ _PROVIDER_USAGE = TypeAdapter(dict[str, ProviderUsage])
 
 
 class LLMUsageLedger:
-    """Aggregate SDK ``Usage`` objects and attach best-effort cost estimates."""
+    """Aggregate SDK ``Usage`` objects and attach best-effort cost estimates.
+
+    ``agents`` remains the public aggregate view in ``run.json``. The optional,
+    versioned ``model_usage`` section preserves proven agent/model ownership for
+    resumes; records without it hydrate as one legacy bucket per agent.
+    """
 
     def __init__(self) -> None:
         self._total_usage = Usage()
         self._agent_usage: dict[str, Usage] = {}
         self._agent_metadata: dict[str, dict[str, str]] = {}
         self._agent_estimated_cost: dict[str, float] = {}
+        self._model_usage: dict[tuple[str, str | None], Usage] = {}
+        self._model_fallback_cost: dict[tuple[str, str | None], float] = {}
+        self._unattributed_cost = 0.0
         self._observed_cost = 0.0
         self._estimated_cost = 0.0
         self._has_observed_cost = False
@@ -88,22 +96,34 @@ class LLMUsageLedger:
             return False
 
         normalized_agent_id = str(agent_id or "unknown")
+        normalized_model = (model or "").strip() or None
         self._total_usage.add(usage)
         self._agent_usage.setdefault(normalized_agent_id, Usage()).add(usage)
+        model_key = (normalized_agent_id, normalized_model)
+        self._model_usage.setdefault(model_key, Usage()).add(usage)
 
         metadata = self._agent_metadata.setdefault(normalized_agent_id, {})
         if agent_name:
             metadata["agent_name"] = agent_name
-        if model:
-            metadata["model"] = model
+        if normalized_model:
+            metadata["model"] = normalized_model
 
         if not self.zero_cost:
-            estimated = _estimate_litellm_cost(usage, model)
+            estimated = _estimate_litellm_cost(usage, normalized_model)
             if estimated:
                 self._estimated_cost += estimated
                 self._agent_estimated_cost[normalized_agent_id] = (
                     self._agent_estimated_cost.get(normalized_agent_id, 0.0) + estimated
                 )
+            configured_model, prices = _configured_prices()
+            fallback = (
+                _configured_usage_cost(usage, prices)
+                if prices is not None and normalized_model == configured_model
+                else estimated or 0.0
+            )
+            self._model_fallback_cost[model_key] = _round_cost(
+                self._model_fallback_cost.get(model_key, 0.0) + fallback
+            )
 
         return True
 
@@ -148,22 +168,70 @@ class LLMUsageLedger:
         model, prices = _configured_prices()
         if prices is not None:
             return _round_cost(
-                sum(self._configured_agent_cost(aid, model, prices) for aid in self._agent_usage)
+                self._unattributed_cost
+                + sum(self._configured_model_cost(key, model, prices) for key in self._model_usage)
             )
         return _round_cost(self._observed_cost if self._has_observed_cost else self._estimated_cost)
 
     def _configured_agent_cost(self, agent_id: str, model: str | None, prices: Prices) -> float:
-        if self._agent_metadata.get(agent_id, {}).get("model") == model:
-            return _configured_usage_cost(self._agent_usage[agent_id], prices)
-        return self._agent_estimated_cost.get(agent_id, 0.0)
+        return _round_cost(
+            sum(
+                self._configured_model_cost(key, model, prices)
+                for key in self._model_usage
+                if key[0] == agent_id
+            )
+        )
+
+    def _configured_model_cost(
+        self,
+        key: tuple[str, str | None],
+        model: str | None,
+        prices: Prices,
+    ) -> float:
+        if key[1] == model:
+            return _configured_usage_cost(self._model_usage[key], prices)
+        return self._model_fallback_cost.get(key, 0.0)
+
+    def _model_costs_for_record(
+        self,
+        total_cost: float,
+        model: str | None,
+        prices: Prices | None,
+    ) -> dict[tuple[str, str | None], float]:
+        if self.zero_cost:
+            return dict.fromkeys(self._model_usage, 0.0)
+        if prices is not None:
+            return {
+                key: self._configured_model_cost(key, model, prices) for key in self._model_usage
+            }
+        if not self._has_observed_cost:
+            return {key: self._model_fallback_cost.get(key, 0.0) for key in self._model_usage}
+
+        model_tokens = {
+            key: _resolve_total_tokens(usage) for key, usage in self._model_usage.items()
+        }
+        total_tokens = sum(model_tokens.values())
+        attributable_cost = max(0.0, total_cost - self._unattributed_cost)
+        return {
+            key: attributable_cost * (tokens / total_tokens) if total_tokens else 0.0
+            for key, tokens in model_tokens.items()
+        }
 
     def to_record(self) -> dict[str, Any]:
-        record = serialize_usage(self._total_usage)
+        record: dict[str, Any] = serialize_usage(self._total_usage)
         model, prices = _configured_prices()
         total_cost = self.total_cost
+        model_costs = self._model_costs_for_record(total_cost, model, prices)
         record["cost"] = total_cost
         record["providers"] = {name: tally.model_dump() for name, tally in self._providers.items()}
-        record["agents"] = []
+        agent_records: list[dict[str, Any]] = []
+        model_entries: list[dict[str, Any]] = []
+        record["agents"] = agent_records
+        record["model_usage"] = {
+            "version": 1,
+            "unattributed_cost": self._unattributed_cost,
+            "entries": model_entries,
+        }
 
         agent_tokens = {aid: _resolve_total_tokens(u) for aid, u in self._agent_usage.items()}
         total_tokens = sum(agent_tokens.values())
@@ -178,7 +246,7 @@ class LLMUsageLedger:
                 else 0.0
             )
 
-            agent_record = serialize_usage(usage)
+            agent_record: dict[str, Any] = serialize_usage(usage)
             agent_record.update(
                 {
                     "agent_id": agent_id,
@@ -187,22 +255,29 @@ class LLMUsageLedger:
                     "cost": _round_cost(agent_cost),
                 }
             )
-            record["agents"].append(agent_record)
+            agent_records.append(agent_record)
+
+        for (agent_id, usage_model), usage in sorted(
+            self._model_usage.items(), key=lambda item: (item[0][0], item[0][1] or "")
+        ):
+            model_record: dict[str, Any] = serialize_usage(usage)
+            model_record.update(
+                {
+                    "agent_id": agent_id,
+                    "model": usage_model,
+                    "cost": _round_cost(model_costs[(agent_id, usage_model)]),
+                }
+            )
+            model_entries.append(model_record)
 
         return record
 
     def hydrate(self, raw_usage: Any) -> None:
-        self._total_usage = Usage()
-        self._agent_usage.clear()
-        self._agent_metadata.clear()
-        self._agent_estimated_cost.clear()
-        self._observed_cost = 0.0
-        self._estimated_cost = 0.0
-        self._has_observed_cost = False
-        self._providers = {}
+        self._reset_for_hydration()
 
         if not isinstance(raw_usage, dict):
             return
+        raw_usage = cast("dict[str, Any]", raw_usage)
 
         try:
             self._providers = _PROVIDER_USAGE.validate_python(raw_usage.get("providers") or {})
@@ -241,6 +316,107 @@ class LLMUsageLedger:
                 metadata["model"] = model
             self._agent_metadata[agent_id] = metadata
 
+        if not self._hydrate_model_usage(raw_usage.get("model_usage")):
+            # Legacy records can prove only their aggregate agent/model snapshot.
+            # Treat it as one bucket; never invent a historical model split.
+            for agent_id, usage in self._agent_usage.items():
+                model = self._agent_metadata.get(agent_id, {}).get("model")
+                key = (agent_id, model)
+                model_usage = Usage()
+                model_usage.add(usage)
+                self._model_usage[key] = model_usage
+                self._model_fallback_cost[key] = self._agent_estimated_cost.get(agent_id, 0.0)
+
+            attributed_cost = sum(self._model_fallback_cost.values())
+            self._unattributed_cost = _round_cost(max(0.0, persisted_cost - attributed_cost))
+
+    def _reset_for_hydration(self) -> None:
+        self._total_usage = Usage()
+        self._agent_usage.clear()
+        self._agent_metadata.clear()
+        self._agent_estimated_cost.clear()
+        self._model_usage.clear()
+        self._model_fallback_cost.clear()
+        self._unattributed_cost = 0.0
+        self._observed_cost = 0.0
+        self._estimated_cost = 0.0
+        self._has_observed_cost = False
+        self._providers = {}
+
+    def _hydrate_model_usage(self, raw_model_usage: Any) -> bool:
+        if raw_model_usage is None:
+            return False
+        if not isinstance(raw_model_usage, dict):
+            logger.warning("Ignoring invalid model-specific llm_usage in run.json")
+            return False
+        if raw_model_usage.get("version") != 1:
+            logger.warning("Ignoring unsupported model-specific llm_usage version in run.json")
+            return False
+        try:
+            model_usage, model_costs, unattributed_cost = _deserialize_model_usage(
+                raw_model_usage, self._agent_usage
+            )
+        except Exception:  # noqa: BLE001 - malformed legacy records fall back safely
+            logger.warning("Ignoring invalid model-specific llm_usage in run.json")
+            return False
+
+        self._model_usage = model_usage
+        self._model_fallback_cost = model_costs
+        self._unattributed_cost = unattributed_cost
+        return True
+
+
+def _deserialize_model_usage(
+    raw_model_usage: Any,
+    agent_usage: dict[str, Usage],
+) -> tuple[
+    dict[tuple[str, str | None], Usage],
+    dict[tuple[str, str | None], float],
+    float,
+]:
+    if not isinstance(raw_model_usage, dict):
+        raise TypeError
+    raw_model_usage = cast("dict[str, Any]", raw_model_usage)
+    if raw_model_usage.get("version") != 1:
+        raise ValueError
+    raw_entries = raw_model_usage.get("entries")
+    if not isinstance(raw_entries, list):
+        raise TypeError
+    typed_entries = cast("list[Any]", raw_entries)  # type: ignore[redundant-cast]
+
+    model_usage: dict[tuple[str, str | None], Usage] = {}
+    model_costs: dict[tuple[str, str | None], float] = {}
+    for raw_entry in typed_entries:
+        if not isinstance(raw_entry, dict):
+            raise TypeError
+        raw_entry = cast("dict[str, Any]", raw_entry)
+        agent_id = str(raw_entry.get("agent_id") or "").strip()
+        raw_model = raw_entry.get("model")
+        if not agent_id or agent_id not in agent_usage:
+            raise ValueError
+        if raw_model is not None and not isinstance(raw_model, str):
+            raise TypeError
+        model = (raw_model or "").strip() or None
+        key = (agent_id, model)
+        if key in model_usage:
+            raise ValueError
+        model_usage[key] = deserialize_usage(raw_entry)
+        model_costs[key] = _float_or_zero(raw_entry.get("cost"))
+
+    for agent_id, aggregate in agent_usage.items():
+        combined = Usage()
+        for key, usage in model_usage.items():
+            if key[0] == agent_id:
+                combined.add(usage)
+        if _usage_signature(combined) != _usage_signature(aggregate):
+            raise ValueError
+
+    return (
+        model_usage,
+        model_costs,
+        _float_or_zero(raw_model_usage.get("unattributed_cost")),
+    )
+
 
 def _resolve_total_tokens(usage: Usage) -> int:
     total = max(0, int(usage.total_tokens or 0))
@@ -258,6 +434,17 @@ def _usage_has_activity(usage: Usage) -> bool:
         or usage.output_tokens
         or usage.total_tokens
         or usage.request_usage_entries
+    )
+
+
+def _usage_signature(usage: Usage) -> tuple[int, int, int, int, int]:
+    details = getattr(usage, "input_tokens_details", None)
+    return (
+        _int_or_zero(getattr(usage, "requests", 0)),
+        _int_or_zero(getattr(usage, "input_tokens", 0)),
+        _int_or_zero(getattr(usage, "output_tokens", 0)),
+        _int_or_zero(getattr(usage, "total_tokens", 0)),
+        _int_or_zero(getattr(details, "cached_tokens", 0)),
     )
 
 
