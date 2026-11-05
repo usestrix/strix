@@ -114,6 +114,28 @@ def _render_completion_report(
     return "\n".join(lines)
 
 
+def _groq_compatible_empty_object_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Drop the empty ``required``/``properties`` pair Groq rejects.
+
+    A no-argument strict schema is ``{"type": "object", "properties": {},
+    "required": []}``. Groq's tool validator treats a present ``required``
+    with no ``properties`` as invalid (``required is present but properties
+    is missing``) and rejects the whole request. Omitting both keys leaves an
+    object that accepts no arguments: ``additionalProperties`` stays false, so
+    extra arguments are still rejected, and tools that declare real parameters
+    keep their ``required`` lists.
+    """
+    properties = schema.get("properties")
+    required = schema.get("required")
+    if properties or required:
+        return schema
+    if properties is not None and not isinstance(properties, dict):
+        return schema
+    if required is not None and not isinstance(required, list):
+        return schema
+    return {key: value for key, value in schema.items() if key not in {"properties", "required"}}
+
+
 @function_tool(timeout=30)
 async def view_agent_graph(ctx: RunContextWrapper) -> str:
     """Print the multi-agent tree — every agent, its parent, its status.
@@ -164,6 +186,11 @@ async def view_agent_graph(ctx: RunContextWrapper) -> str:
         ensure_ascii=False,
         default=str,
     )
+
+
+view_agent_graph.params_json_schema = _groq_compatible_empty_object_schema(
+    view_agent_graph.params_json_schema
+)
 
 
 @function_tool(timeout=30)
