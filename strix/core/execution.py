@@ -74,6 +74,8 @@ _IMAGE_REJECTION = re.compile(
     re.IGNORECASE,
 )
 _MAX_COMPACTIONS_PER_CYCLE = 2
+_UNLIMITED_CHILD_AGENTS = 0
+_CHILD_AGENT_LIMIT_ERROR = "child agent limit reached"
 
 
 @cache
@@ -402,45 +404,70 @@ async def spawn_child_agent(
     parent_history: list[Any],
     event_sink: StreamEventSink | None = None,
     hooks: RunHooks[dict[str, Any]] | None = None,
+    max_child_agents: int = _UNLIMITED_CHILD_AGENTS,
 ) -> dict[str, Any]:
     parent_id = parent_ctx.get("agent_id")
     if not isinstance(parent_id, str):
         raise TypeError("Parent agent_id missing from context")
 
     child_id = uuid.uuid4().hex[:8]
-    child_agent = factory(name=name, skills=skills)
-    await coordinator.register(
+    registered, child_count = await coordinator.register_child_if_capacity(
         child_id,
         name,
         parent_id,
+        max_child_agents=max_child_agents,
         task=task,
         skills=skills,
     )
+    if not registered:
+        logger.info(
+            "refusing to spawn child agent %r: limit %d already reached",
+            name,
+            max_child_agents,
+        )
+        return {
+            "success": False,
+            "error": _CHILD_AGENT_LIMIT_ERROR,
+            "message": (
+                f"Cannot spawn '{name}': configured child agent limit "
+                f"({max_child_agents}) is already reached."
+            ),
+            "limit": max_child_agents,
+            "current_child_agents": child_count,
+        }
 
-    await _start_child_runner(
-        parent_ctx=parent_ctx,
-        coordinator=coordinator,
-        agents_db_path=agents_db_path,
-        sessions_to_close=sessions_to_close,
-        run_config=run_config,
-        max_turns=max_turns,
-        interactive=interactive,
-        child_agent=child_agent,
-        child_id=child_id,
-        name=name,
-        parent_id=parent_id,
-        task=task,
-        skills=skills,
-        initial_input=child_initial_input(
-            name=name,
+    try:
+        child_agent = factory(name=name, skills=skills)
+        await _start_child_runner(
+            parent_ctx=parent_ctx,
+            coordinator=coordinator,
+            agents_db_path=agents_db_path,
+            sessions_to_close=sessions_to_close,
+            run_config=run_config,
+            max_turns=max_turns,
+            interactive=interactive,
+            child_agent=child_agent,
             child_id=child_id,
+            name=name,
             parent_id=parent_id,
             task=task,
-            parent_history=parent_history,
-        ),
-        event_sink=event_sink,
-        hooks=hooks,
-    )
+            skills=skills,
+            initial_input=child_initial_input(
+                name=name,
+                child_id=child_id,
+                parent_id=parent_id,
+                task=task,
+                parent_history=parent_history,
+            ),
+            event_sink=event_sink,
+            hooks=hooks,
+        )
+    except BaseException:
+        # Free the reserved slot on any failure, including cancellation
+        # (CancelledError is a BaseException), so a failed spawn never leaks
+        # child-agent capacity. The error/cancellation is re-raised unchanged.
+        await coordinator.discard_child_reservation(child_id)
+        raise
 
     return {
         "success": True,
