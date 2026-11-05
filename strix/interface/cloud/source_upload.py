@@ -393,6 +393,7 @@ def _git_candidate_paths(git: str, git_root: Path, source: Path) -> Iterator[Pat
     assert process.stdout is not None
     buffer = b""
     count = 0
+    seen: set[Path] = set()
     try:
         while chunk := process.stdout.read(64 * 1024):
             buffer += chunk
@@ -404,6 +405,11 @@ def _git_candidate_paths(git: str, git_root: Path, source: Path) -> Iterator[Pat
                     continue
                 count += 1
                 _check_candidate_limit(count)
+                # An unmerged index can list a path once per stage. Package the
+                # working-tree file once, while still bounding every Git record.
+                if relative in seen:
+                    continue
+                seen.add(relative)
                 yield relative
         if buffer:
             raise http.CloudError("Git returned a malformed source file manifest.")
