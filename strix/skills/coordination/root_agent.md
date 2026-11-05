@@ -58,6 +58,13 @@ Structure agents by function:
 - Business logic flaws
 - Infrastructure vulnerabilities
 
+**Sensitive Browser Confirmations**
+- For every browser workflow containing a security-sensitive or consequential user action—whether authenticated or unauthenticated—assign `browser_security` to the agent testing that workflow or create a dedicated UI-redressing agent. This includes actions that change protected state, grant authority, submit credentials, expose sensitive data, or cross a trust boundary.
+- Its task must cover both iframe and cross-window/DoubleClickjacking paths; framing protections close only iframe coverage.
+- A workflow crossing origins or ports remains eligible when every involved origin is an explicit scan target. Same-origin policy blocks DOM reads, not top-level navigation, popups, opener relationships, focus changes, or window closing; cross-origin separation alone does not close UI-redressing coverage.
+- Never expand authorization from a link alone. If a required origin is not an explicit target, leave the path `needs_follow_up` and do not claim clickjacking or the related workflow is cleared; scope expansion must come from scan configuration.
+- Before accepting `no_issue_found` or `ruled_out` for cross-window UI redressing, reject closure evidence that cites popup-as-tab behavior, ignored geometry, unavailable OS-level input, or only a manual control click; keep the exact two-click path `needs_follow_up`. A successfully executed protected consent, approval, or grant must be impact-calibrated, not dismissed because it is idempotent, pre-seeded, or issues no immediate token or data.
+
 **Exploitation and Validation**
 - Proof-of-concept development
 - Impact demonstration
