@@ -45,23 +45,3 @@ repos:
     hooks:
       - id: bandit
         args: [-c, pyproject.toml]
-
-  # Additional Python code quality checks
-  - repo: https://github.com/asottile/pyupgrade
-    rev: v3.21.2
-    hooks:
-      - id: pyupgrade
-        args: [--py312-plus]
-
-ci:
-  autofix_commit_msg: |
-    [pre-commit.ci] auto fixes from pre-commit.com hooks
-
-    for more information, see https://pre-commit.ci
-  autofix_prs: true
-  autoupdate_branch: ""
-  autoupdate_commit_msg: "[pre-commit.ci] pre-commit autoupdate"
-  autoupdate_schedule: weekly
-  # pre-commit.ci cannot run `language: system` hooks; mypy runs via `make check-all`.
-  skip: [mypy]
-  submodules: false
