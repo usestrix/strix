@@ -15,7 +15,11 @@ from typing import TYPE_CHECKING, Any
 
 from agents.model_settings import ModelSettings
 from agents.models.interface import ModelTracing
-from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+from openai.types.responses import (
+    ResponseOutputMessage,
+    ResponseOutputText,
+    ResponseReasoningItem,
+)
 
 from strix.config import load_settings
 from strix.config.models import StrixProvider
@@ -288,15 +292,22 @@ def _checkpoint_item(summary: str) -> dict[str, Any]:
 
 def _extract_text(response: ModelResponse) -> str:
     parts: list[str] = []
+    reasoning: list[str] = []
     for item in response.output:
-        if not isinstance(item, ResponseOutputMessage):
-            continue
-        parts.extend(
-            chunk.text
-            for chunk in item.content
-            if isinstance(chunk, ResponseOutputText) and chunk.text
-        )
-    return "".join(parts)
+        if isinstance(item, ResponseOutputMessage):
+            parts.extend(
+                chunk.text
+                for chunk in item.content
+                if isinstance(chunk, ResponseOutputText) and chunk.text
+            )
+        elif isinstance(item, ResponseReasoningItem):
+            reasoning.extend(summary.text for summary in item.summary if summary.text)
+    if parts or not reasoning:
+        return "".join(parts)
+    # Reasoning models can spend the whole output budget thinking and return no
+    # message; their reasoning is a degraded but usable summary.
+    logger.warning("compaction summary had no output text; using reasoning text")
+    return "\n".join(reasoning)
 
 
 async def _summarize(model: str, prompt: str, max_tokens: int) -> str | None:
