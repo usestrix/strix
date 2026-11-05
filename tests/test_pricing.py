@@ -253,12 +253,16 @@ def test_resolver_uses_provider_when_bare_entry_has_one() -> None:
 
 def test_resolver_does_not_guess_between_differently_priced_providers() -> None:
     original = litellm.model_cost
+    # Real catalog entries always carry ``litellm_provider``; without it the native
+    # route could never match and this guard would not exercise the preference.
     litellm.model_cost = {
         "provider-a/example": {
+            "litellm_provider": "provider-a",
             "input_cost_per_token": 1.0,
             "output_cost_per_token": 2.0,
         },
         "provider-b/example": {
+            "litellm_provider": "provider-b",
             "input_cost_per_token": 3.0,
             "output_cost_per_token": 4.0,
         },
@@ -266,6 +270,56 @@ def test_resolver_does_not_guess_between_differently_priced_providers() -> None:
     try:
         resolve_litellm_model.cache_clear()
         assert resolve_litellm_model("example") is None
+    finally:
+        litellm.model_cost = original
+        resolve_litellm_model.cache_clear()
+
+
+def test_resolver_prefers_native_provider_over_aggregator() -> None:
+    # The same model re-listed by an aggregator (which sorts first) and by its
+    # first-party provider at the same price. The resolver must return the
+    # native listing, not the alphabetically first aggregator key.
+    original = litellm.model_cost
+    litellm.model_cost = {
+        "openrouter/x-ai/grok-4.5": {
+            "litellm_provider": "openrouter",
+            "input_cost_per_token": 2e-06,
+            "output_cost_per_token": 6e-06,
+        },
+        "xai/grok-4.5": {
+            "litellm_provider": "xai",
+            "input_cost_per_token": 2e-06,
+            "output_cost_per_token": 6e-06,
+        },
+    }
+    try:
+        resolve_litellm_model.cache_clear()
+        assert resolve_litellm_model("grok-4.5") == "xai/grok-4.5"
+    finally:
+        litellm.model_cost = original
+        resolve_litellm_model.cache_clear()
+
+
+def test_resolver_does_not_guess_when_a_native_route_exists_but_prices_differ() -> None:
+    # The native preference only breaks ties between routes that price the model the
+    # same. When an aggregator charges differently, the cost depends on the route and
+    # the resolver still declines to guess, as it did before the native preference.
+    original = litellm.model_cost
+    litellm.model_cost = {
+        "deepinfra/x/example-model": {
+            "litellm_provider": "deepinfra",
+            "input_cost_per_token": 1e-06,
+            "output_cost_per_token": 2e-06,
+        },
+        "example/example-model": {
+            "litellm_provider": "example",
+            "input_cost_per_token": 5e-06,
+            "output_cost_per_token": 9e-06,
+        },
+    }
+    try:
+        resolve_litellm_model.cache_clear()
+        assert resolve_litellm_model("example-model") is None
     finally:
         litellm.model_cost = original
         resolve_litellm_model.cache_clear()
