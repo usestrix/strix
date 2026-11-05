@@ -11,7 +11,7 @@ import pytest
 
 from strix.core.inputs import build_root_task, build_scope_context
 from strix.interface.scan_setup import build_targets_info
-from strix.interface.utils import infer_target_type, stage_api_specs
+from strix.interface.utils import infer_target_type, stage_api_specs, write_fetched_collection
 
 
 OPENAPI = {
@@ -78,6 +78,27 @@ def test_infer_target_type_rejects_empty_postman_uri() -> None:
         infer_target_type("postman://")
 
 
+def test_infer_target_type_rejects_path_traversal_in_postman_collection_uid() -> None:
+    # Security regression: requests collapses ".." in a URL path before sending
+    # the request, so an unvalidated collection_uid turned `GET
+    # /collections/{uid}` into a confused-deputy request against an arbitrary
+    # Postman API endpoint, authenticated with the caller's own POSTMAN_API_KEY.
+    with pytest.raises(ValueError, match="Invalid Postman collection id"):
+        infer_target_type("postman://x/../../workspaces")
+
+
+def test_infer_target_type_rejects_path_traversal_in_postman_environment_uid() -> None:
+    with pytest.raises(ValueError, match="Invalid Postman environment id"):
+        infer_target_type("postman://coll-uid?env=../../users/me")
+
+
+def test_infer_target_type_rejects_at_sign_in_postman_uid() -> None:
+    # Guards against a uid engineered to change the request's authority/host
+    # component if this ever ends up interpolated somewhere URL-relative.
+    with pytest.raises(ValueError, match="Invalid Postman collection id"):
+        infer_target_type("postman://evil.example@trusted.example")
+
+
 def test_infer_target_type_parses_postman_environment() -> None:
     _ttype, details = infer_target_type("postman://coll-uid?env=env-uid")
     assert details["collection_uid"] == "coll-uid"
@@ -87,6 +108,19 @@ def test_infer_target_type_parses_postman_environment() -> None:
 def test_infer_target_type_postman_without_env_omits_key() -> None:
     _ttype, details = infer_target_type("postman://coll-uid")
     assert "environment_uid" not in details
+
+
+def test_write_fetched_collection_is_not_world_readable() -> None:
+    # Security regression: a fetched Postman collection can carry saved auth
+    # headers/tokens. It used to be written with the default umask (typically
+    # world-readable on a shared host); it must be 0600 like the codebase's
+    # other secret-bearing files.
+    path_str = write_fetched_collection({"info": {"name": "x"}}, "world-readable-test-uid")
+    try:
+        mode = Path(path_str).stat().st_mode & 0o777
+        assert mode == 0o600, f"expected 0600, got {oct(mode)}"
+    finally:
+        Path(path_str).unlink(missing_ok=True)
 
 
 def test_build_targets_info_records_title_and_base_urls(tmp_path: Path) -> None:
