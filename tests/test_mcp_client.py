@@ -960,6 +960,10 @@ async def test_call_mcp_coerces_json_string_arguments() -> None:
     assert out == {"type": "text", "text": "routed:read_file"}
 
 
+def test_call_mcp_arguments_declare_an_object_type() -> None:
+    assert call_mcp.params_json_schema["properties"]["arguments"]["type"] == "object"
+
+
 @pytest.mark.asyncio
 async def test_call_mcp_errors_on_unparseable_string_arguments() -> None:
     registry = McpRegistry()

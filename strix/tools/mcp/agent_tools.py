@@ -26,9 +26,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from agents import RunContextWrapper, function_tool
+from pydantic import Field
 
 from strix.tools.mcp.client import _errored_tool_output
 from strix.tools.mcp.naming import namespaced_tool_name
@@ -259,7 +260,7 @@ async def call_mcp(
     ctx: RunContextWrapper,
     connection: str,
     tool: str,
-    arguments: Any = None,
+    arguments: Annotated[Any, Field(json_schema_extra={"type": "object"})] = None,
 ) -> Any:
     """Call one tool on one MCP connection and return its result.
 
@@ -287,10 +288,10 @@ async def call_mcp(
         "argument names to values, or none. Call get_mcp_tool_schema for the schema."
     )
     if isinstance(arguments, str):
-        # The ``arguments`` parameter is schema-less (an open object is not
-        # expressible as a strict tool schema), so some models serialize it as a
-        # JSON string instead of a bare object. Accept a string that decodes to an
-        # object so a correct call is not rejected over its encoding.
+        # The ``arguments`` parameter is an open object with no declared
+        # properties, so some models serialize it as a JSON string instead of a
+        # bare object. Accept a string that decodes to an object so a correct
+        # call is not rejected over its encoding.
         stripped = arguments.strip()
         try:
             arguments = json.loads(stripped) if stripped else {}
