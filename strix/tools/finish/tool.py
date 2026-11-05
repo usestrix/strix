@@ -203,8 +203,10 @@ async def finish_scan(
        should have a coverage entry; anything still open should be a
        ``needs_follow_up`` row, not a silent omission. If a significant
        surface has no entry at all, dispatch an agent to cover it or
-       record it as ``needs_follow_up`` before finishing. The response
-       from this tool reports coverage counts and any unresolved rows.
+       record it as ``needs_follow_up`` before finishing. Open
+       ``needs_follow_up`` rows are not a resting state: this tool refuses
+       to finish until each one has been retried up to 3 times. The
+       response from this tool reports coverage counts and any unresolved rows.
 
     **Calling this multiple times overwrites the previous report.**
     Make the single call comprehensive.
@@ -333,6 +335,29 @@ async def finish_scan(
             ensure_ascii=False,
             default=str,
         )
+
+    if parent_id is None and not (coordinator is not None and coordinator.reserve_stopped):
+        from strix.tools.coverage.tools import MAX_FOLLOW_UP_RETRIES, claim_follow_up_retries
+
+        follow_ups = await asyncio.to_thread(claim_follow_up_retries)
+        if follow_ups:
+            return json.dumps(
+                {
+                    "success": False,
+                    "scan_completed": False,
+                    "error": (
+                        f"{len(follow_ups)} coverage row(s) are still needs_follow_up. Each "
+                        f"gets up to {MAX_FOLLOW_UP_RETRIES} retries before the scan can "
+                        "finish. Spawn a subagent for each row with its entry_id and "
+                        "evidence, and have it attack the gap the evidence names with a "
+                        "different method than the one that stalled, then record the "
+                        "result with update_coverage. Call finish_scan again afterwards."
+                    ),
+                    "follow_ups": follow_ups,
+                },
+                ensure_ascii=False,
+                default=str,
+            )
 
     result = await asyncio.to_thread(
         _do_finish,
