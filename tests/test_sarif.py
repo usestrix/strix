@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from strix.report.sarif import write_sarif
+from strix.report.sarif import _class_keyword, write_sarif
 
 
 if TYPE_CHECKING:
@@ -176,6 +176,43 @@ def test_write_sarif_adds_logical_location_for_endpoint(tmp_path: Path) -> None:
         if entry.get("kind") == "endpoint"
     ]
     assert logical == [{"fullyQualifiedName": "GET /api/users/{id}", "kind": "endpoint"}]
+
+
+def test_class_keyword_prefers_specific_regex_dos_over_generic_dos() -> None:
+    # "regex denial of service" is the more specific class and *contains* the
+    # substring "denial of service"; first-match-wins keyword selection must
+    # return the specific class rather than let the generic entry shadow it.
+    assert _class_keyword("Regex Denial of Service in email validator") == "regex denial of service"
+    # A genuinely generic DoS finding still resolves to the generic class.
+    assert _class_keyword("Denial of Service via unbounded upload") == "denial of service"
+
+
+def test_write_sarif_regex_dos_not_merged_into_generic_dos(tmp_path: Path) -> None:
+    # Two locationless findings on the same CWE are separated only by their
+    # vuln-class keyword (the synth_class component of the primary fingerprint).
+    # If ReDoS is misclassified as generic DoS the two collapse to one
+    # fingerprint and a SARIF consumer silently dedups a real finding away.
+    write_sarif(
+        tmp_path,
+        [
+            _finding(
+                id="vuln-redos",
+                title="Regex Denial of Service in email validator",
+                cwe="CWE-400",
+                code_locations=None,
+            ),
+            _finding(
+                id="vuln-dos",
+                title="Denial of Service via unbounded upload",
+                cwe="CWE-400",
+                code_locations=None,
+            ),
+        ],
+    )
+    results = _read(tmp_path)["runs"][0]["results"]
+    assert len(results) == 2
+    fingerprints = {r["partialFingerprints"]["primaryLocationLineHash"] for r in results}
+    assert len(fingerprints) == 2
 
 
 def test_write_sarif_synthetic_finding_falls_back_to_resource_logical_location(
