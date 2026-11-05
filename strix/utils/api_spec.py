@@ -17,11 +17,15 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
 import requests
 import yaml
+
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 logger = logging.getLogger(__name__)
@@ -208,6 +212,58 @@ def _postman_base_urls(raw: dict[str, Any], extra_variables: dict[str, str] | No
     hosts: list[str] = []
     _walk_postman_hosts(raw.get("item"), variables, hosts)
     return _absolute_urls(sorted(set(hosts)))
+
+
+def _postman_variable_references(value: Any) -> set[str]:
+    references: set[str] = set()
+    pending = [value]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, str):
+            references.update(match.group(1) for match in _POSTMAN_VAR_PATTERN.finditer(node))
+        elif isinstance(node, dict):
+            pending.extend(cast("dict[str, Any]", node).values())
+        elif isinstance(node, list):
+            pending.extend(cast("Sequence[Any]", node))
+    return references
+
+
+def with_postman_environment(raw: dict[str, Any], environment: dict[str, str]) -> dict[str, Any]:
+    """Carry referenced environment values in the collection's variable block.
+
+    Preserve request templates and collection metadata. Only include environment
+    values referenced by ``{{name}}`` templates, including dependencies of used
+    variables; unused environment credentials must not enter the sandbox.
+    """
+    variables = postman_variables(raw) | environment
+    pending = list(_postman_variable_references({k: v for k, v in raw.items() if k != "variable"}))
+    referenced: set[str] = set()
+    while pending:
+        name = pending.pop()
+        if name in referenced:
+            continue
+        referenced.add(name)
+        pending.extend(_postman_variable_references(variables.get(name, "")) - referenced)
+
+    selected = {name: environment[name] for name in sorted(referenced & environment.keys())}
+    if not selected:
+        return raw
+    raw_entries = raw.get("variable")
+    entries = cast("Sequence[Any]", raw_entries) if isinstance(raw_entries, list) else ()
+    merged: list[Any] = []
+    for entry in entries:
+        if isinstance(entry, dict):
+            variable = cast("dict[str, Any]", entry)
+            key = variable.get("key")
+            if key is not None and str(key) in selected:
+                merged.append({**variable, "value": selected[str(key)]})
+                continue
+        merged.append(entry)
+    existing = postman_variables(raw)
+    merged.extend(
+        {"key": name, "value": value} for name, value in selected.items() if name not in existing
+    )
+    return {**raw, "variable": merged}
 
 
 def spec_base_urls(
