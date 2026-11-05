@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import json
 import logging
 import re
 import uuid
@@ -74,6 +75,7 @@ _IMAGE_REJECTION = re.compile(
     re.IGNORECASE,
 )
 _MAX_COMPACTIONS_PER_CYCLE = 2
+_TOOL_ARGUMENT_KEYS = frozenset({"action_input", "arguments", "input", "parameters", "params"})
 
 
 @cache
@@ -633,6 +635,7 @@ async def _run_until_lifecycle(
             await coordinator.reset_recovery(agent_id)
             return result
 
+        serialized_tool_call = _looks_like_unexecuted_tool_call(result)
         recoveries = await coordinator.record_recovery(agent_id)
         _log_recovery(
             agent_id,
@@ -641,6 +644,7 @@ async def _run_until_lifecycle(
             recovery_limit,
             interactive=interactive,
             silent_yield=silent_yield,
+            serialized_tool_call=serialized_tool_call,
         )
         if recoveries >= recovery_limit:
             return await _exhausted_recovery(coordinator, agent_id, result, interactive=interactive)
@@ -653,6 +657,7 @@ async def _run_until_lifecycle(
             limit=recovery_limit,
             interactive=interactive,
             silent_yield=silent_yield,
+            serialized_tool_call=serialized_tool_call,
         )
 
 
@@ -948,6 +953,7 @@ def _log_recovery(
     *,
     interactive: bool,
     silent_yield: bool,
+    serialized_tool_call: bool,
 ) -> None:
     if silent_yield:
         logger.warning(
@@ -958,10 +964,15 @@ def _log_recovery(
             limit,
         )
         return
+    recovery_reason = (
+        "produced tool-call-shaped final output as plain text"
+        if serialized_tool_call
+        else "ended a turn without a lifecycle tool call"
+    )
     logger.warning(
-        "agent %s ended a turn without a lifecycle tool call (interactive=%s); "
-        "forcing tool continuation (%d/%d): %s",
+        "agent %s %s (interactive=%s); forcing tool continuation (%d/%d): %s",
         agent_id,
+        recovery_reason,
         interactive,
         attempt,
         limit,
@@ -987,6 +998,52 @@ def _final_output_preview(result: RunResultBase | None) -> str:
     return text[:300]
 
 
+def _looks_like_unexecuted_tool_call(result: RunResultBase | None) -> bool:
+    final_output = getattr(result, "final_output", None)
+    if final_output is None:
+        return False
+    if isinstance(final_output, str):
+        parsed = _parse_json_final_output(final_output)
+        return parsed is not None and _is_tool_call_payload(parsed)
+    return _is_tool_call_payload(final_output)
+
+
+def _parse_json_final_output(text: str) -> Any | None:
+    stripped = text.strip()
+    if not stripped:
+        return None
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if len(lines) >= 2 and lines[-1].strip() == "```":
+            stripped = "\n".join(lines[1:-1]).strip()
+    try:
+        return json.loads(stripped)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_tool_call_payload(payload: Any) -> bool:
+    if isinstance(payload, list):
+        return any(_is_tool_call_payload(item) for item in payload)
+    if not isinstance(payload, dict):
+        return False
+
+    tool_calls = payload.get("tool_calls")
+    if isinstance(tool_calls, list) and any(_is_tool_call_payload(item) for item in tool_calls):
+        return True
+
+    function = payload.get("function")
+    if isinstance(function, dict) and _is_tool_call_payload(function):
+        return True
+
+    tool_name = payload.get("action") or payload.get("tool") or payload.get("name")
+    return (
+        isinstance(tool_name, str)
+        and bool(tool_name.strip())
+        and any(key in payload for key in _TOOL_ARGUMENT_KEYS)
+    )
+
+
 async def _append_tool_required_message(
     *,
     session: Session | None,
@@ -995,6 +1052,7 @@ async def _append_tool_required_message(
     limit: int,
     interactive: bool,
     silent_yield: bool = False,
+    serialized_tool_call: bool = False,
     root_finish_tool: str = "finish_scan",
 ) -> list[dict[str, str]]:
     finish_tool = root_finish_tool if context.get("parent_id") is None else "agent_finish"
@@ -1004,6 +1062,16 @@ async def _append_tool_required_message(
             "their last message, so they would be handed a silent turn. Plain text is the "
             "only channel to the user: write your reply as plain text now, then call "
             f"wait_for_user. This is recovery attempt {attempt}/{limit}."
+        )
+    elif serialized_tool_call:
+        message = (
+            "Your previous response looked like a tool call, but it was returned as plain text "
+            "instead of being executed. Plain-text tool-call JSON is not executed by Strix. "
+            "Continue immediately and call exactly one tool using the tool-calling interface. "
+            f"If your work is complete, call {finish_tool}. "
+            "If you are blocked waiting for another agent, call wait_for_agents. "
+            "Otherwise call the intended execution or planning tool. "
+            f"This is recovery attempt {attempt}/{limit}."
         )
     elif interactive:
         message = (
