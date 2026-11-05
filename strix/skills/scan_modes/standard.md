@@ -51,6 +51,7 @@ Test each attack surface methodically. Spawn focused subagents for different are
 - File upload bypass attempts
 - Search and filter parameter manipulation
 - Redirect and URL parameter handling
+- Client-side path traversal: client-rendered front end (SPA in React/Vue/Angular/Svelte/Next.js, or any page building a fetch/XHR/axios URL or client router navigation from the URL path, query, or hash) → load `client_side_path_traversal` and test for EXPLOITABLE CSPT (a decoded `../` reaching no request sink with real impact is a false positive)
 
 **Authentication & Session**
 - Brute force protection
