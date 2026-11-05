@@ -211,7 +211,7 @@ Strix Cloud:
         "--scan-mode",
         type=str,
         choices=["quick", "standard", "deep"],
-        default="deep",
+        default=None,
         help=(
             "Scan mode: "
             "'quick' for fast CI/CD checks, "
@@ -314,6 +314,8 @@ Strix Cloud:
     )
 
     args = parser.parse_args()
+    args.scan_mode_explicit = args.scan_mode is not None
+    args.scan_mode = args.scan_mode or "deep"
     # Startup-resolved state lives alongside the parsed flags. The full schema
     # is established here so downstream code reads attributes directly.
     args.needs_setup = False
@@ -530,7 +532,7 @@ def load_resume_state(args: argparse.Namespace) -> None:
     if state.get("diff_scope"):
         args.diff_scope = state.get("diff_scope")
     persisted_scan_mode = state.get("scan_mode")
-    if persisted_scan_mode and args.scan_mode == "deep":
+    if persisted_scan_mode and not getattr(args, "scan_mode_explicit", False):
         args.scan_mode = persisted_scan_mode
     agents_path = runtime_state_dir(run_dir) / "agents.json"
     if not agents_path.exists():
