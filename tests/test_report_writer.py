@@ -265,3 +265,71 @@ def test_render_vulnerability_md_surfaces_calibration_metadata() -> None:
     assert "## Confidence Rationale" in md
     assert "## What Would Change This Severity" in md
     assert "## Fix Verification" in md
+
+
+def test_format_final_scan_result_strips_duplicated_section_headings() -> None:
+    """The agent is asked for section prose and often prepends the same heading
+    the template already emits, doubling every H1 (# Executive Summary followed
+    by # Executive Summary). The formatter must strip the duplicated leading
+    heading while leaving the body — and any legitimately repeated heading later
+    in the body — intact."""
+    from strix.report.state import ReportState
+
+    state = ReportState(run_name="t")
+    result = state._format_final_scan_result(
+        {
+            "executive_summary": "# Executive Summary\n\nThe app is broadly sound.",
+            "methodology": "# Methodology\n\nBlack-box, GET/HEAD only.",
+            "technical_analysis": "# Technical Analysis\n\n## Target Profile\n\nDetails.",
+            "recommendations": "# Recommendations\n\n## Immediate\n\nFix CSP.",
+        }
+    )
+    # Each template heading appears exactly once.
+    for heading in (
+        "# Executive Summary",
+        "# Methodology",
+        "# Technical Analysis",
+        "# Recommendations",
+    ):
+        assert result.count(heading) == 1, f"{heading} doubled:\n{result}"
+    # Bodies and genuine sub-headings survive.
+    assert "The app is broadly sound." in result
+    assert "## Target Profile" in result
+    assert "## Immediate" in result
+
+
+def test_format_final_scan_result_keeps_content_without_headings() -> None:
+    """Content that does not repeat the heading is left alone."""
+    from strix.report.state import ReportState
+
+    state = ReportState(run_name="t")
+    result = state._format_final_scan_result(
+        {
+            "executive_summary": "The app is broadly sound.",
+            "methodology": "Black-box.",
+            "technical_analysis": "Some analysis.",
+            "recommendations": "Fix things.",
+        }
+    )
+    assert result.count("# Executive Summary") == 1
+    assert "The app is broadly sound." in result
+
+
+def test_format_final_scan_result_keeps_later_repeated_heading() -> None:
+    """Only the FIRST line is examined: a heading repeated later in the body is
+    legitimate content (e.g. a quoted section) and must be preserved."""
+    from strix.report.state import ReportState
+
+    state = ReportState(run_name="t")
+    body = "Intro.\n\n# Executive Summary\n\nA quoted recap below.\n"
+    result = state._format_final_scan_result(
+        {
+            "executive_summary": body,
+            "methodology": "m",
+            "technical_analysis": "t",
+            "recommendations": "r",
+        }
+    )
+    # Template heading + the in-body repeat = two occurrences, not three.
+    assert result.count("# Executive Summary") == 2
+    assert "A quoted recap below." in result
