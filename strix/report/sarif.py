@@ -37,9 +37,12 @@ Design notes:
   * When a repository context is supplied (repo URL / commit / branch),
     the run carries ``versionControlProvenance`` + ``automationDetails``
     so code-scanning can bind alerts to the scanned commit and branch.
-  * Findings without safe locations still appear in the SARIF output,
-    anchored to SECURITY.md and flagged via
-    ``properties.synthetic_location`` rather than being dropped silently.
+  * Findings without safe locations still appear in the SARIF output.
+    In a run over source code they are anchored to SECURITY.md and flagged
+    via ``properties.synthetic_location`` rather than being dropped
+    silently. A run with no source target (DAST: URLs, domains, IPs) has no
+    repository for a file to resolve against, so its locationless findings
+    carry only their ``logicalLocations`` (endpoint / resource) anchor.
   * Coverage rides in the same document as non-failing results (``kind`` of
     ``pass`` / ``notApplicable`` / ``open``), and run completeness on
     ``run.invocations``. Consumers that only want alerts filter on
@@ -204,6 +207,7 @@ def build_sarif_report(
     tool_version: str | None = None,
     repository_context: dict[str, Any] | None = None,
     coverage: dict[str, Any] | None = None,
+    synthetic_anchor: bool = True,
 ) -> dict[str, Any]:
     """Return a SARIF 2.1.0 document for findings.
 
@@ -226,6 +230,11 @@ def build_sarif_report(
     run-properties summary the UI can't render, and (b) carry the
     partialFingerprints + class hash so cross-run dismissal stickiness
     works for them.
+
+    ``synthetic_anchor=False`` is for runs with no source target (DAST):
+    there is no repository for SECURITY.md to resolve against, so a
+    locationless finding that has a logical location (endpoint or
+    resource) carries only that. Its fingerprints are unchanged.
     """
     rules_by_id: dict[str, dict[str, Any]] = {}
     rule_index_by_id: dict[str, int] = {}
@@ -234,7 +243,9 @@ def build_sarif_report(
     dropped_unsafe_location_findings: list[dict[str, Any]] = []
 
     for report in vulnerability_reports:
-        locations, is_synthetic, dropped_location_count = _build_locations(report)
+        locations, is_locationless, is_synthetic, dropped_location_count = _build_locations(
+            report, synthetic_anchor=synthetic_anchor
+        )
         if is_synthetic:
             synthetic_location_count += 1
 
@@ -253,6 +264,7 @@ def build_sarif_report(
                 rule_index_by_id[rule_id],
                 report,
                 locations,
+                is_locationless=is_locationless,
                 is_synthetic=is_synthetic,
             )
         )
@@ -309,6 +321,7 @@ def write_sarif_report(
     tool_version: str | None = None,
     repository_context: dict[str, Any] | None = None,
     coverage: dict[str, Any] | None = None,
+    synthetic_anchor: bool = True,
 ) -> None:
     """Write a SARIF report to disk, creating parent directories first.
 
@@ -322,6 +335,7 @@ def write_sarif_report(
         tool_version=tool_version,
         repository_context=repository_context,
         coverage=coverage,
+        synthetic_anchor=synthetic_anchor,
     )
     tmp_path = output_path.with_name(f"{output_path.name}.{os.getpid()}.tmp")
     try:
@@ -340,6 +354,7 @@ def write_sarif(
     tool_version: str | None = None,
     repository_context: dict[str, Any] | None = None,
     coverage: dict[str, Any] | None = None,
+    synthetic_anchor: bool = True,
     filename: str = "findings.sarif",
 ) -> Path:
     """Write ``findings.sarif`` alongside existing outputs in ``run_dir``.
@@ -355,6 +370,7 @@ def write_sarif(
         tool_version=tool_version,
         repository_context=repository_context,
         coverage=coverage,
+        synthetic_anchor=synthetic_anchor,
     )
     logger.info(
         "Wrote SARIF 2.1.0 report: %s (%d results)",
@@ -462,10 +478,13 @@ def _build_result(
     report: dict[str, Any],
     locations: list[dict[str, Any]],
     *,
+    is_locationless: bool = False,
     is_synthetic: bool = False,
 ) -> dict[str, Any]:
     """Build one SARIF result using validated locations.
 
+    ``is_locationless`` marks a finding with no real code location; its
+    fingerprint is computed the same way whether or not it was anchored.
     ``is_synthetic`` flags results whose location is the SECURITY.md
     anchor rather than a real code location — surfaces as
     ``properties.synthetic_location: true`` so reviewers and downstream
@@ -494,7 +513,7 @@ def _build_result(
     # this report already carries (CWE, primary code location, route
     # tuple) — NOT from the LLM-authored title or message body, which
     # vary cosmetically across runs of the same finding.
-    fp = _primary_fingerprint(rule_id, report, locations, is_synthetic=is_synthetic)
+    fp = _primary_fingerprint(rule_id, report, locations, is_synthetic=is_locationless)
     if fp:
         result["partialFingerprints"] = {"primaryLocationLineHash": fp}
     # File-independent class fingerprint as a sibling property: lets
@@ -768,33 +787,41 @@ def _synthetic_location() -> dict[str, Any]:
     }
 
 
-def _build_locations(report: dict[str, Any]) -> tuple[list[dict[str, Any]], bool, int]:
-    """Return ``(locations, is_synthetic, dropped_count)`` for a finding.
+def _build_locations(
+    report: dict[str, Any], *, synthetic_anchor: bool = True
+) -> tuple[list[dict[str, Any]], bool, bool, int]:
+    """Return ``(locations, is_locationless, is_synthetic, dropped_count)``.
 
     Physical locations come from validated ``code_locations``. When none
-    are safe, the result is anchored to SECURITY.md (``is_synthetic``).
+    are safe (``is_locationless``), the result is anchored to SECURITY.md
+    (``is_synthetic``) unless ``synthetic_anchor`` is off and the finding
+    has a logical location to stand on instead.
     An ``endpoint`` (typical of DAST findings) is added as a
     ``logicalLocations`` entry; a locationless, endpoint-less finding
     gets a ``resource`` logical location carrying the target so the
     finding keeps a human-meaningful anchor.
     """
     physical, dropped_location_count = _build_physical_locations(report.get("code_locations"))
-    is_synthetic = not physical
-    locations: list[dict[str, Any]] = list(physical) if physical else [_synthetic_location()]
+    is_locationless = not physical
 
+    logical: list[dict[str, Any]] = []
     endpoint = _string_value(report.get("endpoint"))
     if endpoint:
-        locations.append(
-            {"logicalLocations": [{"fullyQualifiedName": endpoint, "kind": "endpoint"}]}
-        )
-    elif is_synthetic:
+        logical.append({"logicalLocations": [{"fullyQualifiedName": endpoint, "kind": "endpoint"}]})
+    elif is_locationless:
         resource = _string_value(report.get("target")) or _string_value(report.get("title"))
         if resource:
-            locations.append(
+            logical.append(
                 {"logicalLocations": [{"fullyQualifiedName": resource, "kind": "resource"}]}
             )
 
-    return locations, is_synthetic, dropped_location_count
+    is_synthetic = is_locationless and (synthetic_anchor or not logical)
+    locations: list[dict[str, Any]] = list(physical)
+    if is_synthetic:
+        locations.append(_synthetic_location())
+    locations.extend(logical)
+
+    return locations, is_locationless, is_synthetic, dropped_location_count
 
 
 def _build_physical_locations(raw_locations: Any) -> tuple[list[dict[str, Any]], int]:
@@ -982,10 +1009,14 @@ def _primary_fingerprint(
     vulnerability class on the same rule_id always lands on the same
     hash, and two different classes on the same rule_id don't collide.
 
+    Locationless findings hash with the SECURITY.md URI whether or not
+    the anchor was emitted, so turning the anchor off does not re-key
+    existing alerts.
+
     Returns None when no anchor is available AND not synthetic.
     """
     primary_physical = _first_physical_location(locations)
-    uri = ""
+    uri = _SYNTHETIC_LOCATION_URI if is_synthetic and not primary_physical else ""
     start_line: int | None = None
     if primary_physical:
         uri = (primary_physical.get("artifactLocation") or {}).get("uri", "") or ""

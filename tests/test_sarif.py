@@ -198,6 +198,63 @@ def test_write_sarif_synthetic_finding_falls_back_to_resource_logical_location(
     assert logical == [{"fullyQualifiedName": "https://api.example.com", "kind": "resource"}]
 
 
+def _dast_finding(**overrides: Any) -> dict[str, Any]:
+    return _finding(code_locations=None, endpoint="/insecure_direct_object_ref_1.php", **overrides)
+
+
+def test_write_sarif_without_synthetic_anchor_keeps_only_the_logical_location(
+    tmp_path: Path,
+) -> None:
+    # A DAST run has no repository, so a locationless finding must not point
+    # at a SECURITY.md that does not exist in any scanned commit.
+    write_sarif(tmp_path, [_dast_finding()], synthetic_anchor=False)
+    run = _read(tmp_path)["runs"][0]
+    result = run["results"][0]
+    assert result["locations"] == [
+        {
+            "logicalLocations": [
+                {"fullyQualifiedName": "/insecure_direct_object_ref_1.php", "kind": "endpoint"}
+            ]
+        }
+    ]
+    assert "synthetic_location" not in result["properties"]
+    assert "syntheticLocationCount" not in run.get("properties", {})
+
+
+def test_write_sarif_without_synthetic_anchor_keeps_the_fingerprints(tmp_path: Path) -> None:
+    anchored, unanchored = tmp_path / "a", tmp_path / "b"
+    write_sarif(anchored, [_dast_finding()])
+    write_sarif(unanchored, [_dast_finding()], synthetic_anchor=False)
+    a = _read(anchored)["runs"][0]["results"][0]
+    b = _read(unanchored)["runs"][0]["results"][0]
+    assert a["partialFingerprints"] == b["partialFingerprints"]
+    assert a["properties"]["strix_vuln_class_hash"] == b["properties"]["strix_vuln_class_hash"]
+
+
+def test_write_sarif_without_synthetic_anchor_still_anchors_code_findings(
+    tmp_path: Path,
+) -> None:
+    write_sarif(tmp_path, [_finding()], synthetic_anchor=False)
+    location = _read(tmp_path)["runs"][0]["results"][0]["locations"][0]
+    assert location["physicalLocation"]["artifactLocation"]["uri"] == "app.py"
+
+
+def test_write_sarif_without_synthetic_anchor_keeps_it_when_nothing_else_anchors(
+    tmp_path: Path,
+) -> None:
+    # A result with no logical location either would otherwise be left with no
+    # location at all, so it keeps the SECURITY.md anchor.
+    write_sarif(
+        tmp_path,
+        [_finding(code_locations=None, endpoint=None, target=None, title=None)],
+        synthetic_anchor=False,
+    )
+    result = _read(tmp_path)["runs"][0]["results"][0]
+    uri = result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+    assert uri == "SECURITY.md"
+    assert result["properties"]["synthetic_location"] is True
+
+
 def test_write_sarif_emits_version_control_provenance(tmp_path: Path) -> None:
     write_sarif(
         tmp_path,
