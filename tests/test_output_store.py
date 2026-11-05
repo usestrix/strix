@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import re
+import tracemalloc
 
 import pytest
 
 from strix.tools.output_store import (
     WORKSPACE_SPILL_DIR,
+    _head_tail,
+    _take_prefix,
+    _take_suffix,
     bound_and_store,
     bound_text,
     configure_spill_writer,
@@ -154,3 +158,81 @@ async def test_workspace_preview_honours_byte_budget() -> None:
 
     assert WORKSPACE_SPILL_DIR in bounded
     assert len(bounded.encode("utf-8")) <= 2_000
+
+
+def test_take_prefix_boundary_cuts() -> None:
+    assert _take_prefix("", 10) == ""
+    assert _take_prefix("hello", 0) == ""
+    assert _take_prefix("hello", -5) == ""
+    assert _take_prefix("hello", 10) == "hello"
+
+    # Multibyte: 'café' -> 'caf' is 3 bytes, 'é' is 2 bytes (total 5 bytes)
+    assert _take_prefix("café", 4) == "caf"
+    assert _take_prefix("café", 5) == "café"
+
+    # 4-byte emoji: each '😀' is 4 bytes
+    assert _take_prefix("😀😃😄", 3) == ""
+    assert _take_prefix("😀😃😄", 4) == "😀"
+    assert _take_prefix("😀😃😄", 7) == "😀"
+    assert _take_prefix("😀😃😄", 8) == "😀😃"
+
+    # 3-byte CJK: '한국어' (each char is 3 bytes)
+    assert _take_prefix("한국어", 5) == "한"
+    assert _take_prefix("한국어", 6) == "한국"
+
+
+def test_take_suffix_boundary_cuts() -> None:
+    assert _take_suffix("", 10) == ""
+    assert _take_suffix("hello", 0) == ""
+    assert _take_suffix("hello", -5) == ""
+    assert _take_suffix("hello", 10) == "hello"
+
+    # Multibyte: 'café' -> 'é' is 2 bytes
+    assert _take_suffix("café", 2) == "é"
+    assert _take_suffix("café", 3) == "fé"
+
+    # 4-byte emoji:
+    assert _take_suffix("😀😃😄", 3) == ""
+    assert _take_suffix("😀😃😄", 4) == "😄"
+    assert _take_suffix("😀😃😄", 7) == "😄"
+    assert _take_suffix("😀😃😄", 8) == "😃😄"
+
+    # 3-byte CJK:
+    assert _take_suffix("한국어", 5) == "어"
+    assert _take_suffix("한국어", 6) == "국어"
+
+
+def test_head_tail_large_line_count_lazy_split() -> None:
+    # 50,000 lines should be bounded properly without errors
+    text = "\n".join(f"line-{i}" for i in range(50_000))
+    result = _head_tail(text, max_lines=20, max_bytes=100_000)
+    assert result is not None
+    head, tail, dropped_lines, dropped_bytes = result
+
+    assert head.startswith("line-0\nline-1")
+    assert tail.endswith("line-49999")
+    assert dropped_lines == 50_000 - 20
+    assert dropped_bytes > 0
+
+
+def test_fast_bounding_does_not_thrash_on_large_budgets() -> None:
+    # When taking a large slice (e.g. 50,000 bytes), the previous character loop
+    # iterated through 50,000 characters, calling char.encode() and appending each
+    # to a list, resulting in high heap churn (~500 KB peak traced memory).
+    # The fast path encodes and slices in C, keeping peak memory tightly bounded.
+    huge_text = "a" * 100_000
+    budget = 50_000
+
+    tracemalloc.start()
+    try:
+        prefix = _take_prefix(huge_text, budget)
+        suffix = _take_suffix(huge_text, budget)
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert len(prefix) == budget
+    assert len(suffix) == budget
+    # Fast path avoids per-character list/bytes allocations (< 250 KB vs ~500 KB previously).
+    assert peak < 250_000
+

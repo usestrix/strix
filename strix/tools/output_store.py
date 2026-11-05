@@ -49,28 +49,31 @@ def _byte_len(text: str) -> int:
 
 
 def _take_prefix(text: str, max_bytes: int) -> str:
-    budget = 0
-    out: list[str] = []
-    for char in text:
-        size = len(char.encode("utf-8"))
-        if budget + size > max_bytes:
-            break
-        out.append(char)
-        budget += size
-    return "".join(out)
+    if max_bytes <= 0 or not text:
+        return ""
+    # In UTF-8, every Unicode character encodes to at least 1 byte.
+    # Therefore, a prefix of at most max_bytes bytes cannot contain more than
+    # max_bytes characters.
+    candidate = text[:max_bytes]
+    raw = candidate.encode("utf-8")
+    if len(raw) <= max_bytes:
+        return candidate
+    # Slicing raw bytes and decoding with errors="ignore" safely drops
+    # any split multibyte sequence at the cutoff boundary.
+    return raw[:max_bytes].decode("utf-8", errors="ignore")
 
 
 def _take_suffix(text: str, max_bytes: int) -> str:
-    budget = 0
-    out: list[str] = []
-    for char in reversed(text):
-        size = len(char.encode("utf-8"))
-        if budget + size > max_bytes:
-            break
-        out.append(char)
-        budget += size
-    out.reverse()
-    return "".join(out)
+    if max_bytes <= 0 or not text:
+        return ""
+    # Suffix of at most max_bytes bytes cannot exceed max_bytes characters.
+    candidate = text[-max_bytes:]
+    raw = candidate.encode("utf-8")
+    if len(raw) <= max_bytes:
+        return candidate
+    # Slicing the tail and decoding with errors="ignore" safely drops
+    # any partial multibyte sequence at the leading split boundary.
+    return raw[-max_bytes:].decode("utf-8", errors="ignore")
 
 
 def _head_tail(
@@ -85,9 +88,9 @@ def _head_tail(
     ``max_bytes`` bounds the entire joined result; the largest of
     ``notice_templates`` (plus separators) is reserved before slicing.
     """
-    lines = text.split("\n")
     total_bytes = _byte_len(text)
-    if len(lines) <= max_lines and total_bytes <= max_bytes:
+    line_count = text.count("\n") + 1
+    if line_count <= max_lines and total_bytes <= max_bytes:
         return None
 
     # Reserve using the largest counts/path; ``+ 4`` covers the two "\n\n".
@@ -95,7 +98,7 @@ def _head_tail(
         max(
             _byte_len(
                 template.format(
-                    lines=len(lines),
+                    lines=line_count,
                     bytes=total_bytes,
                     path=_SAMPLE_WORKSPACE_PATH,
                 )
@@ -108,8 +111,8 @@ def _head_tail(
 
     head_lines = max(1, max_lines // 2)
     tail_lines = max_lines - head_lines
-    head = "\n".join(lines[:head_lines])
-    tail = "\n".join(lines[len(lines) - tail_lines :]) if tail_lines > 0 else ""
+    head = "\n".join(text.split("\n", head_lines)[:head_lines])
+    tail = "\n".join(text.rsplit("\n", tail_lines)[-tail_lines:]) if tail_lines > 0 else ""
 
     half_bytes = max(1, byte_budget // 2)
     if _byte_len(head) > half_bytes:
@@ -119,7 +122,7 @@ def _head_tail(
 
     # Count from the final slices; the byte pass may have dropped whole lines.
     kept_lines = len(head.split("\n")) + (len(tail.split("\n")) if tail else 0)
-    dropped_lines = max(0, len(lines) - kept_lines)
+    dropped_lines = max(0, line_count - kept_lines)
     dropped_bytes = max(0, total_bytes - _byte_len(head) - _byte_len(tail))
     return head, tail, dropped_lines, dropped_bytes
 
