@@ -1,0 +1,36 @@
+---
+title: "FreeLLMAPI"
+description: "Connect Strix to a FreeLLMAPI OpenAI-compatible gateway"
+---
+
+Use this setup when your FreeLLMAPI instance exposes an OpenAI-compatible API at
+`/v1`. It uses Strix's existing custom endpoint settings; no provider-specific
+code or additional package is required.
+
+## Setup
+
+Replace the model placeholder with the exact model ID advertised by your
+FreeLLMAPI instance. The `openai/` prefix tells Strix to use its OpenAI-compatible
+client; do not use a model ID guessed from another FreeLLMAPI deployment.
+
+```bash
+export STRIX_LLM="openai/<model-id-from-your-FreeLLMAPI-instance>"
+export LLM_API_BASE="${LLM_API_BASE:-http://127.0.0.1:8000/v1}"
+: "${LLM_API_KEY:?Set LLM_API_KEY in your environment}"
+```
+
+`LLM_API_BASE` defaults to the shared local gateway URL above and remains
+overridable through the environment. Supply `LLM_API_KEY` from your shell
+environment or secret manager; do not put a real token in source control or a
+checked-in config file.
+
+## Compatibility notes
+
+- The gateway must accept OpenAI-compatible chat-completions requests and the
+  model must return structured tool calls, which Strix agents require.
+- Strix uses chat completions by default for a custom `LLM_API_BASE`. If your
+  gateway requires the Responses API instead, configure `STRIX_API_TYPE` as
+  documented in [advanced configuration](/advanced/configuration).
+- The endpoint must be reachable from the process running Strix. If Strix itself
+  runs in a container, `127.0.0.1` refers to that container; use the gateway's
+  address reachable from it instead.
