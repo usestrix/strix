@@ -124,3 +124,41 @@ def test_named_resume_without_agent_state_is_an_error(
         cli_main.parse_arguments()
 
     assert "never reached its first agent snapshot" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("contents", [b"\xff", b'{"targets_info": 123}'])
+def test_headless_run_list_survives_a_damaged_sibling_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    contents: bytes,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    base = tmp_path / "strix_runs"
+    _write_run(base, "healthy_1111")
+    _write_run(base, "damaged_2222")
+    (base / "damaged_2222" / "run.json").write_bytes(contents)
+    monkeypatch.setattr(sys, "argv", ["strix", "-n", "--resume"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli_main.parse_arguments()
+
+    assert exc.value.code == 2
+    error = capsys.readouterr().err
+    assert "--resume needs a run name in headless mode" in error
+    assert "healthy_1111" in error
+
+
+def test_named_resume_reports_undecodable_metadata_as_a_usage_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_run(tmp_path / "strix_runs", "damaged_1111")
+    (tmp_path / "strix_runs" / "damaged_1111" / "run.json").write_bytes(b"\xff")
+    monkeypatch.setattr(sys, "argv", ["strix", "-n", "--resume", "damaged_1111"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli_main.parse_arguments()
+
+    assert exc.value.code == 2
+    assert "run.json unreadable" in capsys.readouterr().err
