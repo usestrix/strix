@@ -252,12 +252,14 @@ def make_model_settings(
     extra_headers: dict[str, str] | None = None,
     extra_body: dict[str, Any] | None = None,
     has_tools: bool = True,
+    max_tokens: int | None = None,
 ) -> ModelSettings:
     headers = _request_headers(model_name, extra_headers)
     model_settings = ModelSettings(
         parallel_tool_calls=parallel_tool_calls if has_tools else None,
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
+        max_tokens=max_tokens,
         extra_args=request_timeout_extra_args(request_timeout),
         extra_headers=headers,
         extra_body=dict(extra_body) if extra_body else None,

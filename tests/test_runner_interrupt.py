@@ -30,6 +30,7 @@ def _wire_runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
             prompt_cache=True,
             extra_headers=None,
             extra_body=None,
+            max_tokens=None,
         ),
         runtime=types.SimpleNamespace(max_context_images=3),
     )

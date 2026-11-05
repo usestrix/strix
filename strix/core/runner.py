@@ -431,6 +431,7 @@ async def run_strix_scan(
             prompt_cache=settings.llm.prompt_cache,
             extra_headers=settings.llm.extra_headers,
             extra_body=settings.llm.extra_body,
+            max_tokens=settings.llm.max_tokens,
         )
         run_config = RunConfig(
             model=resolved_model,
