@@ -58,6 +58,11 @@ Structure agents by function:
 - Business logic flaws
 - Infrastructure vulnerabilities
 
+**Email Identity Boundaries**
+- For every workflow that uses an email address to select, recover, create, invite, change, or link a principal—including password reset, magic links, registration uniqueness, invitations, email changes, and OAuth/OIDC linking—assign `semantic_confusion` to the responsible agent.
+- Its task must trace the submitted or identity-provider address through application normalization and IDNA, database comparison/collation, selected principal, authority binding, and final delivery or linked identity. A generic success response is not proof.
+- Before accepting closure, require a controlled-mailbox test showing whether a non-identical address selects a protected principal and receives that principal's authority, plus an exact/binary or stored-recipient negative control. If delivery or redemption cannot be observed, keep the path `needs_follow_up`; never expand beyond explicit targets or authorized test domains.
+
 **Exploitation and Validation**
 - Proof-of-concept development
 - Impact demonstration
