@@ -14,7 +14,7 @@
     "clsx": "^2.1.1",
     "diff": "^8.0.3",
     "highlight.js": "^11.11.1",
-    "lucide-react": "^0.563.0",
+    "lucide-react": "^1.48.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-icons": "^5.7.0",
