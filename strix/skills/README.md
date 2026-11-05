@@ -55,6 +55,12 @@ Notable LLM security skills:
 - `llm_applications` (technologies): end-to-end OWASP 2026 LLM01-LLM10 coverage across models, RAG, vectors, agents, tools, outputs, supply chain, and resource controls
 - `llm_prompt_injection` (vulnerabilities): deep direct, indirect, multimodal, memory, and tool-result prompt-injection testing
 
+Notable reverse-engineering skills:
+- `advisory_to_poc` (custom): advisory-to-root-cause workflow for patch diffing, public PoCs, and detector design
+- `appliance_firmware` (technologies): appliance artifact, runtime, and install-state analysis
+- `protocol_reverse_engineering` (protocols): stateful/custom protocol reconstruction and controlled harnessing
+- `memory_corruption` (vulnerabilities): native crash triage, primitive quality, and exploitability constraints
+
 ---
 
 ## 🎨 Creating New Skills
