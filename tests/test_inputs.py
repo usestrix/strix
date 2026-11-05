@@ -35,6 +35,7 @@ def test_child_initial_input_single_message_without_history() -> None:
     content = result[0]["content"]
     assert "agent scout (agent-2)" in content
     assert "Audit the login flow." in content
+    assert "create_vulnerability_report" in content
     assert "Inherited context" not in content
 
 
@@ -49,6 +50,7 @@ def test_child_initial_input_single_message_with_history() -> None:
     assert "previous work" in content
     assert "agent scout (agent-2)" in content
     assert "Audit the login flow." in content
+    assert "create_vulnerability_report" in content
 
 
 @pytest.mark.parametrize(
