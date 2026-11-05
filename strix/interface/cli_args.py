@@ -6,7 +6,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from strix.config import apply_config_override
 from strix.config.settings import DEFAULT_MAX_TURNS
@@ -466,7 +466,7 @@ def load_resume_state(args: argparse.Namespace) -> None:
     except (RuntimeError, TypeError) as exc:
         raise ResumeError(f"--resume {args.resume}: run.json unreadable: {exc}") from exc
 
-    targets_info: Any = state.get("targets_info") or []
+    targets_info = cast("list[dict[str, Any]]", state.get("targets_info") or [])
     args.targets_info = targets_info
     # A target-less run has no targets_info at all. It is driven by its
     # instruction, over a mounted working directory or over nothing when the

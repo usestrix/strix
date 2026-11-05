@@ -1549,8 +1549,11 @@ def stage_api_specs(
             if not staged.is_file():
                 raise ValueError(
                     f"staged API specification at {staged} is missing. "
-                    "Restore the staged file before resuming, or start a fresh scan "
-                    "with the original specification target."
+                    "The staged copies live under the system temporary directory "
+                    f"({staging}); if TMPDIR points somewhere else than it did when "
+                    "the scan started, the staged files are not there. Restore the "
+                    "staged file before resuming, or start a fresh scan with the "
+                    "original specification target."
                 )
         else:
             shutil.copy2(source, staged)
