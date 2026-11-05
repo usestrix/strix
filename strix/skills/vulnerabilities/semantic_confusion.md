@@ -1,6 +1,6 @@
 ---
 name: semantic-confusion
-description: Cross-component semantic confusion testing for parser differentials, normalization mismatches, overloaded fields, lifecycle state drift, internal redirects, protocol translation, and validator-to-sink inconsistencies
+description: Cross-component semantic confusion testing for parser differentials, normalization mismatches, email and IDNA identity drift, overloaded fields, lifecycle state drift, internal redirects, protocol translation, and validator-to-sink inconsistencies
 ---
 
 # Semantic Confusion
@@ -58,6 +58,27 @@ The highest-signal condition is `security_check(value_A)` followed by `sink(tran
 - Compare string-prefix checks with segment-aware or origin-aware comparisons.
 - Test malformed Unicode and replacement behavior; a rejected code point may become an allowed delimiter or wildcard later.
 - Test path, query, and fragment separately. Browsers and routers commonly transform each source differently.
+
+### Email and Account Identity Drift
+
+Treat an email address as both a principal selector and a delivery destination. Trace the complete boundary before testing:
+
+```text
+submitted or identity-provider address
+  -> application normalization / IDNA
+  -> database comparison and collation
+  -> selected local principal
+  -> token, session, invitation, or link binding
+  -> recipient or linked identity consumed by the final service
+```
+
+- Cover recovery, magic links, invitations, registration uniqueness, email changes, and OAuth/OIDC account linking. Test case/accent-insensitive collations, Unicode normalization, IDNA U-label/A-label conversion, trailing dots, and provider canonicalization only when the observed stack supports them.
+- In black-box testing, report the observed equivalence and routing behavior. Do not name a specific collation, normalizer, or provider algorithm without source, configuration, or version evidence.
+- Determine whether two non-identical addresses can select the same protected principal while SMTP or an identity provider routes them to different owners. The address that receives authority must identify the same principal selected by the security check.
+- In recovery flows, compare the submitted address with the selected account's stored canonical address. A fuzzy lookup followed by delivery to the submitted value is high risk; an exact lookup plus delivery to the stored value is the primary negative control.
+- Use only an explicitly authorized attacker-controlled mailbox or test domain. Derive a bounded variant set from the deployed collation and canonicalizers rather than spraying external domains or the Unicode range.
+
+For a recovery, magic-link, or invitation finding, a generic success response is not proof. Demonstrate that the variant selects the protected principal, the issued authority reaches the controlled mailbox or identity, and redemption yields the protected principal's access. If delivery or redemption cannot be observed, keep the path `needs_follow_up`.
 
 ### Field and Type Overloading
 
@@ -170,6 +191,8 @@ A valid confusion finding should include:
 - Different error messages with identical final authorization and sink behavior
 - A parser accepts odd syntax but downstream consumers preserve the same safe meaning
 - A normalization difference visible only in logs, with no security decision between representations
+- A Unicode or Punycode lookalike that neither selects another principal nor receives authority intended for that principal
+- A permissive database comparison where recovery delivery still uses the selected account's stored canonical address
 - WAF bypass where the application itself rejects the request identically
 - Version-specific behavior claimed as universal without testing the relevant deployment
 - A search-path candidate that is attacker-named but cannot be created, claimed, loaded, or executed
