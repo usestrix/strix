@@ -21,7 +21,12 @@ Design notes:
   * SARIF only has three levels (error / warning / note). Strix's five
     severities collapse into them. The raw severity label and CVSS score
     survive in ``result.properties.strix`` for downstream tools that can
-    distinguish CRITICAL vs HIGH.
+    distinguish CRITICAL vs HIGH; ``properties.strix.severity`` is the only
+    lossless severity channel in the document.
+  * Rules link to their reference page through ``helpUri``: the CWE
+    definition for CWE-keyed rules, the NVD entry for CVE-keyed ones. CWE
+    rules are also tagged ``external/cwe/cwe-NNN``, the form GitHub
+    code-scanning recognises as a CWE reference.
   * GitHub code-scanning uses ``rule.properties['security-severity']``
     (a 0.0-10.0 string) to rank alerts. We populate it from CVSS when
     available, otherwise from a conservative label -> score map.
@@ -74,6 +79,9 @@ TOOL_INFORMATION_URI = "https://strix.ai"
 # also lets the partialFingerprints + class-hash code path cover these
 # findings instead of re-orphaning them on every run.
 _SYNTHETIC_LOCATION_URI = "SECURITY.md"
+
+# CVE-keyed rules link to their NVD entry when the id is well formed.
+_CVE_ID = re.compile(r"CVE-\d{4}-\d{4,}", re.IGNORECASE)
 
 
 # SARIF only has three result levels; Strix's five severities collapse here.
@@ -1091,6 +1099,7 @@ def _rule_tags(rule_id: str, report: dict[str, Any]) -> list[str]:
     tags: list[str] = ["security"]
     if rule_id.startswith("CWE-"):
         tags.append(rule_id)
+        tags.append(f"external/cwe/{rule_id.lower()}")
     cve = _string_value(report.get("cve"))
     if cve and cve not in tags:
         tags.append(cve)
@@ -1107,6 +1116,8 @@ def _rule_tags(rule_id: str, report: dict[str, Any]) -> list[str]:
 def _help_uri_for(rule_id: str) -> str | None:
     if rule_id.startswith("CWE-"):
         return f"https://cwe.mitre.org/data/definitions/{rule_id.removeprefix('CWE-')}.html"
+    if _CVE_ID.fullmatch(rule_id):
+        return f"https://nvd.nist.gov/vuln/detail/{rule_id.upper()}"
     return None
 
 

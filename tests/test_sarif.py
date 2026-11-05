@@ -371,3 +371,31 @@ def test_calibration_metadata_survives_into_result_properties(tmp_path: Path) ->
     assert strix["confidence_rationale"] == "Reproduced once out of three attempts."
     assert strix["severity_change_conditions"] == "Critical if the WAF rule is removed."
     assert strix["fix_verification"] == "Not retested."
+
+
+def _rules(run_dir: Path) -> list[dict[str, Any]]:
+    rules: list[dict[str, Any]] = _read(run_dir)["runs"][0]["tool"]["driver"]["rules"]
+    return rules
+
+
+def test_write_sarif_cwe_rule_links_to_the_cwe_definition(tmp_path: Path) -> None:
+    write_sarif(tmp_path, [_finding(cwe="CWE-639")])
+    rule = _rules(tmp_path)[0]
+    assert rule["id"] == "CWE-639"
+    assert rule["helpUri"] == "https://cwe.mitre.org/data/definitions/639.html"
+    # GitHub code scanning reads CWE references from ``external/cwe/cwe-NNN`` tags.
+    assert "external/cwe/cwe-639" in rule["properties"]["tags"]
+    assert rule["defaultConfiguration"] == {"level": "error"}
+
+
+def test_write_sarif_cve_rule_links_to_nvd(tmp_path: Path) -> None:
+    write_sarif(tmp_path, [_finding(cwe=None, cve="CVE-2021-44228")])
+    rule = _rules(tmp_path)[0]
+    assert rule["id"] == "CVE-2021-44228"
+    assert rule["helpUri"] == "https://nvd.nist.gov/vuln/detail/CVE-2021-44228"
+    assert not any(tag.startswith("external/cwe/") for tag in rule["properties"]["tags"])
+
+
+def test_write_sarif_rule_without_a_reference_id_has_no_help_uri(tmp_path: Path) -> None:
+    write_sarif(tmp_path, [_finding(cwe=None, cve="not-a-cve")])
+    assert "helpUri" not in _rules(tmp_path)[0]
