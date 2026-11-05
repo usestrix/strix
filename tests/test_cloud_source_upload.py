@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import shutil
@@ -272,6 +273,64 @@ def test_source_archive_rejects_same_inode_same_size_change_after_review(tmp_pat
 
     with pytest.raises(http.CloudError, match="changed while the source archive was being built"):
         source_upload._write_archive(tmp_path / "source.zip", manifest.files)
+
+
+def test_source_archive_ignores_windows_ctime_settling_on_unchanged_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_path = tmp_path / "app.py"
+    source_path.write_bytes(b"safe")
+    manifest = source_upload.select_source(tmp_path)
+    selected = manifest.files[0]
+
+    # Simulate a settled/drifted ctime_ns while mtime, size, device, and inode stay identical
+    drifted_selected = dataclasses.replace(selected, ctime_ns=selected.ctime_ns + 5_000_000)
+
+    # On Windows, ctime settling must NOT reject unchanged files
+    monkeypatch.setattr(os, "name", "nt")
+    archive_path = tmp_path / "source_nt.zip"
+    source_upload._write_archive(archive_path, (drifted_selected,))
+    assert archive_path.is_file()
+
+    # On non-Windows platforms, ctime change represents inode change and MUST be rejected
+    monkeypatch.setattr(os, "name", "posix")
+    with pytest.raises(http.CloudError, match="changed while the source archive was being built"):
+        source_upload._write_archive(tmp_path / "source_posix.zip", (drifted_selected,))
+
+
+def test_source_archive_still_rejects_modifications_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(os, "name", "nt")
+    source_path = tmp_path / "app.py"
+    source_path.write_bytes(b"safe")
+    manifest = source_upload.select_source(tmp_path)
+
+    # 1. Size/content modified
+    source_path.write_bytes(b"longer content modified")
+    with pytest.raises(http.CloudError, match="changed while the source archive was being built"):
+        source_upload._write_archive(tmp_path / "source1.zip", manifest.files)
+
+    # 2. Same size but mtime modified
+    source_path.write_bytes(b"evil")
+    selected = manifest.files[0]
+    os.utime(
+        source_path,
+        ns=(selected.mtime_ns + 1_000_000, selected.mtime_ns + 1_000_000),
+    )
+    with pytest.raises(http.CloudError, match="changed while the source archive was being built"):
+        source_upload._write_archive(tmp_path / "source2.zip", manifest.files)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows-specific filesystem settling test")
+def test_source_archive_windows_batch_creation_settling(tmp_path: Path) -> None:
+    for idx in range(50):
+        (tmp_path / f"file_{idx}.py").write_text(f"content = {idx}\n", encoding="utf-8")
+
+    manifest = source_upload.select_source(tmp_path)
+    archive_path = tmp_path / "batch_source.zip"
+    source_upload._write_archive(archive_path, manifest.files)
+    assert archive_path.is_file()
 
 
 def test_source_dry_run_never_calls_the_api(
