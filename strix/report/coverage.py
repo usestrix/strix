@@ -55,7 +55,12 @@ OUTCOME_LABELS: dict[str, str] = {
 }
 
 #: Statuses that mean the agent stopped early rather than finishing its task.
-_INCOMPLETE_AGENT_STATUSES = frozenset({"crashed", "stopped", "running", "waiting"})
+#: ``failed`` and ``budget_paused`` are in ``core.agents.Status`` too, and an
+#: agent wearing either never finished the surfaces it held, so they count as
+#: incomplete here just like ``crashed`` does.
+_INCOMPLETE_AGENT_STATUSES = frozenset(
+    {"crashed", "stopped", "running", "waiting", "failed", "budget_paused"}
+)
 
 #: Run statuses that mean the scan itself did not run to completion.
 _INCOMPLETE_RUN_STATUSES = frozenset({"failed", "interrupted", "stopped", "running"})
