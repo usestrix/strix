@@ -17,6 +17,7 @@ from strix.config.models import (
     _TurnGuardModel,
     configure_sdk_model_defaults,
     model_supports_images,
+    model_supports_reasoning,
     request_timeout_extra_args,
     resolve_api_type,
     routes_through_litellm,
@@ -211,3 +212,136 @@ def test_image_support_follows_the_catalog(monkeypatch: pytest.MonkeyPatch) -> N
     assert model_supports_images("acme-text") is False
     assert model_supports_images("litellm/openai/acme-vision") is True
     assert model_supports_images("acme-unknown-model") is True
+
+
+_MIXED_CASE_MODEL = "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731"
+
+
+def test_mixed_case_model_capabilities_follow_the_pinned_litellm_catalog() -> None:
+    """Integration check against the real catalog pinned by uv.lock."""
+    entry = litellm.model_cost[_MIXED_CASE_MODEL]
+
+    assert entry["supports_reasoning"] is True
+    assert entry["supports_vision"] is False
+    assert model_supports_reasoning(_MIXED_CASE_MODEL) is True
+    assert model_supports_images(_MIXED_CASE_MODEL) is False
+
+
+@pytest.mark.parametrize("route_prefix", ["litellm/", "any-llm/", "openai/"])
+def test_catalog_lookup_strips_supported_route_prefix_without_losing_case(
+    monkeypatch: pytest.MonkeyPatch, route_prefix: str
+) -> None:
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {"vendor/MixedCase": {"supports_reasoning": True, "supports_vision": False}},
+    )
+
+    model = f"{route_prefix}vendor/MixedCase"
+    assert model_supports_reasoning(model) is True
+    assert model_supports_images(model) is False
+
+
+def test_catalog_lookup_prefers_exact_key_over_normalized_and_bare_fallbacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = "openai/vendor/MixedCase"
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {
+            model: {
+                "supports_reasoning": False,
+                "supports_vision": False,
+                "supported_endpoints": ["/v1/chat/completions"],
+            },
+            model.lower(): {
+                "supports_reasoning": True,
+                "supports_vision": True,
+                "supported_endpoints": ["/v1/responses"],
+            },
+            "MixedCase": {
+                "supports_reasoning": True,
+                "supports_vision": True,
+                "supported_endpoints": ["/v1/responses"],
+            },
+        },
+    )
+    settings = _settings(monkeypatch, model, None)
+
+    assert model_supports_reasoning(model) is False
+    assert model_supports_images(model) is False
+    assert resolve_api_type(model, settings) == "chat_completions"
+    assert uses_chat_completions_tool_schema(model, settings) is True
+
+
+def test_catalog_lookup_prefers_case_preserving_stripped_key_over_normalized_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {
+            "vendor/MixedCase": {"supports_reasoning": False, "supports_vision": False},
+            "vendor/mixedcase": {"supports_reasoning": True, "supports_vision": True},
+        },
+    )
+
+    model = "litellm/vendor/MixedCase"
+    assert model_supports_reasoning(model) is False
+    assert model_supports_images(model) is False
+
+
+@pytest.mark.parametrize(
+    ("model", "catalog_key"),
+    [
+        ("vendor/lowercase", "vendor/lowercase"),
+        ("vendor/MixedCase", "vendor/mixedcase"),
+        ("vendor/MixedCase", "MixedCase"),
+    ],
+    ids=["lowercase-exact", "normalized-fallback", "bare-alias"],
+)
+def test_catalog_lookup_compatibility_fallbacks(
+    monkeypatch: pytest.MonkeyPatch, model: str, catalog_key: str
+) -> None:
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {catalog_key: {"supports_reasoning": True, "supports_vision": False}},
+    )
+
+    assert model_supports_reasoning(model) is True
+    assert model_supports_images(model) is False
+
+
+def test_unknown_model_capability_defaults_are_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(litellm, "model_cost", {})
+    settings = _settings(monkeypatch, "openai/UnknownMixedCase", None)
+
+    assert model_supports_reasoning("openai/UnknownMixedCase") is False
+    assert model_supports_images("openai/UnknownMixedCase") is True
+    assert resolve_api_type("openai/UnknownMixedCase", settings) == "chat_completions"
+
+
+@pytest.mark.parametrize(
+    ("model", "supported_endpoints", "expected"),
+    [
+        ("openai/AcmeResponses", ["/v1/responses"], "responses"),
+        ("openai/AcmeChat", ["/v1/chat/completions"], "chat_completions"),
+    ],
+)
+def test_api_type_follows_exact_mixed_case_catalog_capability(
+    monkeypatch: pytest.MonkeyPatch,
+    model: str,
+    supported_endpoints: list[str],
+    expected: str,
+) -> None:
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {model: {"supported_endpoints": supported_endpoints}},
+    )
+    settings = _settings(monkeypatch, model, None)
+
+    assert resolve_api_type(model, settings) == expected
+    assert uses_chat_completions_tool_schema(model, settings) is (expected == "chat_completions")
