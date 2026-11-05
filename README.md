@@ -8,7 +8,7 @@
 
 # Strix
 
-### The open-source AI pentesting tool. Autonomous AI hackers that find and fix your app’s vulnerabilities.
+### The open-source AI pentesting tool. Autonomous AI hackers that find and fix your app's vulnerabilities.
 
 <br/>
 
@@ -29,7 +29,7 @@
 <a href="https://x.com/strix_ai"><img src="https://github.com/usestrix/.github/raw/main/imgs/X.png" height="40" alt="Follow on X"></a>
 
 
-<a href="https://trendshift.io/repositories/15362?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-15362" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/15362/weekly" alt="usestrix%2Fstrix | Trendshift" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/15362?utm_source=trendshift-badge&utm_medium=badge&utm_campaign=badge-trendshift-15362" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/15362/weekly" alt="usestrix%2Fstrix | Trendshift" width="250" height="55"/></a>
 <a href="https://trendshift.io/repositories/15362" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15362" alt="usestrix/strix | Trendshift" width="250" height="55"/></a>
 
 </div>
@@ -39,7 +39,6 @@
 > **New!** Strix integrates seamlessly with GitHub Actions and CI/CD pipelines. Automatically scan for vulnerabilities on every pull request and block insecure code before it reaches production - [Get started with no setup required](https://app.strix.ai?utm_source=github&utm_medium=readme&utm_content=tip_ci).
 
 ---
-
 
 ## Strix Overview
 
@@ -70,6 +69,9 @@ Strix are autonomous AI penetration testing agents that act just like real hacke
 - **Rapid Penetration Testing** - Get penetration tests done in hours, not weeks, with compliance reports
 - **Bug Bounty Automation** - Automate bug bounty research and generate PoCs for faster reporting
 - **CI/CD Integration** - Run tests in CI/CD to block vulnerabilities before reaching production
+- **API Security Testing** - REST/GraphQL APIs and the OWASP API Security Top 10 (BOLA/IDOR, authz)
+- **OWASP Top 10 Assessment** - Systematic OWASP Top 10 assessment with honest per-category coverage
+- **Supply Chain Security** - SBOM generation, dependency scanning, and CVE detection
 
 ## 🚀 Quick Start
 
@@ -84,7 +86,7 @@ Strix are autonomous AI penetration testing agents that act just like real hacke
 curl -sSL https://strix.ai/install | bash
 
 # Configure your AI provider
-export STRIX_LLM="vercel_ai_gateway/zai/glm-5.3"   # Vercel AI Gateway
+export STRIX_LLM="vercel_ai_gateway/zai/glm-5.3"   # Vercel AI Gateway (recommended)
 # export STRIX_LLM="openrouter/z-ai/glm-5.3"       # OpenRouter
 export LLM_API_KEY="your-api-key"
 
@@ -111,29 +113,46 @@ Installed with pipx, uv, or pip? `strix --update` prints the matching upgrade co
 
 ## Ways to Run Strix
 
-- **Open Source** - free, runs locally with Docker and your own LLM key. [Quick Start](https://docs.strix.ai/quickstart)
-- **Strix Cloud** - no setup, validated findings, one-click autofix, and PR reviews. [Run a pentest →](https://app.strix.ai?intent=pentest&utm_source=github&utm_medium=readme&utm_content=table_cloud)
-- **Enterprise** - SSO, compliance-ready reports, VPC or self-hosted deployment. [Try Strix Enterprise →](https://strix.ai/demo?utm_source=github&utm_medium=readme&utm_content=table_demo)
+| Mode | Description | Best For |
+|------|-------------|----------|
+| **Open Source (Self-hosted)** | Free, runs locally with Docker and your own LLM key | Local dev loops, air-gapped/offline, full control |
+| **Strix Cloud** | No setup, validated findings, one-click autofix, PR reviews | Sandboxed/CI environments, teams, no Docker |
+| **Enterprise** | SSO, compliance reports, VPC/self-hosted, BYOK, dedicated support | Enterprise compliance, custom deployment |
 
----
+### Open Source (Self-hosted CLI)
 
-## ☁️ Strix Cloud
+```bash
+curl -sSL https://strix.ai/install | bash        # install
+export STRIX_LLM="vercel_ai_gateway/zai/glm-5.3" # any LiteLLM model id
+export LLM_API_KEY="<key>"
+strix -n -t ./ --scan-mode quick --max-budget 10  # headless scan; always use -n
+```
 
-Try the Strix full-stack penetration testing platform at **[app.strix.ai](https://app.strix.ai?utm_source=github&utm_medium=readme&utm_content=cloud_heading)** - sign up for free, connect your repos and domains, and launch a pentest in minutes.
+- Requires Docker running. Scans take minutes (`quick`) to hours (`deep`) — run in the background.
+- Exit codes (headless): `0` clean, `1` fatal error, `2` vulnerabilities found. A `0` only covers what was analyzed — check `run.json` (`status`, `llm_usage.cost` vs the budget) before calling a run clean.
+- Artifacts in `strix_runs/<run-name>/`: `penetration_test_report.md`, `vulnerabilities/*.md`, `vulnerabilities.json`, `findings.sarif` (SARIF 2.1.0), `run.json`.
 
-- **Validated findings with PoCs** - every vulnerability includes a working proof-of-concept exploit and reproduction steps
-- **One-click autofix** - AI-generated security patches as ready-to-merge pull requests
-- **Continuous pentesting** - always-on vulnerability scanning that keeps pace with your deployments
-- **DevSecOps integrations** - GitHub, GitLab, Bitbucket, Slack, Jira, Linear, and CI/CD pipelines
-- **Continuous learning** - AI that builds on past findings, adapts to your codebase, and reduces false positives over time
+### Strix Cloud (Managed Platform)
 
-[**Run a pentest →**](https://app.strix.ai?intent=pentest&utm_source=github&utm_medium=readme&utm_content=cloud_cta)
+```bash
+strix cloud login --scopes scans:read scans:write uploads:write billing:read
+strix cloud domains add --domain example.com --asset-type web_app
+strix cloud scans start --engagement-type live_test --domain-ids <uuid> --wait
+strix cloud scans start --source . --dry-run --show-files --json  # review + capture source.archive_sha256
+SOURCE_SHA256="<reviewed source.archive_sha256>"
+strix cloud scans start --source . --approve-sha256 "$SOURCE_SHA256" --wait
+strix cloud vulns list --severity critical
+strix cloud billing topup --credits 20 --yes  # explicit approval after exit code 5
+```
 
-## 🏢 Enterprise
-
-Get the same Strix experience with enterprise-grade controls: SSO (SAML/OIDC), custom compliance-ready penetration testing reports (SOC 2, ISO 27001, PCI DSS), dedicated support and SLA, custom deployment options (VPC or self-hosted), BYOK model support, and tailored AI pentesting agents optimized for your environment.
-
-[**Try Strix Enterprise →**](https://strix.ai/demo?utm_source=github&utm_medium=readme&utm_content=enterprise_cta)
+- Account setup runs from the CLI too: `strix cloud workspaces list|create|use` (`workspace` is an alias and `use` accepts a displayed number, name, or ID), `strix cloud session scopes|scopes set`, `strix cloud org members invite`, `strix cloud billing subscribe --plan strix_cloud`, `strix cloud billing portal`, `strix cloud integrations install github`, and `strix cloud domains verify <id>`. Workspace switching preserves the server-side profile and can never widen past the login ceiling; ordinary switches do not reprompt. The last four end at a person: the command prints a link or a DNS record for the user to open or add, and it never completes the payment, installation, or DNS change for them.
+- Every REST operation has a `strix cloud <resource> <verb>` command. Run `strix cloud` to list them. Output is JSON when stdout is not a terminal (or with `--json`), and there are no prompts without a TTY. Binary downloads are the exception: redirect raw bytes intentionally, or combine `--output FILE --json` for structured download metadata. Exit codes: `0` success, `1` error, `2` usage, `4` auth or plan limit, `5` payment required. `--token` or `STRIX_API_TOKEN` is a stateless override and never replaces stored auth; set `--workspace-id`/`STRIX_WORKSPACE_ID` for an override CLI session. `--data` adds extra request fields as JSON, and accepts `@file` or `-` for standard input.
+- Local source uploads require `uploads:write`. For an agent/CI handoff, review `scans start --source . --dry-run --show-files --json`, capture `source.archive_sha256`, then rerun with the same `--source`, `--exclude`, and `--include-*` selection flags plus `--approve-sha256 HASH`. A changed snapshot is rejected. `--yes` approves only the snapshot built in that invocation, so reserve it for a deliberate human or one-shot approval rather than a digest-bound two-step handoff.
+- Git ignores, hidden files, `.git`, symlinks, dependency/build output, secret-like filenames, and nested archives are excluded by default; `.strixignore` and `--exclude` narrow the manifest further (a trailing `/` excludes a directory subtree). Limits: 20,000 files, 25 MiB/file, 250 MiB expanded, 50 MiB compressed. Source-only infers `code_review`; source plus a domain infers `live_test`.
+- The temporary local archive is always removed. A staged upload is deleted after a definitive rejection, but retained when a network error, `5xx`, malformed success response, or interruption leaves the scan launch ambiguous. JSON reports its `upload_id` with `launch_outcome_unknown: true`, or with `cleanup_unknown: true` when automatic deletion cannot be confirmed. Check `scans list` before retrying; if no scan is linked, run `uploads delete UPLOAD_ID`.
+- Non-Enterprise scans consume the scope estimate (a default-tier source-only review currently starts at 60 credits); Enterprise scans are plan-included. A rejected launch does not consume credits.
+- Human output is compact and numbered; non-TTY output and `--json` retain full records. Enable tab completion with `source <(strix completions zsh)` (or `bash`), or `strix completions fish | source`.
+- The REST API works directly too: https://docs.app.strix.ai (OpenAPI: https://docs.app.strix.ai/openapi.json).
 
 ---
 
@@ -145,7 +164,7 @@ Strix is agent-ready. Give Claude Code, Cursor, Codex, or any [SKILL.md-compatib
 npx skills add usestrix/strix
 ```
 
-This installs nine skills for running pentests, fixing findings, and CI scanning, against code, web apps, APIs, and the OWASP Top 10. Agents can use the local CLI or the managed cloud with the same engine.
+This installs skills for running pentests, fixing findings, and CI scanning, against code, web apps, APIs, and the OWASP Top 10. Agents can use the local CLI or the managed cloud with the same engine.
 
 See [`AGENTS.md`](AGENTS.md) for the quick reference, [docs.strix.ai/llms.txt](https://docs.strix.ai/llms.txt) for the CLI, and [docs.app.strix.ai](https://docs.app.strix.ai) for the API.
 
@@ -164,6 +183,8 @@ Strix agents come equipped with a comprehensive offensive security toolkit - the
 - **Reconnaissance & OSINT** - Automated attack surface mapping, subdomain enumeration, and fingerprinting
 - **Static & Dynamic Code Analysis** - SAST + DAST capabilities for comprehensive application security testing
 - **Vulnerability Knowledge Base** - Structured findings with CVSS scoring and OWASP classification
+- **MCP Server Integration** - Connect to external Model Context Protocol servers for extended tooling
+- **Supply Chain Security** - SBOM generation, dependency CVE scanning, and policy enforcement
 
 ### Comprehensive Vulnerability Scanner
 
@@ -177,6 +198,8 @@ Strix identifies, validates, and exploits a wide range of security vulnerabiliti
 - **Authentication & Session** - JWT attacks, session fixation, credential stuffing vectors
 - **Infrastructure & Cloud** - Misconfigurations, exposed services, cloud security issues
 - **API Security** - Broken authentication, mass assignment, rate limiting bypass
+- **LLM/GenAI Security** - Prompt injection, agentic system security, RAG poisoning (OWASP LLM Top 10)
+- **Supply Chain** - Dependency confusion, malicious packages, build pipeline attacks
 
 ### Graph of Agents (Multi-Agent Pentesting)
 
@@ -185,6 +208,33 @@ Advanced multi-agent orchestration for comprehensive automated penetration testi
 - **Distributed Pentesting** - Specialized AI agents for recon, exploitation, and post-exploitation
 - **Scalable Security Testing** - Parallel execution across multiple targets for fast, comprehensive coverage
 - **Dynamic Coordination** - Agents share discoveries, chain vulnerabilities, and collaborate like a red team
+- **Skill-Based Specialization** - Agents load relevant skills (100+ available) for each subtask
+- **Resume & Continue** - Interrupted scans resume from where they left off
+
+### Skills System (100+ Specialized Skills)
+
+Strix agents dynamically load specialized knowledge packages for deep expertise:
+
+| Category | Purpose | Examples |
+|----------|---------|----------|
+| **Vulnerabilities** | Advanced testing for core vulnerability classes | `sql_injection`, `xss`, `idor`, `race_conditions`, `rce`, `ssrf` |
+| **Frameworks** | Specific testing for popular frameworks | `django`, `fastapi`, `nextjs`, `nestjs` |
+| **Technologies** | Specialized techniques for third-party services | `supabase`, `firebase`, `auth0`, `llm_applications` |
+| **Protocols** | Protocol-specific testing patterns | `graphql`, `oauth`, `webhooks` |
+| **Tooling** | Playbooks for core sandbox tools | `nmap`, `nuclei`, `httpx`, `ffuf`, `subfinder`, `sqlmap` |
+| **Cloud** | Cloud provider security testing | `aws`, `azure`, `gcp`, `kubernetes` |
+| **Reconnaissance** | Attack surface mapping and enumeration | `asset_discovery`, `infrastructure_lifecycle` |
+| **Custom** | Community-contributed specialized skills | `npx_confusion`, `dependency_cve_scanning`, `semantic_confusion` |
+| **Scan Modes** | Orchestration patterns for different depths | `quick`, `standard`, `deep`, `diff` |
+
+Notable advanced skills: `source_aware_whitebox` (white-box orchestration), `source_aware_sast` (Opengrep/AST/secrets/supply-chain), `browser_security` (postMessage, XS-Leaks, service workers), `agentic_system_security` (MCP/tool ecosystem), `llm_prompt_injection` (direct, indirect, multimodal, memory, tool-result), `argument_injection` (CLI option smuggling).
+
+### Scan Modes
+
+- **Quick** - Fast triage (~5-15 min), high-signal findings only
+- **Standard** - Balanced coverage (~30-60 min)
+- **Deep** - Comprehensive assessment (~2-6 hours)
+- **Diff** - Scope to changed files only (ideal for CI/PR reviews)
 
 ---
 
@@ -203,9 +253,9 @@ strix view my-run-name
 strix view --host 0.0.0.0 --port 8080 --no-open
 ```
 
-The dashboard shows the findings, a live map of the agent team, and past runs. Nothing leaves your machine, and the UI ships prebuilt. `strix view` binds to `127.0.0.1` and prints a tokened link that grants access to the run, so share it carefully.
+The dashboard shows findings, a live map of the agent team, and past runs. Nothing leaves your machine, and the UI ships prebuilt. `strix view` binds to `127.0.0.1` and prints a tokened link that grants access to the run, so share it carefully.
 
-See the [viewer documentation](https://docs.strix.ai/usage/viewer) for the options and for reaching the viewer from another machine.
+See the [viewer documentation](https://docs.strix.ai/usage/viewer) for options and reaching the viewer from another machine.
 
 ---
 
@@ -226,16 +276,13 @@ strix --target https://your-app.com
 
 ### API Testing (OpenAPI / Swagger / Postman)
 
-Point Strix at an API contract and it tests every declared endpoint instead of
-having to discover them by crawling. Pair the spec with the live base URL so the
-agent knows where to send traffic:
+Point Strix at an API contract and it tests every declared endpoint instead of having to discover them by crawling. Pair the spec with the live base URL so the agent knows where to send traffic:
 
 ```bash
 # OpenAPI / Swagger file, Postman export, or a live collection by id
 strix --target ./openapi.yaml --target https://api.your-app.com
 strix --target postman://<collection-uuid> --target https://api.your-app.com
 ```
-
 
 ### Advanced Testing Scenarios
 
@@ -248,6 +295,15 @@ strix -t https://github.com/org/app -t https://your-app.com
 
 # Targets from a file, one target per non-empty, non-comment line
 strix --target-list ./targets.txt
+
+# Resume an interrupted scan
+strix --resume my-run-name
+
+# Scan with budget limit
+strix -t ./app --max-budget 50 --scan-mode deep
+
+# CI-focused diff scan
+strix -t ./ --scan-mode diff --diff-base origin/main
 ```
 
 See the [CLI reference](https://docs.strix.ai/usage/cli) for every option, including scan modes, diff scope, instruction files, and budgets.
@@ -290,14 +346,12 @@ jobs:
 ```
 
 > [!TIP]
-> In CI pull request runs, Strix automatically scopes quick reviews to changed files, which is why the
-> checkout above fetches full history. See the
-> [CI/CD documentation](https://docs.strix.ai/integrations/github-actions) for the details.
+> In CI pull request runs, Strix automatically scopes quick reviews to changed files, which is why the checkout above fetches full history. See the [CI/CD documentation](https://docs.strix.ai/integrations/github-actions) for the details.
 
 ### Configuration
 
 ```bash
-export STRIX_LLM="vercel_ai_gateway/zai/glm-5.3"   # Vercel AI Gateway
+export STRIX_LLM="vercel_ai_gateway/zai/glm-5.3"   # Vercel AI Gateway (recommended)
 # export STRIX_LLM="openrouter/z-ai/glm-5.3"       # OpenRouter
 export LLM_API_KEY="your-api-key"
 
@@ -309,7 +363,7 @@ export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, 
 > Strix automatically saves your configuration to `~/.strix/cli-config.json`, so you don't have to re-enter it on every run.
 > See the [configuration reference](https://docs.strix.ai/advanced/configuration) for every environment variable.
 
-#### Sign in with a ChatGPT subscription
+#### Sign in with a ChatGPT Subscription
 
 Instead of a metered API key, you can run Strix on your ChatGPT Plus/Pro subscription:
 
@@ -319,22 +373,7 @@ export STRIX_LLM="chatgpt/gpt-5.4"   # chatgpt/<model> runs on the subscription
 strix auth status                    # show the active sign-in, or logout to forget it
 ```
 
-#### Use the managed platform: `strix cloud`
-
-Run scans on [app.strix.ai](https://app.strix.ai) from the terminal, without Docker or an LLM key:
-
-```bash
-strix cloud login                                  # browser sign-in, one credential per install
-strix cloud scans start --source . --yes --wait    # scan local code, approving the upload
-strix cloud scans start --engagement-type live_test --domain-ids <uuid> --wait
-strix cloud vulns list --severity critical
-```
-
-Every [REST API](https://docs.app.strix.ai) operation has a matching `strix cloud <resource> <verb>` command. Run `strix cloud` to list the resources, and add `help` to a resource to list its verbs. Output is JSON when stdout is not a terminal or when you pass `--json`. Binary downloads are the exception: redirect the raw bytes, or combine `--output FILE --json` for download metadata.
-
-See the [cloud CLI documentation](https://docs.strix.ai/cloud/cli) for scopes, workspaces, billing, and source-upload options.
-
-#### Connect your own MCP servers
+#### Connect Your Own MCP Servers
 
 Strix can connect to Model Context Protocol (MCP) servers you list and expose their tools to the agent during a run. Create `~/.strix/mcp-servers.json` with a JSON list of local `stdio` servers or remote `http` servers:
 
@@ -352,7 +391,7 @@ Strix can connect to Model Context Protocol (MCP) servers you list and expose th
 
 Each server's tools are namespaced by `name`, for example `github_list_issues`. See the [MCP documentation](https://docs.strix.ai/integrations/mcp) for the full schema, tool filtering, and `stdio` servers.
 
-**Recommended models for best results:**
+### Recommended Models for Best Results
 
 - [Z.ai GLM-5.3 on Vercel AI Gateway](https://vercel.com/ai-gateway/models/glm-5.3) - `vercel_ai_gateway/zai/glm-5.3` (recommended)
 - [Z.ai GLM-5.3 on OpenRouter](https://openrouter.ai/z-ai/glm-5.3) - `openrouter/z-ai/glm-5.3` (recommended)
@@ -365,9 +404,25 @@ Each server's tools are namespaced by `name`, for example `github_list_issues`. 
 
 See the [LLM Providers documentation](https://docs.strix.ai/llm-providers/overview) for all supported providers including Vertex AI, Bedrock, Azure, and local models.
 
-## Documentation
+---
 
-Full documentation is available at **[docs.strix.ai](https://docs.strix.ai)** - including detailed guides for usage, CI/CD integrations, skills, and advanced configuration.
+## 📚 Documentation
+
+Full documentation is available at **[docs.strix.ai](https://docs.strix.ai)** - including detailed guides for:
+- [Quickstart](https://docs.strix.ai/quickstart)
+- [CLI Reference](https://docs.strix.ai/usage/cli)
+- [Scan Modes](https://docs.strix.ai/usage/scan-modes)
+- [Custom Instructions](https://docs.strix.ai/usage/instructions)
+- [Local Viewer](https://docs.strix.ai/usage/viewer)
+- [CI/CD Integrations](https://docs.strix.ai/integrations/github-actions)
+- [MCP Integration](https://docs.strix.ai/integrations/mcp)
+- [Coding Agents](https://docs.strix.ai/integrations/coding-agents)
+- [Configuration](https://docs.strix.ai/advanced/configuration)
+- [LLM Providers](https://docs.strix.ai/llm-providers/overview)
+- [Strix Cloud CLI](https://docs.strix.ai/cloud/cli)
+- [Contributing](https://docs.strix.ai/contributing)
+
+---
 
 ## Contributing
 
