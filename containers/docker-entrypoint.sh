@@ -117,6 +117,46 @@ echo ". /etc/profile.d/proxy.sh" >> ~/.zshrc
 
 echo "✅ System-wide proxy configuration complete"
 
+# A virtual display so the agent can fall back to headed Chrome when a target
+# rejects headless; without it headed mode dies but still exits 0.
+DISPLAY_NUM="${STRIX_DISPLAY_NUM:-99}"
+DISPLAY_GEOMETRY="${STRIX_DISPLAY_GEOMETRY:-1280x800x24}"
+
+if ! xdpyinfo -display ":${DISPLAY_NUM}" >/dev/null 2>&1; then
+  # Nothing is answering, so a leftover lock/socket is stale; Xvfb refuses to
+  # start with one present.
+  rm -f "/tmp/.X${DISPLAY_NUM}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM}" 2>/dev/null || true
+  Xvfb ":${DISPLAY_NUM}" -screen 0 "${DISPLAY_GEOMETRY}" -nolisten tcp \
+    > /tmp/xvfb.log 2>&1 &
+  for _ in $(seq 1 20); do
+    xdpyinfo -display ":${DISPLAY_NUM}" >/dev/null 2>&1 && break
+    sleep 0.5
+  done
+fi
+
+if xdpyinfo -display ":${DISPLAY_NUM}" >/dev/null 2>&1; then
+  echo "✅ Virtual display :${DISPLAY_NUM} ready (${DISPLAY_GEOMETRY})"
+else
+  echo "⚠️  Xvfb failed to start; headed browsing is unavailable. Xvfb log:"
+  cat /tmp/xvfb.log 2>/dev/null || echo "(no log available)"
+fi
+
+# Best-effort session bus: without it headed Chrome spews dbus errors that read
+# like fatal failures in tool output.
+if [ ! -S /run/dbus/system_bus_socket ]; then
+  sudo mkdir -p /run/dbus
+  sudo dbus-daemon --system --fork > /tmp/dbus.log 2>&1 || true
+fi
+
+cat << EOF | sudo tee /etc/profile.d/browser.sh
+export DISPLAY=:${DISPLAY_NUM}
+EOF
+
+echo ". /etc/profile.d/browser.sh" >> ~/.bashrc
+echo ". /etc/profile.d/browser.sh" >> ~/.zshrc
+
+. /etc/profile.d/browser.sh
+
 echo "Adding CA to browser trust store..."
 sudo -u pentester mkdir -p /home/pentester/.pki/nssdb
 sudo -u pentester certutil -N -d sql:/home/pentester/.pki/nssdb --empty-password
