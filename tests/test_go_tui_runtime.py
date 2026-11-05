@@ -84,6 +84,58 @@ def test_binary_command_reports_missing_sidecar(
         GoTuiRuntime.binary_command()
 
 
+def _checkout(tmp_path: Path) -> Path:
+    source = tmp_path / "strix" / "interface" / "tui"
+    source.mkdir(parents=True)
+    (source / "go.mod").write_text("module test\n")
+    return source
+
+
+def test_binary_command_uses_checkout_build_without_go(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = _checkout(tmp_path)
+    built = tmp_path / "build" / "sidecar" / sidecar.tui_executable()
+    built.parent.mkdir(parents=True)
+    built.write_text("binary")
+    monkeypatch.setattr(go_tui, "tui_source_dir", lambda: source)
+    monkeypatch.setattr(go_tui, "get_strix_resource_path", lambda *_parts: tmp_path / "missing")
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+
+    assert GoTuiRuntime.binary_command() == [str(built)]
+
+
+def test_binary_command_checkout_without_go_or_build_explains_fix(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = _checkout(tmp_path)
+    monkeypatch.setattr(go_tui, "tui_source_dir", lambda: source)
+    monkeypatch.setattr(go_tui, "get_strix_resource_path", lambda *_parts: tmp_path / "missing")
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+
+    with pytest.raises(RuntimeError, match="source checkout: install Go"):
+        GoTuiRuntime.binary_command()
+
+
+def test_binary_command_ignores_checkout_build_outside_a_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "strix" / "interface" / "tui"  # no go.mod: not a checkout
+    source.mkdir(parents=True)
+    built = tmp_path / "build" / "sidecar" / sidecar.tui_executable()
+    built.parent.mkdir(parents=True)
+    built.write_text("binary")
+    monkeypatch.setattr(go_tui, "tui_source_dir", lambda: source)
+    monkeypatch.setattr(go_tui, "get_strix_resource_path", lambda *_parts: tmp_path / "missing")
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+
+    with pytest.raises(RuntimeError, match="official platform wheel"):
+        GoTuiRuntime.binary_command()
+
+
 def test_binary_command_ignores_unconstrained_path_sidecar(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
