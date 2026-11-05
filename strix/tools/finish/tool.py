@@ -65,6 +65,11 @@ def _do_finish(
         )
         vuln_count = len(report_state.vulnerability_reports)
         coverage_summary = _coverage_summary(agent_graph)
+        narrative_summary = _narrative_reconciliation(
+            vuln_count=vuln_count,
+            executive_summary=executive_summary,
+            technical_analysis=technical_analysis,
+        )
     except (ImportError, AttributeError) as e:
         logger.exception("finish_scan persistence failed")
         return {"success": False, "error": f"Failed to complete scan: {e!s}"}
@@ -80,7 +85,66 @@ def _do_finish(
             "vulnerabilities_found": vuln_count,
         }
         result.update(coverage_summary)
+        result.update(narrative_summary)
         return result
+
+
+# Weakness-describing language that, in a report narrative paired with a zero
+# vulnerability count, signals findings that were written up in prose but never
+# filed as formal records (every one of them uncredited and untracked).
+_WEAKNESS_MARKERS: tuple[str, ...] = (
+    "missing security header",
+    "unsecured",
+    "unauthenticated",
+    "no authentication",
+    "without authentication",
+    "exposed",
+    "open registry",
+    "default credential",
+    "misconfigur",
+    "vulnerab",
+    "injection",
+    "disclosure",
+    "weak ",
+    "insecure",
+    "could allow",
+    "allows an attacker",
+)
+
+
+def _narrative_reconciliation(
+    *,
+    vuln_count: int,
+    executive_summary: str,
+    technical_analysis: str,
+) -> dict[str, Any]:
+    """Flag a zero-count report whose prose nonetheless describes weaknesses.
+
+    A scan whose narrative lists missing headers, an unsecured registry, or
+    other issues while the vulnerability tracker shows zero is contradicting
+    itself: those issues were described but never filed via the report tool, so
+    they are neither tracked, credited, nor reflected in the exit code. The
+    runtime cannot file them retroactively, but it can refuse to let the
+    contradiction ship silently — the warning rides back on the finish_scan
+    response so the mismatch is visible in the run record.
+    """
+    if vuln_count > 0:
+        return {}
+    haystack = f"{executive_summary}\n{technical_analysis}".lower()
+    hits = sorted({marker.strip() for marker in _WEAKNESS_MARKERS if marker in haystack})
+    if not hits:
+        return {}
+    return {
+        "narrative_warning": (
+            "The report narrative describes weaknesses but zero vulnerabilities were "
+            "filed. Any real issue mentioned in the narrative must be filed as a formal "
+            "record via the report tool — otherwise it is untracked, uncredited, and "
+            "contradicts the finding count and exit code. File the missing findings (or, "
+            "if the narrative overstates and nothing is actually a vulnerability, reword "
+            "it so it no longer reads as one) before the report goes out."
+        ),
+        "narrative_weakness_markers": hits,
+    }
 
 
 def _coverage_summary(agent_graph: dict[str, Any]) -> dict[str, Any]:
@@ -205,6 +269,20 @@ async def finish_scan(
        surface has no entry at all, dispatch an agent to cover it or
        record it as ``needs_follow_up`` before finishing. The response
        from this tool reports coverage counts and any unresolved rows.
+
+    6. **Narrative reconciliation.** Before finishing, reconcile the prose
+       you are about to submit against the findings actually on file via
+       ``list_reports``. Every weakness your ``executive_summary`` or
+       ``technical_analysis`` describes — a missing security header, an
+       unauthenticated/open service, an exposed endpoint — must correspond
+       to a filed report; describing an issue in the narrative while the
+       vulnerability count stays zero is a contradiction (the issue is then
+       untracked, uncredited, and the ``0``/clean exit code misreports the
+       run). If the narrative names an issue that is real, file it with the
+       report tool first; if it overstates and nothing is actually a
+       vulnerability, reword the narrative so it no longer reads as one. The
+       response flags this mismatch when it detects weakness language with
+       zero findings filed.
 
     **Calling this multiple times overwrites the previous report.**
     Make the single call comprehensive.

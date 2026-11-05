@@ -92,6 +92,30 @@ circumstances to exceed medium:
   how to obtain it, this is usually low/medium.
 - Enumeration that only confirms an account, domain, or version exists.
 
+## Missing Authentication: Observation vs. Demonstrated Access
+
+Do not confuse "an endpoint has no auth header" with "unauthenticated
+access to something protected". The first, on its own, is an
+observation. The second is a real finding, scored on what the access
+lets an attacker do:
+
+- An unauthenticated service that is *supposed* to be protected and that
+  you demonstrate serving sensitive data, admin actions, or write
+  operations to an anonymous caller is unauthorized access — rate it on
+  the demonstrated read/write impact, not down to informational. An open
+  Docker Registry allowing catalog enumeration and image pull is at
+  least a real confidentiality finding; one allowing unauthenticated
+  push/overwrite (supply-chain tampering) rises toward high/critical.
+- The absence of required authentication is an *aggravating* factor
+  (`PR:N` on a surface that should require privileges), not a reason to
+  withhold the finding. A bare `alg:none` token, an anonymous admin API,
+  or an exposed management/metrics/debug port each earns severity from
+  the access it grants, demonstrated with a request/response pair.
+
+What stays informational is missing auth with nothing sensitive behind
+it, or an endpoint that is *intended* to be public. Demonstrate what the
+anonymous request actually returns or changes, then rate that.
+
 ## Downgrade, Don't Delete
 
 A finding that turns out to be constrained gets a lower severity — not a
