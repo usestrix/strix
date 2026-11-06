@@ -161,12 +161,17 @@ def test_undecodable_records_do_not_hide_healthy_runs(tmp_path: Path) -> None:
 
 def test_non_list_targets_info_falls_back_to_the_instruction(tmp_path: Path) -> None:
     base = tmp_path / "strix_runs"
-    _write_run(base, "numeric_3333", {"targets_info": 123}, modified=2_000)
+    _write_run(
+        base,
+        "numeric_3333",
+        {"targets_info": 123, "user_instruction": "audit the login"},
+        modified=2_000,
+    )
     _write_run(base, "instructed_4444", {"user_instruction": "audit the login"}, modified=1_000)
 
     runs = {run.run_name: run for run in list_run_summaries(cwd=tmp_path)}
 
-    assert runs["numeric_3333"].target == ""
+    assert runs["numeric_3333"].target == "audit the login"
     assert runs["instructed_4444"].target == "audit the login"
 
 
