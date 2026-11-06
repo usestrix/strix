@@ -44,20 +44,27 @@ export interface AttackGraph {
   counts?: Record<string, number>;
 }
 
+export interface ModeledPathEdgeSummary {
+  from?: number;
+  to?: number;
+  provenance?: string;
+  probability?: number;
+  labels?: string[];
+  title?: string | null;
+}
+
 export interface ModeledPaths {
   note?: string;
   start?: number | null;
   target?: number | null;
   include_simulated_lateral?: boolean;
   bfs_node_ids?: number[];
-  bfs_edges?: Array<{
-    from?: number;
-    to?: number;
-    provenance?: string;
-    probability?: number;
-    labels?: string[];
-    title?: string | null;
-  }>;
+  bfs_edges?: ModeledPathEdgeSummary[];
+  /** Max path-product node ids (Dijkstra on -log(p)); modeled highlight aid. */
+  dijkstra_node_ids?: number[];
+  dijkstra_edges?: ModeledPathEdgeSummary[];
+  dijkstra_path_probability?: number | null;
+  weighting?: string;
 }
 
 export interface AttackPathMeta {

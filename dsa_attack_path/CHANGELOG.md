@@ -1,5 +1,15 @@
 # Changelog — dsa_attack_path
 
+## 0.5.1 — Dijkstra ids in meta.modeled_paths (PA-8)
+
+### Added
+- `dijkstra_node_ids` / `dijkstra_edges` / `dijkstra_path_probability` in `meta.modeled_paths` (Python mirror of C++ `-log(p)` Dijkstra; BFS fields unchanged).
+- SPA rose “DJ” highlight alongside sky BFS; `analysis.txt` remains the engine transcript fallback.
+- Bridge tests for product preference + zero-probability skip; backend asserts Dijkstra ids when artifacts (and engine E2E) run.
+
+### Verified
+- Bridge **17 OK**; backend **6 OK**; viewer reader **3 passed**.
+
 ## 0.5.0 — Phase 5 tests, eval, docs
 
 ### Added / polished

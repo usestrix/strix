@@ -57,6 +57,17 @@ class AnalyzeRunTest(unittest.TestCase):
         self.assertIn("modeled_paths", meta)
         self.assertIn("bfs_node_ids", meta["modeled_paths"])
         self.assertGreaterEqual(len(meta["modeled_paths"]["bfs_node_ids"]), 1)
+        self.assertIn("dijkstra_node_ids", meta["modeled_paths"])
+        self.assertGreaterEqual(len(meta["modeled_paths"]["dijkstra_node_ids"]), 1)
+        self.assertEqual(
+            meta["modeled_paths"]["dijkstra_node_ids"][0],
+            meta["modeled_paths"]["start"],
+        )
+        self.assertEqual(
+            meta["modeled_paths"]["dijkstra_node_ids"][-1],
+            meta["modeled_paths"]["target"],
+        )
+        self.assertIsNotNone(meta["modeled_paths"].get("dijkstra_path_probability"))
 
         # No MODELED_LATERAL edges when default options are used.
         lateral = [
@@ -112,6 +123,11 @@ class AnalyzeRunTest(unittest.TestCase):
         text = Path(meta["artifacts"]["analysis_txt"]).read_text(encoding="utf-8")
         self.assertIn("MODELED attack-path analysis", text)
         self.assertIn("not confirmed multi-hop", text)
+        # Engine transcript remains the fallback; meta also carries Dijkstra ids.
+        modeled = meta["modeled_paths"]
+        self.assertGreaterEqual(len(modeled["dijkstra_node_ids"]), 2)
+        self.assertTrue(modeled["dijkstra_edges"])
+        self.assertIsNotNone(modeled["dijkstra_path_probability"])
 
 
 class AttackPathShimTest(unittest.TestCase):

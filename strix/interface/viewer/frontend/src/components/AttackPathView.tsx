@@ -31,7 +31,8 @@ function layoutGraph(
   nodes: GraphNode[],
   edges: AttackPathEdge[],
   showLateral: boolean,
-  highlightPairs: Set<string>
+  bfsPairs: Set<string>,
+  dijkstraPairs: Set<string>
 ): { rfNodes: Node[]; rfEdges: Edge[] } {
   const visibleEdges = edges.filter((e) => showLateral || !isLateralEdge(e));
   const g = new dagre.graphlib.Graph();
@@ -64,20 +65,39 @@ function layoutGraph(
     const id = `${edge.from}->${edge.to}`;
     g.setEdge(String(edge.from), String(edge.to));
     const simulated = edge.provenance === "simulated";
-    const onBfs = highlightPairs.has(`${edge.from}->${edge.to}`);
+    const onBfs = bfsPairs.has(`${edge.from}->${edge.to}`);
+    const onDijkstra = dijkstraPairs.has(`${edge.from}->${edge.to}`);
+    const tags: string[] = [];
+    if (onBfs) tags.push("BFS");
+    if (onDijkstra) tags.push("DJ");
+    if (!onBfs && !onDijkstra) tags.push(simulated ? "sim" : "finding");
+    // Sky = BFS, rose = Dijkstra-only, teal when both; keep finding/sim colors otherwise.
+    let stroke = simulated ? "#b45309" : "#34d399";
+    let strokeWidth = simulated ? 1.25 : 1.75;
+    if (onBfs && onDijkstra) {
+      stroke = "#2dd4bf";
+      strokeWidth = 2.75;
+    } else if (onBfs) {
+      stroke = "#38bdf8";
+      strokeWidth = 2.5;
+    } else if (onDijkstra) {
+      stroke = "#fb7185";
+      strokeWidth = 2.5;
+    }
     rfEdges.push({
       id,
       source: String(edge.from),
       target: String(edge.to),
-      animated: onBfs || !simulated,
-      label:
-        `${((edge.probability ?? 0) * 100).toFixed(0)}%` +
-        (onBfs ? " · BFS" : simulated ? " · sim" : " · finding"),
-      labelStyle: { fill: onBfs ? "#e2e8f0" : "#aaa", fontSize: 10 },
+      animated: onBfs || onDijkstra || !simulated,
+      label: `${((edge.probability ?? 0) * 100).toFixed(0)}% · ${tags.join("+")}`,
+      labelStyle: {
+        fill: onBfs || onDijkstra ? "#e2e8f0" : "#aaa",
+        fontSize: 10,
+      },
       style: {
-        stroke: onBfs ? "#38bdf8" : simulated ? "#b45309" : "#34d399",
-        strokeWidth: onBfs ? 2.5 : simulated ? 1.25 : 1.75,
-        strokeDasharray: simulated && !onBfs ? "5 4" : undefined,
+        stroke,
+        strokeWidth,
+        strokeDasharray: simulated && !onBfs && !onDijkstra ? "5 4" : undefined,
       },
     });
   }
@@ -134,22 +154,30 @@ export default function AttackPathView({ runName }: AttackPathViewProps) {
   }, [runName]);
 
   const graph = payload?.graph ?? null;
-  const highlightPairs = useMemo(() => {
+  const bfsPairs = useMemo(() => {
     const pairs = new Set<string>();
     for (const edge of payload?.meta?.modeled_paths?.bfs_edges ?? []) {
       if (edge.from != null && edge.to != null) pairs.add(`${edge.from}->${edge.to}`);
     }
     return pairs;
   }, [payload?.meta?.modeled_paths?.bfs_edges]);
+  const dijkstraPairs = useMemo(() => {
+    const pairs = new Set<string>();
+    for (const edge of payload?.meta?.modeled_paths?.dijkstra_edges ?? []) {
+      if (edge.from != null && edge.to != null) pairs.add(`${edge.from}->${edge.to}`);
+    }
+    return pairs;
+  }, [payload?.meta?.modeled_paths?.dijkstra_edges]);
   const layout = useMemo(() => {
     if (!graph) return { rfNodes: [] as Node[], rfEdges: [] as Edge[] };
     return layoutGraph(
       graph.nodes ?? [],
       graph.edges ?? [],
       showSimulatedLateral,
-      highlightPairs
+      bfsPairs,
+      dijkstraPairs
     );
-  }, [graph, showSimulatedLateral, highlightPairs]);
+  }, [graph, showSimulatedLateral, bfsPairs, dijkstraPairs]);
 
   const priority = useMemo(() => {
     if (!graph) return [] as AttackPathEdge[];
@@ -219,7 +247,10 @@ export default function AttackPathView({ runName }: AttackPathViewProps) {
             SIMULATED = modeling assumption
           </span>
           <span className="rounded border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-sky-300">
-            BFS highlight = modeled fewest-hop path (not confirmed pivot)
+            BFS = modeled fewest-hop (not confirmed pivot)
+          </span>
+          <span className="rounded border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-rose-300">
+            DJ = modeled max path-product / Dijkstra −log(p)
           </span>
         </div>
       </div>

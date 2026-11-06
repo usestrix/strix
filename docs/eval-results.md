@@ -1,8 +1,10 @@
-# DSA Attack Path — evaluation evidence (Phase 5)
+# DSA Attack Path — evaluation evidence (Phase 5 + PA-8)
 
 Recorded on the project Windows machine (`c:\Users\ADMIN\Documents\project-attt`), 2026-11-07.
 
 Environment: CMake 4.x, TDM-GCC g++ 10.3, Python 3.14, Node/npm for viewer SPA.
+
+**PA-8:** `meta.modeled_paths` now includes `dijkstra_node_ids` / `dijkstra_edges` / `dijkstra_path_probability` (Python mirror of C++ `-log(p)` Dijkstra). `analysis.txt` remains the richer CLI fallback.
 
 ## Commands and results
 
@@ -24,7 +26,7 @@ cd dsa_attack_path\bridge
 python -m unittest discover -s tests -v
 ```
 
-**Result:** `Ran 15 tests in ~0.2s` — **OK** (includes `test_paths.PathsTest`)
+**Result:** `Ran 17 tests in ~0.2s` — **OK** (includes BFS + Dijkstra `test_paths.PathsTest`)
 
 ### Backend
 
@@ -33,7 +35,7 @@ cd dsa_attack_path\backend
 python -m unittest discover -s tests -v
 ```
 
-**Result:** `Ran 6 tests in ~0.3s` — **OK** (includes C++ E2E when `build\strix_dsa_cli.exe` present; asserts `meta.modeled_paths`)
+**Result:** `Ran 6 tests in ~0.3s` — **OK** (includes C++ E2E when `build\strix_dsa_cli.exe` present; asserts `bfs_node_ids` + `dijkstra_node_ids`)
 
 ### Viewer artifact reader
 
@@ -50,10 +52,10 @@ python -m pytest tests/test_attack_path_viewer.py -q
 | Suite | Pass count |
 |-------|------------|
 | C++ ctest | 1 |
-| Bridge unittest | 15 |
+| Bridge unittest | 17 |
 | Backend unittest | 6 |
 | Viewer pytest | 3 |
-| **Combined** | **25** |
+| **Combined** | **27** |
 
 ## Demo smoke (manual)
 
@@ -64,7 +66,8 @@ python -m strix_dsa_backend .\fixtures\sample_run_dir --engine ..\build\strix_ds
 ```
 
 Expect `attack_path/{attack_graph.json,topology.txt,analysis.txt,meta.json}` with
-`product_defaults.allow_simulated_lateral=false` and non-empty `modeled_paths.bfs_node_ids`.
+`product_defaults.allow_simulated_lateral=false` and non-empty
+`modeled_paths.bfs_node_ids` + `modeled_paths.dijkstra_node_ids`.
 
 ## Notes
 

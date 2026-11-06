@@ -148,7 +148,7 @@ strix view my-run
 ## Phase 5 polish (eval / docs / disclaimer)
 
 - **Canonical disclaimer:** `dsa_attack_path/bridge/strix_dsa_bridge/constants.py` (`DISCLAIMER` / `DISCLAIMER_BANNER`) — mirrored in backend analysis headers, viewer API fallback, and SPA copy.
-- **`meta.json` → `modeled_paths`:** optional BFS node/edge id arrays for UI highlight (same graph, no schema fork). Sky “BFS” edges in the SPA are modeled fewest-hop aids, not confirmed pivots.
+- **`meta.json` → `modeled_paths`:** optional BFS + Dijkstra node/edge id arrays for UI highlight (same graph, no schema fork). Sky “BFS” = fewest hops; rose “DJ” = max path-product via `-log(p)` (matches C++). Both are modeled aids, not confirmed pivots. `analysis.txt` remains the engine transcript fallback.
 - **Runbook:** `dsa_attack_path/RUNBOOK.md`
 - **Eval evidence:** `docs/eval-results.md`
 - Framing: thesis-layered DSA module beside Strix — not a rewrite of Strix agents.
