@@ -11,7 +11,7 @@
 | Origin remote | `origin` → https://github.com/usestrix/strix.git (**no push access**) |
 | Branch | `cursor/dsa-attack-path-phase1-ae73` |
 | PR | https://github.com/usestrix/strix/pull/1666 |
-| Last commit (Phase 5) | See git log on branch after Phase 5 push |
+| Last commit (Phase 5) | `12f06ae` — Phase 5 eval polish (pushed to fork) |
 | Agent Store (docs) | `C:\Users\ADMIN\AppData\Local\Cursor\AgentStores\cursor_agent_stores\bc-9c633c18-02e3-48ad-ac01-70b368f20dea\files\docs\` |
 | Tracker parent | PA-1 (thesis product); Phase tasks PA-2…PA-6 |
 
