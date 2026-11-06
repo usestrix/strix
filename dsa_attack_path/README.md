@@ -38,4 +38,14 @@ Arguments: `<topology> <start_id> <target_id> [max_depth=12] [max_paths=10000]`
 | `tests/test_engine.cpp` | Unit tests |
 | `data/simulated_lab_network.txt` | Labeled synthetic topology |
 
+## Phase 2 bridge
+
+Python bridge under `bridge/` converts Strix-shaped `vulnerabilities.json` into a labeled graph + Phase-1 topology. See `bridge/README.md`.
+
+```powershell
+cd bridge
+python -m unittest discover -s tests -v
+python -m strix_dsa_bridge analyze .\fixtures\sample_vulnerabilities.json --run-json .\fixtures\sample_run.json -o .\out --allow-simulated-lateral --engine ..\build\strix_dsa_cli.exe
+```
+
 Architecture / Strix integration plan: see Project store `docs/strix-dsa-architecture.md` and repo `docs/strix-dsa-architecture.md`.

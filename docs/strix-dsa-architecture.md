@@ -1,4 +1,4 @@
-# Strix DSA Attack Path Analysis — Architecture (Phase 1)
+# Strix DSA Attack Path Analysis — Architecture (Phases 1–2)
 
 Canonical copy also lives in the Project store at
 `docs/strix-dsa-architecture.md` (agent store). Content below matches that plan.
@@ -28,17 +28,17 @@ Related prior art (ideas reused, not copied wholesale): local thesis project und
 Strix scan (unchanged)
     │
     ▼
-strix_runs/<run>/vulnerabilities.json   ← Phase 2 bridge (later)
+strix_runs/<run>/vulnerabilities.json (+ optional run.json)
     │
     ▼
-Python adapter (Phase 2)  ──JSON──►  dsa_attack_path CLI / library (Phase 1 ✓)
+Python bridge (Phase 2 ✓)  ──attack_graph.json + topology.txt──►  C++ engine (Phase 1 ✓)
     │                                         │
     ▼                                         ▼
 Optional viewer API (Phase 3–4)         BFS / DFS / Dijkstra / bottleneck
 ```
 
-- **Independent module**: `dsa_attack_path/` at repo root. Strix Python package is untouched.
-- **Simulated graphs in Phase 1**: demo/tests use labeled synthetic topology only — never presented as real pentest output.
+- **Independent modules**: `dsa_attack_path/` (C++) and `dsa_attack_path/bridge/` (Python). Strix package is untouched.
+- **Simulated vs finding**: every node/edge carries `provenance` (`from_finding` | `simulated`) plus labels. Never present modeled paths as confirmed multi-hop exploits.
 
 ## Graph data model
 
@@ -75,9 +75,26 @@ Cost for Dijkstra: `w = -log(p)` so maximum path-product probability ≡ shortes
 
 ## Python ↔ C++ boundary
 
-**Phase 1 (now):** native C++17 library + CLI. I/O: topology file + stdout text summary. Build with CMake + g++/MinGW.
+**Phase 1:** native C++17 library + CLI. I/O: topology TXT + stdout summary.
 
-**Phase 2 (planned):** thin Python wrapper invoking the CLI (or linking via `ctypes`/pybind11 later) with JSON graph payloads. Keep the C++ API pure (no Strix imports). The bridge owns Strix field → graph mapping and must label outputs as *modeled* paths from reported findings, not confirmed multi-hop exploits.
+**Phase 2 (bridge contract):** `dsa_attack_path/bridge/strix_dsa_bridge` (stdlib-only) reads Strix-shaped JSON and emits:
+
+| Artifact | Role |
+|----------|------|
+| `attack_graph.json` | Full contract: disclaimer, counts, warnings, per-node/edge `provenance` + `finding_ids` + `labels` |
+| `topology.txt` | Phase-1 C++ loader format; provenance encoded in name prefixes (`[SIM]`, `[FINDING]`, `[RUN]`) and header comments |
+
+### Mapping heuristics
+
+1. **Host nodes** from unique `target` hosts (`from_finding`); zone hint from URL (`DMZ` / `Lab` / `Internal`).
+2. **Endpoint nodes** from `target` + `endpoint` when present (`from_finding`).
+3. **Exploit-step edges** host → endpoint with probability from severity/CVSS (`from_finding`).
+4. **Simulated entry node** `[SIM] External Attacker` → each host (`simulated`, opt-out via `--no-simulated-entry`).
+5. **Optional simulated lateral** edges between hosts (`--allow-simulated-lateral`) — always warned + labeled.
+6. **Run targets** without findings become `[RUN]` hosts (`FROM_RUN_TARGET`).
+7. **Crown jewel**: highest-impact non-entry node marked `MODELED_CROWN_JEWEL` (modeling choice, not proof).
+
+CLI: `python -m strix_dsa_bridge convert|analyze …`. Keep C++ free of Strix imports.
 
 ## Future dashboard hooks (Phases 3–4)
 
@@ -100,8 +117,8 @@ Strix remains Apache-2.0. New DSA module files carry project attribution and not
 
 ## Phase boundaries
 
-1. **Done in this delivery:** graph model, C++ engine, CMake, unit tests, simulated demo CLI, this architecture note.
-2. **Next:** Strix → graph bridge from `vulnerabilities.json`.
-3. Backend wiring into run artifacts.
+1. **Done:** graph model, C++ engine, CMake, unit tests, simulated demo CLI.
+2. **Done:** Strix → graph bridge (`vulnerabilities.json` / `run.json` → labeled graph + C++ topology).
+3. **Next:** Backend wiring into run artifacts / viewer API.
 4. Viewer visualization.
 5. Eval/docs polish.

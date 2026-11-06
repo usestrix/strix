@@ -102,3 +102,8 @@ schema.graphql
 # DSA Attack Path local CMake build
 dsa_attack_path/build/
 
+# DSA bridge local outputs / unittest scratch
+dsa_attack_path/bridge/out/
+dsa_attack_path/bridge/tests/_cli_out/
+dsa_attack_path/bridge/tests/*_out/
+

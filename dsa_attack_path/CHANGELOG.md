@@ -1,5 +1,27 @@
 # Changelog — dsa_attack_path
 
+## 0.2.0 — Phase 2 bridge
+
+### Added
+- Independent Python package `bridge/strix_dsa_bridge` (stdlib only; no Strix imports).
+- Mapping heuristics: host/endpoint nodes from findings, severity→probability exploit edges, labeled simulated entry (+ optional lateral), run-target hosts, modeled crown jewel.
+- CLI: `python -m strix_dsa_bridge convert|analyze`.
+- Fixture `bridge/fixtures/sample_vulnerabilities.json` + `sample_run.json` (schema-shaped, explicitly synthetic).
+- Unit tests (`python -m unittest discover -s bridge/tests -v`) — 14 passing on this machine.
+- Architecture doc updated with bridge contract / provenance rules.
+
+### How to run / test
+```powershell
+cd dsa_attack_path\bridge
+python -m unittest discover -s tests -v
+python -m strix_dsa_bridge convert .\fixtures\sample_vulnerabilities.json --run-json .\fixtures\sample_run.json -o .\out --allow-simulated-lateral
+python -m strix_dsa_bridge analyze .\fixtures\sample_vulnerabilities.json --run-json .\fixtures\sample_run.json -o .\out --allow-simulated-lateral --engine ..\build\strix_dsa_cli.exe
+```
+
+### Not in this release
+- Viewer / backend API wiring (Phase 3)
+- Automatic post-scan hook inside Strix runtime
+
 ## 0.1.0 — Phase 1 MVP
 
 ### Added
