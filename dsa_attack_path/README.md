@@ -60,4 +60,15 @@ python -m strix_dsa_backend <run-name-or-path> --engine ..\build\strix_dsa_cli.e
 # strix attack-path <run-name-or-path>
 ```
 
+## Phase 4 dashboard
+
+Local viewer **Attack path** tab + `GET /api/attack-path` (provenance badges; lateral off by default).
+
+```powershell
+python -m strix_dsa_backend <run> --engine .\build\strix_dsa_cli.exe
+strix view <run>
+# open Attack path in the sidebar
+python -m pytest tests/test_attack_path_viewer.py -q
+```
+
 Architecture / Strix integration plan: see Project store `docs/strix-dsa-architecture.md` and repo `docs/strix-dsa-architecture.md`.

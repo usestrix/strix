@@ -45,8 +45,16 @@ import { RunDetails } from "@/components/RunDetails";
 import { TrustToast } from "@/components/TrustToast";
 import FeedbackView from "@/components/FeedbackView";
 import { ProInlineCta } from "@/components/ProCta";
+import AttackPathView from "@/components/AttackPathView";
 
-export type View = "overview" | "issues" | "agents" | "history" | "email" | "feedback";
+export type View =
+  | "overview"
+  | "issues"
+  | "agents"
+  | "attack-path"
+  | "history"
+  | "email"
+  | "feedback";
 
 const TRUST_BANNER =
   "Your findings stay on your machine. They're rendered here locally in your browser and never uploaded or stored by Strix.";
@@ -390,6 +398,12 @@ export default function App() {
                     Agents ({agentCount})
                   </TabButton>
                 )}
+                <TabButton
+                  active={view === "attack-path"}
+                  onClick={() => userSetView("attack-path")}
+                >
+                  Attack path
+                </TabButton>
               </div>
 
               {view === "overview" ? (
@@ -402,6 +416,10 @@ export default function App() {
                   finished={run.finished}
                   onOpenEmail={openEmailFromOverview}
                 />
+              ) : view === "attack-path" ? (
+                <div className="-mx-3 sm:-mx-6 -mb-6 min-h-[70vh]">
+                  <AttackPathView runName={activeRun} />
+                </div>
               ) : view === "agents" && agentCount > 0 ? (
                 <AgentsTab run={run} canSteer={canSteer} />
               ) : selected ? (

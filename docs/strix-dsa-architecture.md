@@ -1,4 +1,4 @@
-# Strix DSA Attack Path Analysis — Architecture (Phases 1–3)
+# Strix DSA Attack Path Analysis — Architecture (Phases 1–4)
 
 Canonical copy also lives in the Project store at
 `docs/strix-dsa-architecture.md` (agent store). Content below matches that plan.
@@ -39,12 +39,12 @@ strix_runs/<run>/attack_path/
   attack_graph.json | topology.txt | analysis.txt | meta.json
     │
     ▼
-Viewer API / SPA (Phase 4)
+Viewer `/api/attack-path` + Attack path SPA tab (Phase 4 ✓)
 ```
 
 - **Independent modules**: `dsa_attack_path/{,bridge/,backend/}`. Agent/scanner loops unchanged.
 - **Thin Strix hook**: optional `strix attack-path` subcommand (`strix/interface/attack_path_cli.py`) delegates to the backend when present; missing module → friendly exit.
-- **Product default**: `allow_simulated_lateral=False`. Opt-in only via `--allow-simulated-lateral`.
+- **Product default**: `allow_simulated_lateral=False` (backend + UI checkbox off by default).
 - **Simulated vs finding**: provenance + labels on every node/edge; never present modeled paths as confirmed multi-hop exploits.
 
 ## Graph data model
@@ -125,12 +125,25 @@ strix_runs/<run>/
 
 Engine discovery: `dsa_attack_path/build/strix_dsa_cli[.exe]` or `STRIX_DSA_ENGINE`. Missing engine still writes graph artifacts and records `engine.skipped_reason` in `meta.json`.
 
-## Future dashboard hooks (Phase 4)
+## Phase 4 dashboard (viewer)
 
-- Extend local viewer with read-only `/api/attack-path` serving `attack_path/attack_graph.json` + `meta.json` (and optionally `analysis.txt`).
-- SPA: provenance badges (`FROM_FINDING` vs `SIMULATED`), path highlight, bottleneck list.
-- Do not block Strix scan UX if artifacts or the DSA binary are missing; degrade gracefully.
-- Keep lateral toggle off by default in UI.
+| Piece | Role |
+|-------|------|
+| `GET /api/attack-path` | Reads `attack_path/{attack_graph.json,meta.json,analysis.txt}`; returns `{available, reason, graph, meta, analysis_text, disclaimer}` — **same schema**, no second model |
+| SPA **Attack path** tab | React Flow graph with provenance badges; defense-priority list from `from_finding` edges; engine summary text |
+| Missing artifacts | `available=false` + copy that explains how to generate; does not break Issues/Agents/Overview |
+| Simulated lateral UI | Checkbox **off by default**; only reveals edges labeled `MODELED_LATERAL` |
+
+How to run locally:
+
+```powershell
+# 1) Ensure a run has attack_path/ artifacts
+python -m strix_dsa_backend path\to\strix_runs\my-run --engine dsa_attack_path\build\strix_dsa_cli.exe
+
+# 2) Open the local viewer on that run
+strix view my-run
+# Sidebar / mobile tab: "Attack path"
+```
 
 ## Algorithm justification
 
@@ -150,5 +163,5 @@ Strix remains Apache-2.0. New DSA module files carry project attribution and not
 1. **Done:** graph model, C++ engine, CMake, unit tests, simulated demo CLI.
 2. **Done:** Strix → graph bridge (`vulnerabilities.json` / `run.json` → labeled graph + C++ topology).
 3. **Done:** Backend wiring into `strix_runs/<run>/attack_path/` + optional `strix attack-path` CLI.
-4. **Next:** Viewer / dashboard visualization.
-5. Eval/docs polish.
+4. **Done:** Viewer `/api/attack-path` + Attack path SPA visualization with provenance.
+5. **Next:** Eval/docs polish.

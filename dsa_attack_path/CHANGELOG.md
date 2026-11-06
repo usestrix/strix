@@ -1,5 +1,23 @@
 # Changelog — dsa_attack_path
 
+## 0.4.0 — Phase 4 dashboard visualization
+
+### Added
+- Viewer API `GET /api/attack-path` (`strix/interface/viewer/attack_path.py`) reusing `attack_graph.json` + `meta.json` + `analysis.txt`.
+- SPA **Attack path** tab: provenance badges, defense-priority list, simulated-lateral checkbox **off by default**, graceful empty state.
+- Rebuilt committed viewer static bundle.
+- Unit tests: `tests/test_attack_path_viewer.py` (3 passed).
+
+### How to run
+```powershell
+python -m strix_dsa_backend <run> --engine dsa_attack_path\build\strix_dsa_cli.exe
+strix view <run>   # open Attack path in sidebar
+python -m pytest tests/test_attack_path_viewer.py -q
+```
+
+### Not in this release
+- Formal eval harness / thesis polish (Phase 5)
+
 ## 0.3.0 — Phase 3 backend integration
 
 ### Added

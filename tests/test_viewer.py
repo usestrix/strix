@@ -490,7 +490,13 @@ def test_run_data_requires_session(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     httpd, url, token = serve(run_dir, open_browser=False)
     try:
         cookie = _session_cookie(url, token)
-        for path in ("/api/run", "/api/vulnerabilities", "/api/report", "/api/transcript"):
+        for path in (
+            "/api/run",
+            "/api/vulnerabilities",
+            "/api/report",
+            "/api/transcript",
+            "/api/attack-path",
+        ):
             assert _get_status(url + path) == 403, path
             assert _get_status(url + path, cookie=f"{_cookie_name(url)}=wrong") == 403, path
             assert _get_status(url + path, cookie=cookie) == 200, path

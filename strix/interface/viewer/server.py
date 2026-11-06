@@ -28,6 +28,7 @@ from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 from strix.core.paths import run_record_path
 from strix.interface.viewer import auth
+from strix.interface.viewer.attack_path import read_attack_path
 from strix.interface.viewer.transcript import (
     build_run_state,
     primary_target,
@@ -283,6 +284,10 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 self._send_json(HTTPStatus.OK, {"markdown": read_report_markdown(run_dir)})
             elif path == "/api/transcript":
                 self._send_json(HTTPStatus.OK, build_run_state(run_dir))
+            elif path == "/api/attack-path":
+                # Phase-4 DSA view: serves attack_path/ artifacts when present;
+                # otherwise available=false so the SPA can degrade gracefully.
+                self._send_json(HTTPStatus.OK, read_attack_path(run_dir))
             else:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
 

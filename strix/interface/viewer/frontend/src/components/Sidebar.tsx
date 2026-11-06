@@ -7,6 +7,7 @@ import {
   Mail,
   LogOut,
   ChevronsUpDown,
+  Route,
 } from "lucide-react";
 import { LuGitPullRequestArrow } from "react-icons/lu";
 import { VscExtensions } from "react-icons/vsc";
@@ -251,6 +252,12 @@ export default function Sidebar({
                 onClick={() => onSelectView("agents")}
               />
             )}
+            <NavItem
+              icon={<Route className="h-4 w-4" />}
+              label="Attack path"
+              active={view === "attack-path"}
+              onClick={() => onSelectView("attack-path")}
+            />
             {mcpConnections.length > 0 && (
               <McpConnectionsPanel connections={mcpConnections} inUse={mcpInUse} />
             )}

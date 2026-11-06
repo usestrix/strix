@@ -1,4 +1,5 @@
 import type { Vulnerability } from "@/types/issues";
+import type { AttackPathPayload } from "@/types/attack-path";
 import {
   parseRunJson,
   parseVulnerabilitiesJson,
@@ -123,6 +124,20 @@ export async function fetchTranscript(runName?: string | null): Promise<Transcri
   return {
     agents: Array.isArray(obj?.agents) ? obj.agents : [],
     events: Array.isArray(obj?.events) ? obj.events : [],
+  };
+}
+
+/** Modeled attack-path artifacts (Phase 4). Always returns a payload; available may be false. */
+export async function fetchAttackPath(runName?: string | null): Promise<AttackPathPayload> {
+  const obj = (await getJson("/api/attack-path" + runQuery(runName))) as Partial<AttackPathPayload>;
+  return {
+    available: obj?.available === true,
+    reason: typeof obj?.reason === "string" ? obj.reason : null,
+    graph: obj?.graph ?? null,
+    meta: obj?.meta ?? null,
+    analysis_text: typeof obj?.analysis_text === "string" ? obj.analysis_text : null,
+    disclaimer: typeof obj?.disclaimer === "string" ? obj.disclaimer : undefined,
+    simulated_lateral_default: obj?.simulated_lateral_default === true,
   };
 }
 
