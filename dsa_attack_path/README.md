@@ -48,4 +48,16 @@ python -m unittest discover -s tests -v
 python -m strix_dsa_bridge analyze .\fixtures\sample_vulnerabilities.json --run-json .\fixtures\sample_run.json -o .\out --allow-simulated-lateral --engine ..\build\strix_dsa_cli.exe
 ```
 
+## Phase 3 backend
+
+Post-run integration writes `strix_runs/<run>/attack_path/`. Simulated lateral off by default. See `backend/README.md`.
+
+```powershell
+cd backend
+python -m unittest discover -s tests -v
+python -m strix_dsa_backend <run-name-or-path> --engine ..\build\strix_dsa_cli.exe
+# optional Strix subcommand from repo checkout:
+# strix attack-path <run-name-or-path>
+```
+
 Architecture / Strix integration plan: see Project store `docs/strix-dsa-architecture.md` and repo `docs/strix-dsa-architecture.md`.

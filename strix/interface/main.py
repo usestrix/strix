@@ -64,6 +64,7 @@ Additional commands:
   strix cloud ...          Use the managed Strix platform
   strix auth ...           Manage model-subscription sign-in
   strix view [RUN]         View a completed or running scan
+  strix attack-path RUN    Optional DSA attack-path analysis for a run (thesis module)
   strix completions SHELL  Generate zsh, bash, or fish tab completion
 """
 
@@ -448,6 +449,13 @@ def main() -> None:
 
         run_view(sys.argv[2:])
         return
+
+    # Optional thesis DSA module: post-run attack-path analysis. Does not enter
+    # agent/scanner loops; simulated lateral stays off unless explicitly opted in.
+    if len(sys.argv) > 1 and sys.argv[1] == "attack-path":
+        from strix.interface.attack_path_cli import run_attack_path
+
+        sys.exit(run_attack_path(sys.argv[2:]))
 
     # `strix auth …` manages model-subscription sign-in and exits; it needs no
     # target, Docker, or scan setup.

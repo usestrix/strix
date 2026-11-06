@@ -1,5 +1,27 @@
 # Changelog — dsa_attack_path
 
+## 0.3.0 — Phase 3 backend integration
+
+### Added
+- `backend/strix_dsa_backend`: post-run analyzer writing `strix_runs/<run>/attack_path/` artifacts.
+- Product default: simulated lateral **OFF**; opt-in `--allow-simulated-lateral` only.
+- Optional Strix shim: `strix attack-path` → `strix/interface/attack_path_cli.py` (no agent-loop hook).
+- Integration tests under `backend/tests/` (6 cases, including C++ E2E when built).
+
+### How to run / test
+```powershell
+cd dsa_attack_path\backend
+python -m unittest discover -s tests -v
+python fixtures\make_fixture_run.py .\fixtures\sample_run_dir
+python -m strix_dsa_backend .\fixtures\sample_run_dir --engine ..\build\strix_dsa_cli.exe
+# From repo root with Strix installed:
+#   strix attack-path .\dsa_attack_path\backend\fixtures\sample_run_dir
+```
+
+### Not in this release
+- Viewer `/api/attack-path` + SPA (Phase 4)
+- Automatic post-scan hook inside `ReportState` (intentionally avoided)
+
 ## 0.2.0 — Phase 2 bridge
 
 ### Added

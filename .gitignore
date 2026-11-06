@@ -107,3 +107,6 @@ dsa_attack_path/bridge/out/
 dsa_attack_path/bridge/tests/_cli_out/
 dsa_attack_path/bridge/tests/*_out/
 
+# DSA backend generated fixture runs / outputs
+dsa_attack_path/backend/fixtures/sample_run_dir/
+

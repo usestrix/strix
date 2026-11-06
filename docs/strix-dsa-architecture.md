@@ -1,4 +1,4 @@
-# Strix DSA Attack Path Analysis — Architecture (Phases 1–2)
+# Strix DSA Attack Path Analysis — Architecture (Phases 1–3)
 
 Canonical copy also lives in the Project store at
 `docs/strix-dsa-architecture.md` (agent store). Content below matches that plan.
@@ -25,20 +25,27 @@ Related prior art (ideas reused, not copied wholesale): local thesis project und
 ## High-level design
 
 ```
-Strix scan (unchanged)
+Strix scan / agent loops (unchanged)
     │
     ▼
-strix_runs/<run>/vulnerabilities.json (+ optional run.json)
+strix_runs/<run>/{vulnerabilities.json, run.json}
+    │
+    │  explicit post-run CLI only (no agent hard-wire)
+    ▼
+Backend (Phase 3 ✓) → Bridge (Phase 2 ✓) → C++ engine (Phase 1 ✓)
     │
     ▼
-Python bridge (Phase 2 ✓)  ──attack_graph.json + topology.txt──►  C++ engine (Phase 1 ✓)
-    │                                         │
-    ▼                                         ▼
-Optional viewer API (Phase 3–4)         BFS / DFS / Dijkstra / bottleneck
+strix_runs/<run>/attack_path/
+  attack_graph.json | topology.txt | analysis.txt | meta.json
+    │
+    ▼
+Viewer API / SPA (Phase 4)
 ```
 
-- **Independent modules**: `dsa_attack_path/` (C++) and `dsa_attack_path/bridge/` (Python). Strix package is untouched.
-- **Simulated vs finding**: every node/edge carries `provenance` (`from_finding` | `simulated`) plus labels. Never present modeled paths as confirmed multi-hop exploits.
+- **Independent modules**: `dsa_attack_path/{,bridge/,backend/}`. Agent/scanner loops unchanged.
+- **Thin Strix hook**: optional `strix attack-path` subcommand (`strix/interface/attack_path_cli.py`) delegates to the backend when present; missing module → friendly exit.
+- **Product default**: `allow_simulated_lateral=False`. Opt-in only via `--allow-simulated-lateral`.
+- **Simulated vs finding**: provenance + labels on every node/edge; never present modeled paths as confirmed multi-hop exploits.
 
 ## Graph data model
 
@@ -96,11 +103,34 @@ Cost for Dijkstra: `w = -log(p)` so maximum path-product probability ≡ shortes
 
 CLI: `python -m strix_dsa_bridge convert|analyze …`. Keep C++ free of Strix imports.
 
-## Future dashboard hooks (Phases 3–4)
+## Phase 3 backend integration
 
-- Extend local viewer with read-only `/api/attack-path` returning analysis JSON next to `/api/vulnerabilities`.
-- SPA panel: graph canvas, shortest/representative path highlight, bottleneck list — consume the same JSON schema as the CLI.
-- Do not block Strix scan UX if the DSA binary is missing; degrade gracefully.
+| Entry | Behavior |
+|-------|----------|
+| `python -m strix_dsa_backend <run\|path>` | Resolve `strix_runs/<run>/`, run bridge, optionally C++ engine, write `attack_path/` |
+| `strix attack-path <run\|path>` | Same, via thin shim (checkout with `dsa_attack_path/` present) |
+
+Persist layout (verified):
+
+```text
+strix_runs/<run>/
+  vulnerabilities.json
+  run.json
+  attack_path/          # created by Phase 3; not written by agents
+    attack_graph.json
+    topology.txt
+    analysis.txt
+    meta.json
+```
+
+Engine discovery: `dsa_attack_path/build/strix_dsa_cli[.exe]` or `STRIX_DSA_ENGINE`. Missing engine still writes graph artifacts and records `engine.skipped_reason` in `meta.json`.
+
+## Future dashboard hooks (Phase 4)
+
+- Extend local viewer with read-only `/api/attack-path` serving `attack_path/attack_graph.json` + `meta.json` (and optionally `analysis.txt`).
+- SPA: provenance badges (`FROM_FINDING` vs `SIMULATED`), path highlight, bottleneck list.
+- Do not block Strix scan UX if artifacts or the DSA binary are missing; degrade gracefully.
+- Keep lateral toggle off by default in UI.
 
 ## Algorithm justification
 
@@ -119,6 +149,6 @@ Strix remains Apache-2.0. New DSA module files carry project attribution and not
 
 1. **Done:** graph model, C++ engine, CMake, unit tests, simulated demo CLI.
 2. **Done:** Strix → graph bridge (`vulnerabilities.json` / `run.json` → labeled graph + C++ topology).
-3. **Next:** Backend wiring into run artifacts / viewer API.
-4. Viewer visualization.
+3. **Done:** Backend wiring into `strix_runs/<run>/attack_path/` + optional `strix attack-path` CLI.
+4. **Next:** Viewer / dashboard visualization.
 5. Eval/docs polish.
