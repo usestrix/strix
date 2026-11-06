@@ -15,6 +15,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import TYPE_CHECKING, Any
 
+import litellm
 import pytest
 from agents.model_settings import ModelSettings
 from agents.models import _openai_shared
@@ -285,8 +286,15 @@ def test_provider_serves_chat_completions_through_the_tolerant_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The #1357 setup: an openai/ model id on a custom base URL.
+    # configure_sdk_model_defaults writes these process-wide; register them so
+    # they are put back and later tests don't pick up the fake endpoint.
+    monkeypatch.setattr(_openai_shared, "_use_responses_by_default", True)
     monkeypatch.setattr(_openai_shared, "_default_openai_client", None)
     monkeypatch.setattr(_openai_shared, "_default_openai_key", None)
+    monkeypatch.setattr(litellm, "api_key", None)
+    monkeypatch.setattr(litellm, "api_base", None)
+    monkeypatch.setattr(litellm, "headers", litellm.headers)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("OPENAI_BASE_URL", "")
     monkeypatch.setenv("STRIX_LLM", "openai/zai-glm-latest")
     monkeypatch.setenv("LLM_API_KEY", "test-key")
