@@ -1693,6 +1693,7 @@ _VALID_REACHABILITY = frozenset(
     {
         "not_imported",
         "imported",
+        "not_reached",
         "vulnerable_symbol_used",
         "reachable_call_path",
         "unknown",
@@ -1840,6 +1841,9 @@ def _build_dependency_metadata(
 _REACHABILITY_EVIDENCE_LABELS = {
     "not_imported": "not imported by application code",
     "imported": "imported by application code; affected API usage unconfirmed",
+    "not_reached": (
+        "imported by application code; the vulnerable code of this advisory is not reached"
+    ),
     "vulnerable_symbol_used": "the advisory's affected API is used in application code",
     "reachable_call_path": (
         "a call path from application code to the vulnerable function was proven"
@@ -2157,6 +2161,11 @@ async def create_dependency_report(
       can evade static search).
     - ``imported`` — application code imports the package, but usage of
       the advisory's affected API was not confirmed.
+    - ``not_reached`` — application code imports the package, and the
+      analysis showed that the vulnerable code of this advisory does not
+      run here (the affected API has no caller, the only call site is
+      behind a condition that is false in this codebase, the parent
+      package never reaches it, ...). Per advisory, never per package.
     - ``vulnerable_symbol_used`` — the advisory's affected
       function/class/API appears in application code.
     - ``reachable_call_path`` — a call-graph tool (e.g. ``govulncheck``)
@@ -2210,8 +2219,9 @@ async def create_dependency_report(
             repository root. This binds the finding to its exact file so
             remediation can target the right repository.
         reachability: Usage-evidence level from static analysis — one of
-            ``not_imported`` / ``imported`` / ``vulnerable_symbol_used`` /
-            ``reachable_call_path`` / ``unknown``. Claim only what the
+            ``not_imported`` / ``imported`` / ``not_reached`` /
+            ``vulnerable_symbol_used`` / ``reachable_call_path`` /
+            ``unknown``. Claim only what the
             evidence proves; when in doubt use ``unknown``.
         reachability_evidence: **Required.** The concrete proof for the
             claimed level, or, for ``unknown``, what you searched and why

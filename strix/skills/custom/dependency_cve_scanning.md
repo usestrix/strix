@@ -136,8 +136,12 @@ fi
 - A finding with a call stack ⇒ `reachability=reachable_call_path`, put the
   call-path excerpt (entrypoint → vulnerable function) in
   `reachability_evidence`.
-- Listed as affecting a required module but with no reachable symbol ⇒ fall
-  back to the import/symbol checks below (`imported` / `not_imported`).
+- Listed as affecting a required module but with no reachable symbol ⇒ the
+  call graph found no path to the vulnerable function: `not_reached` when
+  application code imports the module (cite the govulncheck result and the
+  import), `not_imported` when nothing imports it. When govulncheck could not
+  analyze the module (build errors, missing deps), fall back to the
+  import/symbol checks below instead of claiming a level.
 
 **All other ecosystems — import check, then symbol match:**
 
@@ -148,15 +152,21 @@ fi
    `PyYAML` → `yaml`). No hits ⇒ `not_imported`, with the search scope stated
    in `reachability_evidence`. For a **transitive** dependency, the check is
    whether application code imports it directly; if not, it is reachable only
-   through the direct dependency — check whether the direct dep's usage can
-   hit it (if unclear, use `imported` when the direct dep is used at all).
+   through the direct dependency — inspect the direct dependency's own code
+   (its installed sources, or the class references of its jar) for the
+   affected API. Never referenced ⇒ `not_reached` (below), citing the
+   artifact you inspected; referenced ⇒ the direct dependency's call is the
+   usage site, continue with the symbol match from there; unclear ⇒
+   `imported` when the direct dep is used at all.
 2. **Symbol match — per CVE, not per package.** Read each CVE's own advisory
    (GHSA/NVD/OSV `affected[].ecosystem_specific.imports` or the advisory
    text) for the affected functions/classes/APIs. Search application code for
    those symbols (`ast-grep` pattern or `rg -n`). Hits ⇒
    `vulnerable_symbol_used`, with repo-relative `file:line` of each hit (up
-   to a handful) in `reachability_evidence`. Imported but no affected-symbol
-   usage found (or the advisory names no symbols) ⇒ `imported`.
+   to a handful) in `reachability_evidence`. Imported, search completed, and
+   you can say why the vulnerable code does not run here ⇒ `not_reached`
+   (below). Imported but the search was partial, the result is unclear, or
+   the advisory names no symbols ⇒ `imported`.
    Different CVEs on the same package usually affect **different** symbols
    (one hits a parser, another a header check) — never copy one CVE's
    verdict/evidence onto its siblings; run the symbol search against each
@@ -182,6 +192,23 @@ fi
    dynamic loading, unparsable sources) ⇒ `unknown` and say why in
    `assumptions`.
 
+**`not_reached` — loaded, but this CVE's vulnerable code does not run here.**
+Use it when the package is imported (so `not_imported` is wrong) and you
+showed that the code path the advisory describes cannot execute in this
+codebase, and `reachability_evidence` says what you checked. The judgement is
+per CVE: it rests on what triggers *this* flaw (an affected function, a mode,
+an option, a kind of input) against what this code does. Situations that
+commonly support it, as inspiration rather than a checklist: the affected API
+has no caller in application code and the search was complete; the only call
+site is behind a condition that is false here (a polyfill for an older
+runtime, a flag that is off, a path only a dev tool runs); a transitive
+package's parent never references the affected API; the package is build or
+test tooling that the shipped artifact never executes; a library compiled into
+the runtime whose flaw sits in a mode the application never uses (a TLS server
+path in a client-only service). An inconclusive or skipped check stays
+`imported`. `not_reached` is still an evidence level, not proof of safety:
+dynamic dispatch, reflection and framework wiring can evade static search.
+
 Cheap-first budgeting: the import check is one search per package — always do
 it. Do the per-CVE symbol match for every CVE whose advisory names affected
 symbols (they can be batched into one multi-pattern search per package);
@@ -189,13 +216,18 @@ prioritize `critical`/`high`/KEV when the budget is tight; a CVE whose symbol
 search was skipped may still be reported as `imported` (the import check is
 real evidence), but its `reachability_evidence` must state that the
 affected-symbol check was not performed, so a skipped search is never
-mistaken for a completed one with no hits. Never let this analysis stall
+mistaken for a completed one with no hits, and is never filed as
+`not_reached`. Never let this analysis stall
 reporting — `unknown` with a reason beats an unverified claim.
 
 Anti-overclaim rules:
 
 - `not_imported` still does NOT mean safe (dynamic `import()`/reflection/
   framework wiring evade static search) — never phrase it as "not exploitable".
+- `not_reached` needs the check that shows the vulnerable code does not run,
+  named in `reachability_evidence`; "no call found" after a partial search is
+  `imported`, and one CVE's `not_reached` never carries over to a sibling CVE
+  on the same package.
 - `reachable_call_path` is reserved for call-graph tools (govulncheck); a
   symbol grep hit is `vulnerable_symbol_used`, no matter how convinced you are.
 - The tool rejects any level other than `unknown` without
