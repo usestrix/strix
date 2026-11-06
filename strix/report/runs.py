@@ -76,9 +76,10 @@ def _title(record: dict[str, Any], findings: Any) -> str:
 
 def _describe_target(record: dict[str, Any]) -> str:
     targets = record.get("targets_info")
+    entries = targets if isinstance(targets, list) else []
     originals = [
         str(entry["original"])
-        for entry in targets or []
+        for entry in entries
         if isinstance(entry, dict) and entry.get("original")
     ]
     if originals:
@@ -95,7 +96,8 @@ def _describe_target(record: dict[str, Any]) -> str:
 def _load_json(path: Path, *, default: Any) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    # UnicodeDecodeError is a ValueError, so it never matches the OSError or JSON slots.
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return default
 
 

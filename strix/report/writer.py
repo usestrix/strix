@@ -122,7 +122,7 @@ def read_run_record(run_dir: Path) -> dict[str, Any]:
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"run.json at {path} is unreadable: {exc}") from exc
     if not isinstance(data, dict):
         raise TypeError(f"run.json at {path} is not an object")
