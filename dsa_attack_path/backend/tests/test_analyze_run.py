@@ -54,6 +54,9 @@ class AnalyzeRunTest(unittest.TestCase):
         self.assertFalse(graph["sources"]["simulated_lateral"])
         self.assertEqual(meta["product_defaults"]["allow_simulated_lateral"], False)
         self.assertIn("MODELED", graph["disclaimer"])
+        self.assertIn("modeled_paths", meta)
+        self.assertIn("bfs_node_ids", meta["modeled_paths"])
+        self.assertGreaterEqual(len(meta["modeled_paths"]["bfs_node_ids"]), 1)
 
         # No MODELED_LATERAL edges when default options are used.
         lateral = [
@@ -107,8 +110,8 @@ class AnalyzeRunTest(unittest.TestCase):
         self.assertTrue(meta["engine"]["invoked"])
         self.assertEqual(meta["engine"]["returncode"], 0)
         text = Path(meta["artifacts"]["analysis_txt"]).read_text(encoding="utf-8")
-        self.assertIn("MODELED ATTACK-PATH ANALYSIS", text)
-        self.assertIn("SIMULATED DATA", text)
+        self.assertIn("MODELED attack-path analysis", text)
+        self.assertIn("not confirmed multi-hop", text)
 
 
 class AttackPathShimTest(unittest.TestCase):

@@ -1,11 +1,11 @@
-# Strix DSA Attack Path Analysis — Architecture (Phases 1–4)
+# Strix DSA Attack Path Analysis — Architecture (Phases 1–5)
 
 Canonical copy also lives in the Project store at
 `docs/strix-dsa-architecture.md` (agent store). Content below matches that plan.
 
 ## Purpose
 
-Extend [Strix](https://github.com/usestrix/strix) (Apache-2.0 AI pentesting agent) with an **independent** graph DSA engine for attack-path analysis. Strix continues to discover and validate vulnerabilities; the DSA module ranks modeled reachability and choke points on a directed asset graph. Phase 1 delivers the C++ core only — no live Strix coupling yet.
+Extend [Strix](https://github.com/usestrix/strix) (Apache-2.0 AI pentesting agent) with an **independent** graph DSA engine for attack-path analysis. Strix continues to discover and validate vulnerabilities; the DSA module ranks modeled reachability and choke points on a directed asset graph. This is a **thesis-layered module** beside Strix — not a rewrite of agents/scanners.
 
 ## Research summary (Strix)
 
@@ -145,6 +145,14 @@ strix view my-run
 # Sidebar / mobile tab: "Attack path"
 ```
 
+## Phase 5 polish (eval / docs / disclaimer)
+
+- **Canonical disclaimer:** `dsa_attack_path/bridge/strix_dsa_bridge/constants.py` (`DISCLAIMER` / `DISCLAIMER_BANNER`) — mirrored in backend analysis headers, viewer API fallback, and SPA copy.
+- **`meta.json` → `modeled_paths`:** optional BFS node/edge id arrays for UI highlight (same graph, no schema fork). Sky “BFS” edges in the SPA are modeled fewest-hop aids, not confirmed pivots.
+- **Runbook:** `dsa_attack_path/RUNBOOK.md`
+- **Eval evidence:** `docs/eval-results.md`
+- Framing: thesis-layered DSA module beside Strix — not a rewrite of Strix agents.
+
 ## Algorithm justification
 
 | Algorithm | Why it earns its place |
@@ -164,4 +172,4 @@ Strix remains Apache-2.0. New DSA module files carry project attribution and not
 2. **Done:** Strix → graph bridge (`vulnerabilities.json` / `run.json` → labeled graph + C++ topology).
 3. **Done:** Backend wiring into `strix_runs/<run>/attack_path/` + optional `strix attack-path` CLI.
 4. **Done:** Viewer `/api/attack-path` + Attack path SPA visualization with provenance.
-5. **Next:** Eval/docs polish.
+5. **Done:** Disclaimer alignment, `modeled_paths` highlight aid, runbook, eval evidence.

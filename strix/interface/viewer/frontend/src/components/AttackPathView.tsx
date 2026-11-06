@@ -30,7 +30,8 @@ function isLateralEdge(edge: AttackPathEdge): boolean {
 function layoutGraph(
   nodes: GraphNode[],
   edges: AttackPathEdge[],
-  showLateral: boolean
+  showLateral: boolean,
+  highlightPairs: Set<string>
 ): { rfNodes: Node[]; rfEdges: Edge[] } {
   const visibleEdges = edges.filter((e) => showLateral || !isLateralEdge(e));
   const g = new dagre.graphlib.Graph();
@@ -63,19 +64,20 @@ function layoutGraph(
     const id = `${edge.from}->${edge.to}`;
     g.setEdge(String(edge.from), String(edge.to));
     const simulated = edge.provenance === "simulated";
+    const onBfs = highlightPairs.has(`${edge.from}->${edge.to}`);
     rfEdges.push({
       id,
       source: String(edge.from),
       target: String(edge.to),
-      animated: !simulated,
+      animated: onBfs || !simulated,
       label:
         `${((edge.probability ?? 0) * 100).toFixed(0)}%` +
-        (simulated ? " · sim" : " · finding"),
-      labelStyle: { fill: "#aaa", fontSize: 10 },
+        (onBfs ? " · BFS" : simulated ? " · sim" : " · finding"),
+      labelStyle: { fill: onBfs ? "#e2e8f0" : "#aaa", fontSize: 10 },
       style: {
-        stroke: simulated ? "#b45309" : "#34d399",
-        strokeWidth: simulated ? 1.25 : 1.75,
-        strokeDasharray: simulated ? "5 4" : undefined,
+        stroke: onBfs ? "#38bdf8" : simulated ? "#b45309" : "#34d399",
+        strokeWidth: onBfs ? 2.5 : simulated ? 1.25 : 1.75,
+        strokeDasharray: simulated && !onBfs ? "5 4" : undefined,
       },
     });
   }
@@ -132,10 +134,22 @@ export default function AttackPathView({ runName }: AttackPathViewProps) {
   }, [runName]);
 
   const graph = payload?.graph ?? null;
+  const highlightPairs = useMemo(() => {
+    const pairs = new Set<string>();
+    for (const edge of payload?.meta?.modeled_paths?.bfs_edges ?? []) {
+      if (edge.from != null && edge.to != null) pairs.add(`${edge.from}->${edge.to}`);
+    }
+    return pairs;
+  }, [payload?.meta?.modeled_paths?.bfs_edges]);
   const layout = useMemo(() => {
     if (!graph) return { rfNodes: [] as Node[], rfEdges: [] as Edge[] };
-    return layoutGraph(graph.nodes ?? [], graph.edges ?? [], showSimulatedLateral);
-  }, [graph, showSimulatedLateral]);
+    return layoutGraph(
+      graph.nodes ?? [],
+      graph.edges ?? [],
+      showSimulatedLateral,
+      highlightPairs
+    );
+  }, [graph, showSimulatedLateral, highlightPairs]);
 
   const priority = useMemo(() => {
     if (!graph) return [] as AttackPathEdge[];
@@ -185,7 +199,7 @@ export default function AttackPathView({ runName }: AttackPathViewProps) {
   const disclaimer =
     payload.disclaimer ||
     graph.disclaimer ||
-    "MODELED attack-path view — not confirmed multi-hop exploit chains.";
+    "MODELED ATTACK GRAPH — not a confirmed multi-hop exploit chain. Nodes/edges marked provenance=from_finding come from Strix finding fields (target/endpoint/severity). Nodes/edges marked provenance=simulated are explicit modeling assumptions (threat-model scaffolding), NOT pentest proof.";
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 p-4 md:p-6">
@@ -203,6 +217,9 @@ export default function AttackPathView({ runName }: AttackPathViewProps) {
           </span>
           <span className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-amber-300">
             SIMULATED = modeling assumption
+          </span>
+          <span className="rounded border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-sky-300">
+            BFS highlight = modeled fewest-hop path (not confirmed pivot)
           </span>
         </div>
       </div>

@@ -71,4 +71,10 @@ strix view <run>
 python -m pytest tests/test_attack_path_viewer.py -q
 ```
 
+## Phase 5 polish
+
+- Demo runbook: [`RUNBOOK.md`](RUNBOOK.md)
+- Eval evidence: [`../docs/eval-results.md`](../docs/eval-results.md)
+- Canonical disclaimer: `bridge/strix_dsa_bridge/constants.py`
+
 Architecture / Strix integration plan: see Project store `docs/strix-dsa-architecture.md` and repo `docs/strix-dsa-architecture.md`.

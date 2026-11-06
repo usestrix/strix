@@ -13,6 +13,14 @@ from typing import Any
 
 ATTACK_PATH_DIRNAME = "attack_path"
 
+# Keep aligned with dsa_attack_path/bridge/strix_dsa_bridge/constants.py DISCLAIMER.
+_CANONICAL_DISCLAIMER = (
+    "MODELED ATTACK GRAPH — not a confirmed multi-hop exploit chain. "
+    "Nodes/edges marked provenance=from_finding come from Strix finding fields "
+    "(target/endpoint/severity). Nodes/edges marked provenance=simulated are "
+    "explicit modeling assumptions (threat-model scaffolding), NOT pentest proof."
+)
+
 
 def read_attack_path(run_dir: Path) -> dict[str, Any]:
     """Return the attack-path payload for ``GET /api/attack-path``.
@@ -30,8 +38,8 @@ def read_attack_path(run_dir: Path) -> dict[str, Any]:
             "available": False,
             "reason": (
                 "No attack_path/ artifacts for this run. Generate them with "
-                "`strix attack-path <run>` or `python -m strix_dsa_backend <run>` "
-                "(modeled analysis — not confirmed multi-hop exploits)."
+                "`strix attack-path <run>` or `python -m strix_dsa_backend <run>`. "
+                + _CANONICAL_DISCLAIMER
             ),
             "graph": None,
             "meta": None,
@@ -96,9 +104,7 @@ def read_attack_path(run_dir: Path) -> dict[str, Any]:
         # Convenience flags for the SPA (derived, not a new schema).
         "disclaimer": graph.get("disclaimer")
         or (meta or {}).get("disclaimer")
-        or (
-            "MODELED attack-path view — not confirmed multi-hop exploit chains."
-        ),
+        or _CANONICAL_DISCLAIMER,
         "simulated_lateral_default": bool(
             (meta or {}).get("product_defaults", {}).get("allow_simulated_lateral", False)
             if meta

@@ -1,5 +1,25 @@
 # Changelog — dsa_attack_path
 
+## 0.5.0 — Phase 5 tests, eval, docs
+
+### Added / polished
+- Canonical disclaimer strings (`DISCLAIMER` / `DISCLAIMER_BANNER`) aligned across bridge, backend, C++ CLI banner, viewer API, SPA.
+- `meta.json` field `modeled_paths` (BFS node/edge ids) for UI path highlight without a second graph schema.
+- `bridge/strix_dsa_bridge/paths.py` + `bridge/tests/test_paths.py`.
+- Demo runbook: `RUNBOOK.md`.
+- Eval record: `docs/eval-results.md` (25 checks green on this machine).
+
+### Test results (2026-11-07)
+| Suite | Result |
+|-------|--------|
+| C++ `ctest` | 1/1 passed |
+| Bridge unittest | 15 OK |
+| Backend unittest | 6 OK |
+| Viewer `test_attack_path_viewer` | 3 passed |
+
+### How to run / test
+See `RUNBOOK.md` and `docs/eval-results.md`.
+
 ## 0.4.0 — Phase 4 dashboard visualization
 
 ### Added

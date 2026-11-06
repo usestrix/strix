@@ -44,6 +44,22 @@ export interface AttackGraph {
   counts?: Record<string, number>;
 }
 
+export interface ModeledPaths {
+  note?: string;
+  start?: number | null;
+  target?: number | null;
+  include_simulated_lateral?: boolean;
+  bfs_node_ids?: number[];
+  bfs_edges?: Array<{
+    from?: number;
+    to?: number;
+    provenance?: string;
+    probability?: number;
+    labels?: string[];
+    title?: string | null;
+  }>;
+}
+
 export interface AttackPathMeta {
   schema_version?: string;
   generated_at?: string;
@@ -56,6 +72,8 @@ export interface AttackPathMeta {
   counts?: Record<string, number>;
   warnings?: string[];
   analysis_defaults?: { start?: number | null; target?: number | null };
+  modeled_paths?: ModeledPaths;
+  module_framing?: string;
   engine?: {
     invoked?: boolean;
     skipped_reason?: string | null;

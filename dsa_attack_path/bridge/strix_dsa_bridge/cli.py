@@ -89,7 +89,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 
     print(
         "\n=== Invoking C++ DSA engine on MODELED topology "
-        "(not real pentest multi-hop proof) ===\n",
+        "(not confirmed multi-hop exploits) ===\n",
         file=sys.stderr,
     )
     completed = subprocess.run(cmd, check=False)

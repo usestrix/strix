@@ -87,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(meta, indent=2))
     else:
         arts = meta["artifacts"]
-        print("MODELED attack-path artifacts written (not confirmed multi-hop exploits):")
+        print("MODELED attack-path artifacts written — not confirmed multi-hop exploits:")
         print(f"  graph:    {arts['attack_graph_json']}")
         print(f"  topology: {arts['topology_txt']}")
         print(f"  analysis: {arts['analysis_txt']}")

@@ -70,8 +70,10 @@ def analyze_run_dir(run_dir: Path, options: AnalyzeOptions | None = None) -> dic
         raise FileNotFoundError(f"Missing {vulns_path}")
 
     _ensure_bridge_on_path()
+    from strix_dsa_bridge.constants import DISCLAIMER, DISCLAIMER_BANNER
     from strix_dsa_bridge.emit import emit_graph_json, emit_topology_txt, load_findings_file
     from strix_dsa_bridge.mapper import BridgeOptions, build_attack_graph
+    from strix_dsa_bridge.paths import build_modeled_paths
 
     findings = load_findings_file(vulns_path)
     run_record = _load_json(run_dir / "run.json", {})
@@ -111,13 +113,13 @@ def analyze_run_dir(run_dir: Path, options: AnalyzeOptions | None = None) -> dic
                 "Build dsa_attack_path or set STRIX_DSA_ENGINE."
             )
             analysis_text_path.write_text(
-                "Engine skipped: " + engine_meta["skipped_reason"] + "\n",
+                f"{DISCLAIMER_BANNER}\nEngine skipped: {engine_meta['skipped_reason']}\n",
                 encoding="utf-8",
             )
         elif start is None or target is None:
             engine_meta["skipped_reason"] = "No start/target node available in modeled graph."
             analysis_text_path.write_text(
-                "Engine skipped: " + engine_meta["skipped_reason"] + "\n",
+                f"{DISCLAIMER_BANNER}\nEngine skipped: {engine_meta['skipped_reason']}\n",
                 encoding="utf-8",
             )
         else:
@@ -139,7 +141,7 @@ def analyze_run_dir(run_dir: Path, options: AnalyzeOptions | None = None) -> dic
             )
             # stderr often carries the load banner; keep both streams in the artifact.
             blob = (
-                "=== MODELED ATTACK-PATH ANALYSIS (not confirmed multi-hop exploits) ===\n"
+                f"=== {DISCLAIMER_BANNER} ===\n"
                 f"engine: {engine}\n"
                 f"start={start} target={target}\n"
                 f"simulated_lateral={opts.allow_simulated_lateral}\n\n"
@@ -149,12 +151,24 @@ def analyze_run_dir(run_dir: Path, options: AnalyzeOptions | None = None) -> dic
                 f"{completed.stderr}"
             )
             analysis_text_path.write_text(blob, encoding="utf-8")
+    elif not analysis_text_path.exists():
+        analysis_text_path.write_text(
+            f"{DISCLAIMER_BANNER}\nEngine not invoked for this run.\n",
+            encoding="utf-8",
+        )
+
+    modeled_paths = build_modeled_paths(
+        graph,
+        start=start if isinstance(start, int) else None,
+        target=target if isinstance(target, int) else None,
+        include_lateral=opts.allow_simulated_lateral,
+    )
 
     meta = {
         "schema_version": "1.0",
         "generated_at": datetime.now(UTC).isoformat(),
         "run_dir": str(run_dir),
-        "disclaimer": graph.get("disclaimer"),
+        "disclaimer": graph.get("disclaimer") or DISCLAIMER,
         "product_defaults": {
             "allow_simulated_lateral": opts.allow_simulated_lateral,
             "allow_simulated_entry": opts.allow_simulated_entry,
@@ -163,6 +177,7 @@ def analyze_run_dir(run_dir: Path, options: AnalyzeOptions | None = None) -> dic
         "counts": graph.get("counts"),
         "warnings": graph.get("warnings"),
         "analysis_defaults": graph.get("analysis_defaults"),
+        "modeled_paths": modeled_paths,
         "engine": engine_meta,
         "artifacts": {
             "attack_graph_json": str(graph_path),
@@ -170,6 +185,10 @@ def analyze_run_dir(run_dir: Path, options: AnalyzeOptions | None = None) -> dic
             "analysis_txt": str(analysis_text_path),
             "meta_json": str(out_dir / "meta.json"),
         },
+        "module_framing": (
+            "Thesis-layered DSA module beside Strix; does not replace Strix agents "
+            "or claim confirmed multi-hop exploits."
+        ),
     }
     meta_path = out_dir / "meta.json"
     meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

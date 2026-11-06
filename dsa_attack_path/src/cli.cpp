@@ -46,9 +46,10 @@ int main(int argc, char** argv) {
 
     const strix_dsa::AnalysisResult result = graph.analyze(start_id, target_id, options, {});
 
-    std::cout << "=== Strix DSA Attack Path Demo (SIMULATED DATA) ===\n";
-    std::cout << "Disclaimer: results are algorithm output on synthetic topology,\n"
-              << "not findings from a live or authorized penetration test.\n\n";
+    std::cout << "=== Strix DSA Attack Path (MODELED / SIMULATED DATA) ===\n";
+    std::cout << "Disclaimer: MODELED ATTACK GRAPH — not a confirmed multi-hop "
+              << "exploit chain.\n"
+              << "Algorithm output on labeled topology; not live pentest proof.\n\n";
     std::cout << "Start: " << start_id << "  Target: " << target_id << "\n";
     std::cout << "BFS reachable: " << (result.reachability.reachable ? "yes" : "no");
     if (result.reachability.reachable) {

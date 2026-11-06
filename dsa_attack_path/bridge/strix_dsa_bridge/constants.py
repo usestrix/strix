@@ -4,11 +4,18 @@ from __future__ import annotations
 
 SCHEMA_VERSION = "1.0"
 
+# Canonical disclaimer — keep CLI / API / UI wording aligned with this text.
 DISCLAIMER = (
     "MODELED ATTACK GRAPH — not a confirmed multi-hop exploit chain. "
     "Nodes/edges marked provenance=from_finding come from Strix finding fields "
     "(target/endpoint/severity). Nodes/edges marked provenance=simulated are "
     "explicit modeling assumptions (threat-model scaffolding), NOT pentest proof."
+)
+
+# Short banner for CLIs / analysis.txt headers (same meaning as DISCLAIMER).
+DISCLAIMER_BANNER = (
+    "MODELED attack-path analysis — not confirmed multi-hop exploits "
+    "(see attack_graph.json provenance)."
 )
 
 PROVENANCE_FINDING = "from_finding"
