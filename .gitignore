@@ -98,3 +98,7 @@ schema.graphql
 /.benchmarks/
 /references/
 /strix_runs_main/
+
+# DSA Attack Path local CMake build
+dsa_attack_path/build/
+

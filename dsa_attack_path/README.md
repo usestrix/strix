@@ -1,0 +1,41 @@
+# Strix DSA Attack Path Engine (Phase 1)
+
+Independent C++17 graph library for **modeled** attack-path analysis intended to sit beside [Strix](https://github.com/usestrix/strix) without modifying its agent/runtime loops.
+
+**Algorithms:** BFS (fewest hops), DFS (simple-path enumeration with caps), Dijkstra on `-log(p)` (max path-product), bottleneck ranking by path frequency.
+
+> **Simulation only.** Sample topology and demo output are synthetic. They are not penetration-test results.
+
+## Build (Windows / MinGW or any CMake + C++17 toolchain)
+
+```powershell
+cd dsa_attack_path
+cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+If CMake is installed but not on `PATH`:
+
+```powershell
+$env:Path = "C:\Program Files\CMake\bin;" + $env:Path
+```
+
+## Run demo CLI
+
+```powershell
+.\build\strix_dsa_cli.exe .\data\simulated_lab_network.txt 1 8
+```
+
+Arguments: `<topology> <start_id> <target_id> [max_depth=12] [max_paths=10000]`
+
+## Layout
+
+| Path | Role |
+|------|------|
+| `include/strix_dsa/` | Public headers |
+| `src/` | Graph model + algorithms + CLI |
+| `tests/test_engine.cpp` | Unit tests |
+| `data/simulated_lab_network.txt` | Labeled synthetic topology |
+
+Architecture / Strix integration plan: see Project store `docs/strix-dsa-architecture.md` and repo `docs/strix-dsa-architecture.md`.
