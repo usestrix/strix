@@ -141,6 +141,35 @@ def test_blank_instruction_does_not_break_the_listing(
     assert summary.target == ""
 
 
+def test_undecodable_records_do_not_hide_healthy_runs(tmp_path: Path) -> None:
+    base = tmp_path / "strix_runs"
+    _write_run(base, "healthy_1111", {"status": "completed"}, modified=3_000)
+
+    undecodable = base / "undecodable_2222"
+    undecodable.mkdir(parents=True)
+    (undecodable / "run.json").write_bytes(b"\xff")
+    (undecodable / "vulnerabilities.json").write_bytes(b"\xfe")
+
+    runs = {run.run_name: run for run in list_run_summaries(cwd=tmp_path)}
+
+    assert set(runs) == {"healthy_1111", "undecodable_2222"}
+    damaged = runs["undecodable_2222"]
+    assert damaged.status == "unknown"
+    assert damaged.target == ""
+    assert damaged.findings == 0
+
+
+def test_non_list_targets_info_falls_back_to_the_instruction(tmp_path: Path) -> None:
+    base = tmp_path / "strix_runs"
+    _write_run(base, "numeric_3333", {"targets_info": 123}, modified=2_000)
+    _write_run(base, "instructed_4444", {"user_instruction": "audit the login"}, modified=1_000)
+
+    runs = {run.run_name: run for run in list_run_summaries(cwd=tmp_path)}
+
+    assert runs["numeric_3333"].target == ""
+    assert runs["instructed_4444"].target == "audit the login"
+
+
 def test_title_is_the_instruction_else_the_most_severe_finding(tmp_path: Path) -> None:
     base = tmp_path / "strix_runs"
     _write_run(
