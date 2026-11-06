@@ -69,7 +69,17 @@ Expect `attack_path/{attack_graph.json,topology.txt,analysis.txt,meta.json}` wit
 `product_defaults.allow_simulated_lateral=false` and non-empty
 `modeled_paths.bfs_node_ids` + `modeled_paths.dijkstra_node_ids`.
 
+## PA-9 note (uv + full viewer HTTP)
+
+```powershell
+python -m pip install --user uv   # if uv missing from PATH
+uv sync
+uv run pytest tests/test_viewer.py -q
+```
+
+**Result (2026-11-07 after `uv sync`):** **27 passed** in ~24s.
+
 ## Notes
 
-- Full Strix `tests/test_viewer.py` HTTP suite needs a synced `uv` env; DSA Phase 5 gates on the suites above.
+- DSA gates remain the C++/bridge/backend/reader matrix above; full `test_viewer.py` is now green with `uv`.
 - Outputs remain **MODELED** — not confirmed multi-hop exploit chains. See `bridge/strix_dsa_bridge/constants.py`.
