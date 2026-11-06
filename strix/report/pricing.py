@@ -52,3 +52,17 @@ def resolve_litellm_model(model: str) -> str | None:
         return None  # noqa: TRY300
     except Exception:  # noqa: BLE001
         return None
+
+
+def split_provider_model(model: str) -> tuple[str | None, str]:
+    """Split a provider-qualified LiteLLM name into ``(provider, model)``.
+
+    Cost estimation must not let LiteLLM infer the provider: some adapters
+    authenticate during that lookup, and an interactive device flow blocks an
+    unattended run. Passing the provider that :func:`resolve_litellm_model`
+    already chose keeps the estimate local.
+    """
+    provider, separator, bare = model.partition("/")
+    if separator and provider and bare:
+        return provider, bare
+    return None, model

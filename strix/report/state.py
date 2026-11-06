@@ -14,7 +14,7 @@ from strix.config import codex
 from strix.config.loader import load_settings
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.report.coverage import write_coverage
-from strix.report.pricing import resolve_litellm_model
+from strix.report.pricing import resolve_litellm_model, split_provider_model
 from strix.report.sarif import write_sarif
 from strix.report.writer import (
     read_run_record,
@@ -1209,11 +1209,15 @@ def _estimate_response_cost(kwargs: Any, completion_response: Any) -> float | No
         resolved = resolve_litellm_model(candidate)
         if not resolved:
             continue
+        provider_name, _ = split_provider_model(resolved)
+        cost_kwargs: dict[str, Any] = {
+            "completion_response": {"model": resolved, "usage": usage_payload},
+            "model": resolved,
+        }
+        if provider_name:
+            cost_kwargs["custom_llm_provider"] = provider_name
         try:
-            value = completion_cost(
-                completion_response={"model": resolved, "usage": usage_payload},
-                model=resolved,
-            )
+            value = completion_cost(**cost_kwargs)
         except Exception:  # nosec B112  # noqa: BLE001, S112
             continue
         if isinstance(value, int | float) and value > 0:
