@@ -1,3 +1,4 @@
+import contextlib
 import ipaddress
 import json
 import logging
@@ -1514,18 +1515,44 @@ def write_fetched_collection(collection: dict[str, Any], collection_uid: str) ->
     return str(path)
 
 
-def write_postman_environment(variables: dict[str, str], collection_uid: str) -> str:
+def _write_private_file(path: Path, data: bytes) -> None:
+    """Create ``path`` readable only by its owner, from the first byte written.
+
+    ``Path.write_text`` would create the file with the process umask (0644 under 022)
+    and leave the contents readable until a later ``chmod``; a crash between the two
+    leaves them readable for good. ``os.open`` applies the mode at creation, and
+    ``fchmod`` also covers a file an earlier run left with wider permissions.
+    """
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # Windows has no ``fchmod``; the ACL the file inherits is the platform's answer there.
+    with contextlib.suppress(AttributeError, NotImplementedError, OSError):
+        os.fchmod(descriptor, 0o600)
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(data)
+
+
+def write_postman_environment(
+    variables: dict[str, str],
+    collection_uid: str,
+    environment_uid: str | None = None,
+) -> str:
     """Write a fetched Postman environment beside its collection and return the path.
 
     The collection keeps its ``{{name}}`` placeholders, so the values have to travel
     with it: without them the agent can only guess what the selected environment
     meant. The file is owner-only, like the API key it was fetched with.
+
+    One collection can be scanned under more than one environment, so the name
+    carries the environment too; a name built from the collection alone made the
+    last fetch overwrite the earlier ones and every target read the wrong values.
     """
     staging = Path(tempfile.gettempdir()) / "strix_api_specs" / "fetched"
     staging.mkdir(parents=True, exist_ok=True)
-    path = staging / f"{sanitize_name(collection_uid)}.postman_environment.json"
-    path.write_text(json.dumps(variables, indent=2), encoding="utf-8")
-    path.chmod(0o600)
+    stem = sanitize_name(collection_uid)
+    if environment_uid:
+        stem = f"{stem}-{sanitize_name(environment_uid)}"
+    path = staging / f"{stem}.postman_environment.json"
+    _write_private_file(path, json.dumps(variables, indent=2).encode("utf-8"))
     return str(path)
 
 
@@ -1566,8 +1593,9 @@ def stage_api_specs(targets_info: list[dict[str, Any]], run_name: str) -> list[d
             while environment_name in used:
                 environment_name = f"env-{environment_name}"
             used.add(environment_name)
-            shutil.copy2(environment_file, staging / environment_name)
-            (staging / environment_name).chmod(0o600)
+            # Private from creation, not after the copy: ``copy2`` would leave the
+            # values readable for the length of the copy and for good if it failed.
+            _write_private_file(staging / environment_name, Path(environment_file).read_bytes())
             details["environment_path"] = (
                 f"/workspace/{API_SPEC_WORKSPACE_SUBDIR}/{environment_name}"
             )

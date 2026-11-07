@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import stat
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +14,11 @@ import pytest
 
 from strix.core.inputs import build_root_task, build_scope_context
 from strix.interface.scan_setup import build_targets_info
-from strix.interface.utils import infer_target_type, stage_api_specs
+from strix.interface.utils import (
+    infer_target_type,
+    stage_api_specs,
+    write_postman_environment,
+)
 
 
 OPENAPI = {
@@ -89,11 +96,8 @@ def test_infer_target_type_postman_without_env_omits_key() -> None:
     assert "environment_uid" not in details
 
 
-
 def test_a_fetched_postman_environment_is_staged_beside_its_collection(tmp_path: Path) -> None:
     """The collection keeps its ``{{placeholders}}``, so the values have to travel with it."""
-    import tempfile
-
     environment = tmp_path / "coll-uid.postman_environment.json"
     environment.write_text(json.dumps({"tenantId": "acme"}), encoding="utf-8")
     targets = _resolved_targets(_write_spec(tmp_path / "src"))
@@ -102,9 +106,7 @@ def test_a_fetched_postman_environment_is_staged_beside_its_collection(tmp_path:
     stage_api_specs(targets, "env-run")
 
     details = targets[0]["details"]
-    assert details["environment_path"] == (
-        "/workspace/api-specs/coll-uid.postman_environment.json"
-    )
+    assert details["environment_path"] == ("/workspace/api-specs/coll-uid.postman_environment.json")
     staged = Path(tempfile.gettempdir()) / "strix_api_specs" / "env-run"
     assert (staged / "coll-uid.postman_environment.json").exists()
     assert json.loads((staged / "coll-uid.postman_environment.json").read_text("utf-8")) == {
@@ -114,9 +116,7 @@ def test_a_fetched_postman_environment_is_staged_beside_its_collection(tmp_path:
 
 def test_the_root_task_points_at_the_staged_environment(tmp_path: Path) -> None:
     target = _staged_target(tmp_path)
-    target["details"]["environment_path"] = (
-        "/workspace/api-specs/coll-uid.postman_environment.json"
-    )
+    target["details"]["environment_path"] = "/workspace/api-specs/coll-uid.postman_environment.json"
 
     task = build_root_task({"targets": [target]})
 
@@ -128,6 +128,7 @@ def test_the_root_task_omits_the_environment_line_without_one(tmp_path: Path) ->
     task = build_root_task({"targets": [_staged_target(tmp_path)]})
 
     assert "Environment variables from the selected environment" not in task
+
 
 def test_build_targets_info_records_title_and_base_urls(tmp_path: Path) -> None:
     (target,) = _resolved_targets(_write_spec(tmp_path))
@@ -190,3 +191,32 @@ def test_build_scope_context_authorizes_base_urls(tmp_path: Path) -> None:
     assert "api_spec" in types
     assert "web_application" in types
     assert any(a["value"] == "https://api.shop.test/v1" for a in authorized)
+
+
+def test_two_environments_of_one_collection_do_not_overwrite_each_other(
+    tmp_path: Path,
+) -> None:
+    """`--target postman://C?env=A --target postman://C?env=B` must keep both value sets."""
+    first = write_postman_environment({"tenantId": "acme"}, "coll-uid", "env-a")
+    second = write_postman_environment({"tenantId": "globex"}, "coll-uid", "env-b")
+
+    assert first != second
+    assert json.loads(Path(first).read_text("utf-8")) == {"tenantId": "acme"}
+    assert json.loads(Path(second).read_text("utf-8")) == {"tenantId": "globex"}
+
+    targets = _resolved_targets(_write_spec(tmp_path / "src"), _write_spec(tmp_path / "src2"))
+    targets[0]["details"]["environment_file"] = first
+    targets[1]["details"]["environment_file"] = second
+    stage_api_specs(targets, "two-env-run")
+
+    paths = [target["details"]["environment_path"] for target in targets]
+    assert paths[0] != paths[1]
+    assert json.loads(Path(first).read_text("utf-8"))["tenantId"] == "acme"
+
+
+def test_a_fetched_environment_is_owner_only_from_creation() -> None:
+    """The values must never exist in a world-readable file, not even between two calls."""
+    path = Path(write_postman_environment({"fixtureToken": "secret"}, "coll-uid", "env-a"))
+    if os.name == "posix":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert json.loads(path.read_text("utf-8")) == {"fixtureToken": "secret"}

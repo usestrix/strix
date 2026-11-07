@@ -228,7 +228,7 @@ def _resolve_api_spec(target: str, details: dict[str, Any]) -> None:
             details["target_spec"] = write_fetched_collection(raw, collection_uid)
             if extra_variables:
                 details["environment_file"] = write_postman_environment(
-                    extra_variables, collection_uid
+                    extra_variables, collection_uid, environment_uid
                 )
         else:
             raw = load_spec(str(details["target_spec"]))
