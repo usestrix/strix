@@ -157,3 +157,44 @@ async def test_dedupe_id_is_matched_without_truncation(monkeypatch: pytest.Monke
 
     assert result["is_duplicate"] is False
     assert "error" in result
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("package.json", "./package.json"),
+        ("package.json", "package.json//"),
+        ("a/package.json", "a//package.json"),
+        (".\\package.json", "package.json"),
+        ("/a/../a/package.json", "/a/package.json"),
+    ],
+)
+def test_equivalent_manifest_spellings_describe_one_manifest(left: str, right: str) -> None:
+    """One manifest spelled two ways must not look like two manifests."""
+    assert (
+        dedupe._distinct_manifest_paths(
+            {"dependency_metadata": {"manifest_path": left}},
+            {"dependency_metadata": {"manifest_path": right}},
+        )
+        is False
+    )
+
+
+def test_a_different_manifest_keeps_the_second_finding() -> None:
+    assert (
+        dedupe._distinct_manifest_paths(
+            {"dependency_metadata": {"manifest_path": "a/package.json"}},
+            {"dependency_metadata": {"manifest_path": "b/package.json"}},
+        )
+        is True
+    )
+
+
+def test_an_absolute_manifest_never_equals_a_relative_one() -> None:
+    assert (
+        dedupe._distinct_manifest_paths(
+            {"dependency_metadata": {"manifest_path": "/a/package.json"}},
+            {"dependency_metadata": {"manifest_path": "a/package.json"}},
+        )
+        is True
+    )
