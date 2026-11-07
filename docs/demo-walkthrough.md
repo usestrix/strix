@@ -39,21 +39,13 @@ Portal độc lập: dsa_attack_path\scripts\Open-Authorized-Portal.bat → http
 
 ### Docker trên máy lab (PA-15)
 
-Trạng thái 2026-11-07 tối: **22H2 đã tải + stage xong; cần reboot user**. Docker chưa cài.
+Trạng thái 2026-11-08: **22H2 OK (19045.6456); Docker Desktop 4.98 đã cài; cần reboot lần 2 cho WSL2/Hyper-V**.
 
-- OS vẫn **21H2 (19044.2846)** cho đến khi reboot
-- Policy `TargetReleaseVersionInfo` đã đổi **21H2 → 22H2**; Feature update 22H2 downloaded; TiWorker/CBS xong; **RebootRequired=True**
-- Agent **không** reboot (chờ user OK). Sau reboot: `winver` phải là **22H2 / ≥19045**
+- Feature update 22H2 đã apply sau reboot 1
+- winget cài Docker Desktop thành công; client `docker` có, Engine chưa lên (pipe 500) vì CBS còn **RebootPending** (WSL + VirtualMachinePlatform + Hyper-V)
+- Agent **không** reboot lần 2 — user Restart → Start **Docker Desktop** → chờ Engine → báo lại để verify `docker version` / hello-world
 
-**Sau khi reboot OK — elevated PowerShell:**
-
-```powershell
-winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements
-```
-
-Rồi Start → Docker Desktop → chờ Engine → `docker version` / `docker run --rm hello-world`.
-
-**Trước khi có Docker:** dùng **Stage MODELED Attack Path demo** (SYNTHETIC). Không queue live scan.
+**Trước khi Engine chạy:** dùng **Stage MODELED Attack Path demo** (SYNTHETIC). Không queue live scan.
 
 ### Nếu queue scan báo OK nhưng UI vẫn hiện fixture cũ
 
