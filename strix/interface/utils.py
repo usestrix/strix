@@ -1288,7 +1288,10 @@ def derive_local_base_name(path_str: str) -> str:
 
 
 def assign_workspace_subdirs(targets_info: list[dict[str, Any]]) -> None:
-    used: set[str] = set()
+    # The spec staging directory is created under the workspace by stage_api_specs()
+    # whether or not this run has one, so a repository called `api-specs` must not
+    # take its name.
+    used: set[str] = {API_SPEC_WORKSPACE_SUBDIR}
 
     for target in targets_info:
         target_type = target["type"]

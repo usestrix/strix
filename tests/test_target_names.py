@@ -67,3 +67,12 @@ def test_workspace_subdirs_keep_the_plain_counter_for_repeated_names() -> None:
     assign_workspace_subdirs(targets)
 
     assert [target["details"]["workspace_subdir"] for target in targets] == ["app", "app-2"]
+
+
+def test_a_repository_never_takes_the_spec_directory_name() -> None:
+    """stage_api_specs() mounts specs at `api-specs`; a repository of that name would share it."""
+    targets = [{"type": "repository", "details": {"target_repo": "https://host/a/api-specs"}}]
+
+    assign_workspace_subdirs(targets)
+
+    assert targets[0]["details"]["workspace_subdir"] == "api-specs-2"
