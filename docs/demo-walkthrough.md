@@ -39,19 +39,19 @@ Portal độc lập: dsa_attack_path\scripts\Open-Authorized-Portal.bat → http
 
 ### Docker trên máy lab (PA-15)
 
-Trạng thái 2026-11-07: **Docker Desktop chưa cài được**.
+Trạng thái 2026-11-07 tối: **22H2 đã tải + stage xong; cần reboot user**. Docker chưa cài.
 
-- OS hiện tại: Windows 10 Pro **21H2 (build 19044)**
-- Docker Desktop 4.98 yêu cầu tối thiểu **22H2 (19045)** hoặc Windows 11 23H2+
-- Installer đã tải về %TEMP%\DockerDesktopInstaller.exe nhưng prerequisite fail (xem C:\ProgramData\DockerDesktop\install-log-admin.txt)
+- OS vẫn **21H2 (19044.2846)** cho đến khi reboot
+- Policy `TargetReleaseVersionInfo` đã đổi **21H2 → 22H2**; Feature update 22H2 downloaded; TiWorker/CBS xong; **RebootRequired=True**
+- Agent **không** reboot (chờ user OK). Sau reboot: `winver` phải là **22H2 / ≥19045**
 
-**Việc user cần làm:** Windows Update → 22H2+ → reboot → elevated PowerShell:
+**Sau khi reboot OK — elevated PowerShell:**
 
-`powershell
+```powershell
 winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements
-`
+```
 
-Rồi Start menu → Docker Desktop → chờ Engine running → docker version / docker run --rm hello-world.
+Rồi Start → Docker Desktop → chờ Engine → `docker version` / `docker run --rm hello-world`.
 
 **Trước khi có Docker:** dùng **Stage MODELED Attack Path demo** (SYNTHETIC). Không queue live scan.
 
