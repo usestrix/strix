@@ -1511,7 +1511,9 @@ def write_fetched_collection(collection: dict[str, Any], collection_uid: str) ->
     staging = Path(tempfile.gettempdir()) / "strix_api_specs" / "fetched"
     staging.mkdir(parents=True, exist_ok=True)
     path = staging / f"{sanitize_name(collection_uid)}.postman_collection.json"
-    path.write_text(json.dumps(collection, indent=2), encoding="utf-8")
+    # A collection carries its own variables and auth blocks, so it is written private
+    # from the first byte like the environment beside it, not with the process umask.
+    _write_private_file(path, json.dumps(collection, indent=2).encode("utf-8"))
     return str(path)
 
 

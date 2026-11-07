@@ -17,6 +17,7 @@ from strix.interface.scan_setup import build_targets_info
 from strix.interface.utils import (
     infer_target_type,
     stage_api_specs,
+    write_fetched_collection,
     write_postman_environment,
 )
 
@@ -220,3 +221,20 @@ def test_a_fetched_environment_is_owner_only_from_creation() -> None:
     if os.name == "posix":
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert json.loads(path.read_text("utf-8")) == {"fixtureToken": "secret"}
+
+
+def test_a_fetched_collection_is_owner_only_from_creation() -> None:
+    """A collection carries its own variables and auth blocks, not just an item tree."""
+    path = Path(
+        write_fetched_collection(
+            {
+                "info": {"_postman_id": "coll-uid"},
+                "item": [],
+                "variable": [{"key": "token", "value": "x"}],
+            },
+            "coll-uid",
+        )
+    )
+    if os.name == "posix":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert json.loads(path.read_text("utf-8"))["variable"][0]["key"] == "token"
