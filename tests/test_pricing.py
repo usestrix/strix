@@ -64,18 +64,23 @@ def test_resolves_common_bare_model_names(monkeypatch: pytest.MonkeyPatch) -> No
         "other/MiniMax-M3": {"input_cost_per_token": 9e-6, "output_cost_per_token": 9e-6},
     }
     monkeypatch.setattr(litellm, "model_cost", catalog)
+    # The resolver caches its answer, so the fake catalog's results must not outlive this
+    # test: a selected or reordered run would otherwise read them once the real catalog is
+    # back. Clearing here as well keeps the first lookup off a stale entry.
     resolve_litellm_model.cache_clear()
-
-    assert resolve_litellm_model("deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
-    assert resolve_litellm_model("openai/deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
-    grok = resolve_litellm_model("grok-4.5")
-    assert grok is not None
-    assert grok.endswith("/grok-4.5")
-    assert grok in catalog
-    # MiniMax-M3 is sold at different prices, so the resolver must not guess from its
-    # bare name. A provider-qualified model remains deterministic.
-    assert resolve_litellm_model("MiniMax-M3") is None
-    assert resolve_litellm_model("minimax/MiniMax-M3") == "minimax/MiniMax-M3"
+    try:
+        assert resolve_litellm_model("deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
+        assert resolve_litellm_model("openai/deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
+        grok = resolve_litellm_model("grok-4.5")
+        assert grok is not None
+        assert grok.endswith("/grok-4.5")
+        assert grok in catalog
+        # MiniMax-M3 is sold at different prices, so the resolver must not guess from its
+        # bare name. A provider-qualified model remains deterministic.
+        assert resolve_litellm_model("MiniMax-M3") is None
+        assert resolve_litellm_model("minimax/MiniMax-M3") == "minimax/MiniMax-M3"
+    finally:
+        resolve_litellm_model.cache_clear()
 
 
 def test_a_bare_name_never_resolves_to_another_bare_name() -> None:
