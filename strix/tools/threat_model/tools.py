@@ -220,7 +220,7 @@ def hydrate_threat_models_from_disk(state_dir: Path) -> None:
             return
         try:
             data = json.loads(_store_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             logger.exception(
                 "threat_models.json at %s is unreadable; starting with no models",
                 _store_path,
