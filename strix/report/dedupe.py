@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -314,6 +315,12 @@ def _parse_dedupe_response(content: str) -> dict[str, Any]:
         confidence = float(parsed.get("confidence", 0.0))
     except (TypeError, ValueError):
         confidence = 0.0
+    # The prompt asks for a number between 0 and 1, but the answer is model output:
+    # "nan" defeats every comparison it reaches (sorting, thresholds, display) and
+    # out-of-range values contradict the documented contract.
+    if math.isnan(confidence):
+        confidence = 0.0
+    confidence = min(1.0, max(0.0, confidence))
 
     return {
         "is_duplicate": is_duplicate,
