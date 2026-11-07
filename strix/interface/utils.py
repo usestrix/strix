@@ -1287,6 +1287,16 @@ def derive_local_base_name(path_str: str) -> str:
     return sanitize_name(base or "workspace")
 
 
+def unique_workspace_subdir(base_name: str, used: set[str]) -> str:
+    """Return ``base_name``, or the first ``base_name-N`` that ``used`` does not hold."""
+    workspace_subdir = base_name
+    count = 1
+    while workspace_subdir in used:
+        count += 1
+        workspace_subdir = f"{base_name}-{count}"
+    return workspace_subdir
+
+
 def assign_workspace_subdirs(targets_info: list[dict[str, Any]]) -> None:
     # The spec staging directory is created under the workspace by stage_api_specs()
     # whether or not this run has one, so a repository called `api-specs` must not
@@ -1309,11 +1319,7 @@ def assign_workspace_subdirs(targets_info: list[dict[str, Any]]) -> None:
         # A per-name counter is not enough: `repo`, `repo` and `repo-2` would give the
         # second and the third the same `repo-2`, and the run would mount - and clone
         # into - one directory for two targets. Count until the name is unused.
-        workspace_subdir = base_name
-        count = 1
-        while workspace_subdir in used:
-            count += 1
-            workspace_subdir = f"{base_name}-{count}"
+        workspace_subdir = unique_workspace_subdir(base_name, used)
         used.add(workspace_subdir)
 
         details["workspace_subdir"] = workspace_subdir

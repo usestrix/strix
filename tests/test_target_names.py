@@ -1,7 +1,10 @@
 """Names derived from user targets must stay usable as one path component."""
 
+import argparse
+
 import pytest
 
+from strix.interface.scan_setup import attach_workspace_mount
 from strix.interface.utils import (
     assign_workspace_subdirs,
     derive_repo_base_name,
@@ -76,3 +79,19 @@ def test_a_repository_never_takes_the_spec_directory_name() -> None:
     assign_workspace_subdirs(targets)
 
     assert targets[0]["details"]["workspace_subdir"] == "api-specs-2"
+
+
+def test_a_workspace_mount_does_not_take_a_target_directory(tmp_path) -> None:
+    """`--workspace-mount ./app` next to a repository called `app` must not share its subdir."""
+    mount = tmp_path / "app"
+    mount.mkdir()
+    args = argparse.Namespace(
+        workspace_mount=str(mount),
+        workspace_subdir=None,
+        local_sources=[{"source_path": "/clone", "workspace_subdir": "app"}],
+    )
+
+    attach_workspace_mount(args)
+
+    assert args.workspace_subdir == "app-2"
+    assert args.local_sources[-1]["workspace_subdir"] == "app-2"
