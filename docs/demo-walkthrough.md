@@ -39,13 +39,13 @@ Portal độc lập: dsa_attack_path\scripts\Open-Authorized-Portal.bat → http
 
 ### Docker trên máy lab (PA-15)
 
-Trạng thái 2026-11-08: **22H2 OK (19045.6456); Docker Desktop 4.98 đã cài; cần reboot lần 2 cho WSL2/Hyper-V**.
+Trạng thái 2026-11-08: **Docker Engine OK** trên Windows 10 **22H2 (19045.6456)**.
 
-- Feature update 22H2 đã apply sau reboot 1
-- winget cài Docker Desktop thành công; client `docker` có, Engine chưa lên (pipe 500) vì CBS còn **RebootPending** (WSL + VirtualMachinePlatform + Hyper-V)
-- Agent **không** reboot lần 2 — user Restart → Start **Docker Desktop** → chờ Engine → báo lại để verify `docker version` / hello-world
+- Docker Desktop **4.98** / Engine **29.9.2**; `docker version` + `hello-world` đã verify
+- Máy chỉ ~6 GB RAM — đã ghi `%USERPROFILE%\.wslconfig` (`memory=2GB`) để tránh `ERROR_NO_SYSTEM_RESOURCES`. Nếu Engine không lên: đóng app nặng → Start Docker Desktop lại
+- Trước live scan: mở Docker Desktop (Engine running) + LLM key; queue chỉ target đã authorize
 
-**Trước khi Engine chạy:** dùng **Stage MODELED Attack Path demo** (SYNTHETIC). Không queue live scan.
+**Không có Docker / Engine down:** dùng **Stage MODELED Attack Path demo** (SYNTHETIC).
 
 ### Nếu queue scan báo OK nhưng UI vẫn hiện fixture cũ
 
