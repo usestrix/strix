@@ -11,7 +11,7 @@
 | Origin remote | `origin` → https://github.com/usestrix/strix.git (**no push access**) |
 | Branch | `cursor/dsa-attack-path-phase1-ae73` |
 | PR | https://github.com/usestrix/strix/pull/1666 |
-| Tip | `0dc7bf3` — PA-13 authorized URL UI |
+| Tip | `9226a62` — PA-14 authorized scan / viewer fix |
 | Agent Store docs | `C:\Users\ADMIN\AppData\Local\Cursor\AgentStores\cursor_agent_stores\bc-9c633c18-02e3-48ad-ac01-70b368f20dea\files\docs\` |
 | Tracker | PA-1 parent; Phases PA-2…PA-6 done; PA-8…PA-11 follow-ons |
 
@@ -53,6 +53,7 @@ Also: `dsa_attack_path/RUNBOOK.md`, `docs/eval-results.md`, `docs/strix-dsa-arch
 | PA-11 Demo walkthrough | `adbc3d8` | `docs/demo-walkthrough.md` + handoff refresh |
 | PA-12 One-click launcher | `1169f34` | `dsa_attack_path/Run-Demo.bat` + `scripts/run_demo.py` |
 | PA-13 Authorized URL UI | `0dc7bf3` | Attack path form + `/api/attack-path/authorized-scan` + portal |
+| PA-14 Scan/viewer attach | `9226a62` | Docker preflight; strip `#`; honest `scan_started`; SYNTHETIC auto-switch |
 
 Simulated lateral stays **OFF** by default. Outputs remain **MODELED**.
 
