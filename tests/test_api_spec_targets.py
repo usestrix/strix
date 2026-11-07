@@ -262,3 +262,25 @@ def test_collection_ids_that_sanitize_alike_get_distinct_files() -> None:
     assert first != second
     assert json.loads(Path(first).read_text("utf-8"))["item"][0]["name"] == "slash"
     assert json.loads(Path(second).read_text("utf-8"))["item"][0]["name"] == "colon"
+
+
+def test_two_targets_stage_their_own_environment_end_to_end(tmp_path: Path) -> None:
+    """From two targets to the file each one names: the values must not be shared."""
+    spec_a = _write_spec(tmp_path / "a", "openapi.json")
+    spec_b = _write_spec(tmp_path / "b", "openapi.json")
+    targets = _resolved_targets(spec_a, spec_b)
+    for index, tenant in enumerate(("A", "B")):
+        environment = tmp_path / f"env-{tenant}.postman_environment.json"
+        environment.write_text(json.dumps({"tenantId": tenant}), encoding="utf-8")
+        targets[index]["details"]["environment_file"] = str(environment)
+
+    stage_api_specs(targets, "two-env-run")
+
+    staged = Path(tempfile.gettempdir()) / "strix_api_specs" / "two-env-run"
+    paths = [target["details"]["environment_path"] for target in targets]
+    assert len(set(paths)) == 2
+    for target, tenant in zip(targets, ("A", "B"), strict=True):
+        environment_path = target["details"]["environment_path"]
+        staged_file = staged / Path(environment_path).name
+        assert json.loads(staged_file.read_text("utf-8")) == {"tenantId": tenant}
+        assert environment_path in build_root_task({"targets": [target]})
