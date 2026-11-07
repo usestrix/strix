@@ -437,6 +437,7 @@ async def spawn_child_agent(
             parent_id=parent_id,
             task=task,
             parent_history=parent_history,
+            model=_run_config_model(run_config),
         ),
         event_sink=event_sink,
         hooks=hooks,

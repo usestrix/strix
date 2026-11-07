@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from itertools import pairwise
 from typing import Any
 
@@ -9,12 +10,14 @@ import litellm
 import pytest
 
 from strix.core.inputs import (
+    _bounded_inherited_history,
     build_root_task,
     build_scan_targets,
     build_scope_context,
     child_initial_input,
     make_model_settings,
 )
+from strix.llm.context_budget import count_tokens
 
 
 def _child_kwargs(parent_history: list[Any]) -> dict[str, Any]:
@@ -60,6 +63,51 @@ def test_child_initial_input_no_consecutive_same_role(parent_history: list[Any])
 
     roles = [msg["role"] for msg in result]
     assert all(prev != nxt for prev, nxt in pairwise(roles))
+
+
+def _history_of(count: int) -> list[dict[str, str]]:
+    return [{"role": "assistant", "content": f"step {index} " + "x" * 40} for index in range(count)]
+
+
+def test_inherited_history_under_the_budget_is_rendered_whole() -> None:
+    history = _history_of(2)
+    content = child_initial_input(**_child_kwargs(history))[0]["content"]
+
+    assert "earlier inherited message(s) omitted" not in content
+    assert "step 0" in content
+    assert "step 1" in content
+
+
+def test_inherited_history_over_the_budget_keeps_the_newest_and_says_so() -> None:
+    history = _history_of(6)
+
+    kwargs = {**_child_kwargs(history), "max_inherited_tokens": 10}
+    content = child_initial_input(**kwargs)[0]["content"]
+
+    # Newest survives, oldest are dropped, and the child is told the context is partial.
+    assert "step 5" in content
+    assert "step 0" not in content
+    assert "earlier inherited message(s) omitted" in content
+    # Only the newest item is kept, and the count says how many went missing.
+    assert content.count("step ") == 1
+    assert "5 earlier inherited message(s) omitted" in content
+
+
+def test_an_oversized_newest_item_is_still_rendered() -> None:
+    """An empty inherited block would hide that the parent had context at all."""
+    history = [{"role": "assistant", "content": "y" * 4_000}]
+
+    kwargs = {**_child_kwargs(history), "max_inherited_tokens": 10}
+    content = child_initial_input(**kwargs)[0]["content"]
+
+    assert "Inherited context from parent" in content
+    assert "y" * 100 in content
+
+
+def test_no_history_leaves_the_block_out() -> None:
+    content = child_initial_input(**_child_kwargs([]))[0]["content"]
+
+    assert "Inherited context" not in content
 
 
 def _cache_points(model_name: str) -> Any:
@@ -500,3 +548,31 @@ def test_reasoning_effort_sent_as_configured_and_none_omitted() -> None:
     settings = make_model_settings("high", model_name="gpt-daybreak-blue-latest")
     assert settings.reasoning is not None
     assert settings.reasoning.effort == "high"
+
+
+def test_inherited_history_is_a_suffix_so_no_gap_hides_a_correction() -> None:
+    """A newer message that does not fit ends the selection; an older one is never kept past it."""
+    history = [
+        {"role": "assistant", "content": "old conclusion"},
+        {"role": "assistant", "content": "correction " + "x" * 4000},
+        {"role": "assistant", "content": "newest"},
+    ]
+
+    kept, dropped = _bounded_inherited_history(history, model=None, max_tokens=120)
+
+    assert kept == [history[-1]]
+    assert dropped == 2
+
+
+def test_inherited_history_fits_the_budget_as_rendered() -> None:
+    """The list the child receives is measured whole, and the next older item would not fit."""
+    history = [{"role": "assistant", "content": "y" * 300} for _ in range(4)]
+
+    kept, dropped = _bounded_inherited_history(history, model=None, max_tokens=250)
+
+    assert kept == history[dropped:]
+    assert dropped
+    rendered = json.dumps(kept, ensure_ascii=False, default=str)
+    wider = json.dumps([history[dropped - 1], *kept], ensure_ascii=False, default=str)
+    assert count_tokens("", rendered) <= 250
+    assert count_tokens("", wider) > 250
