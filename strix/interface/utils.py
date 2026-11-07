@@ -1254,6 +1254,12 @@ def read_target_list_file(path_str: str) -> list[str]:
 
 def sanitize_name(name: str) -> str:
     sanitized = re.sub(r"[^A-Za-z0-9._-]", "-", name.strip())
+    # A name made only of dots is the current or the parent directory. As a path
+    # component it resolves outside the directory the caller builds (".." under
+    # <tmp>/strix_repos/<run> reaches the shared parent, which clone_repository
+    # then removes before it tries to clone), so it is not a usable name.
+    if not sanitized.strip("."):
+        return "target"
     return sanitized or "target"
 
 
