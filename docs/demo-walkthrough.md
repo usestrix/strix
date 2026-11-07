@@ -36,6 +36,25 @@ Launcher sẽ: build/reuse `strix_dsa_cli.exe` → fixture + backend analyze (**
 Portal độc lập: dsa_attack_path\scripts\Open-Authorized-Portal.bat → http://127.0.0.1:8765/
 
 
+
+### Docker trên máy lab (PA-15)
+
+Trạng thái 2026-11-07: **Docker Desktop chưa cài được**.
+
+- OS hiện tại: Windows 10 Pro **21H2 (build 19044)**
+- Docker Desktop 4.98 yêu cầu tối thiểu **22H2 (19045)** hoặc Windows 11 23H2+
+- Installer đã tải về %TEMP%\DockerDesktopInstaller.exe nhưng prerequisite fail (xem C:\ProgramData\DockerDesktop\install-log-admin.txt)
+
+**Việc user cần làm:** Windows Update → 22H2+ → reboot → elevated PowerShell:
+
+`powershell
+winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements
+`
+
+Rồi Start menu → Docker Desktop → chờ Engine running → docker version / docker run --rm hello-world.
+
+**Trước khi có Docker:** dùng **Stage MODELED Attack Path demo** (SYNTHETIC). Không queue live scan.
+
 ### Nếu queue scan báo OK nhưng UI vẫn hiện fixture cũ
 
 **Nguyên nhân thường gặp trên máy lab:** Strix thoát ngay vì **Docker chưa cài/không chạy** — log trong strix_runs/_authorization_queue/*.log. API cũ từng ghi scan_started=true dù process đã chết; viewer vẫn gắn run đang mở (vd. dsa-demo / Issues pp.example.com).
