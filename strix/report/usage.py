@@ -14,28 +14,42 @@ from strix.report.pricing import resolve_litellm_model
 
 logger = logging.getLogger(__name__)
 
-Prices = tuple[float | None, float | None, float | None]
+Prices = tuple[float | None, float | None, float | None, float | None]
 
 
 def _configured_prices() -> tuple[str | None, Prices | None]:
     llm = load_settings().llm
-    prices = (llm.input_cost_per_mtok, llm.output_cost_per_mtok, llm.cached_input_cost_per_mtok)
+    prices = (
+        llm.input_cost_per_mtok,
+        llm.output_cost_per_mtok,
+        llm.cached_input_cost_per_mtok,
+        llm.cached_input_write_cost_per_mtok,
+    )
     if all(price is None for price in prices):
         return None, None
     return (llm.model or "").strip() or None, prices
 
 
 def _configured_usage_cost(usage: Usage, prices: Prices) -> float:
-    input_rate, output_rate, cached_rate = prices
+    input_rate, output_rate, cached_rate, cache_write_rate = prices
     input_tokens = max(0, _int_or_zero(getattr(usage, "input_tokens", 0)))
     cached_details = getattr(usage, "input_tokens_details", None)
     cached_tokens = max(0, _int_or_zero(getattr(cached_details, "cached_tokens", 0)))
     cached_tokens = min(cached_tokens, input_tokens)
+    # Cache writes are part of input_tokens and cost a different rate; with none
+    # configured they keep the input rate, which is what this function charged before
+    # the field existed.
+    cache_write_tokens = max(0, _int_or_zero(getattr(cached_details, "cache_write_tokens", 0)))
+    cache_write_tokens = min(cache_write_tokens, input_tokens - cached_tokens)
     output_tokens = max(0, _int_or_zero(getattr(usage, "output_tokens", 0)))
-    billable_input = input_tokens - cached_tokens
+    billable_input = input_tokens - cached_tokens - cache_write_tokens
+    plain_rate = input_rate or 0
+    cached_tokens_rate = cached_rate if cached_rate is not None else plain_rate
+    cache_write_tokens_rate = cache_write_rate if cache_write_rate is not None else plain_rate
     cost = (
-        billable_input * (input_rate or 0)
-        + cached_tokens * (cached_rate if cached_rate is not None else input_rate or 0)
+        billable_input * plain_rate
+        + cached_tokens * cached_tokens_rate
+        + cache_write_tokens * cache_write_tokens_rate
         + output_tokens * (output_rate or 0)
     ) / 1_000_000
     return _round_cost(cost)
