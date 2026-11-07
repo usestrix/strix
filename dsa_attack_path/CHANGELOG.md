@@ -1,5 +1,12 @@
 # Changelog — dsa_attack_path
 
+## 0.5.4 — One-click Windows demo launcher (PA-12)
+
+### Added
+- `dsa_attack_path/Run-Demo.bat` + `scripts/Run-Demo.bat` + `scripts/run_demo.py`
+- Optional `scripts/Build-Demo-Exe.bat` (PyInstaller → `scripts/dist/Run-DSA-Demo.exe`, gitignored)
+- Walkthrough updated with one-click section
+
 ## 0.5.3 — Thesis demo walkthrough (PA-11)
 
 ### Added

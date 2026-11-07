@@ -3,7 +3,8 @@
 Thesis-layered module beside [Strix](https://github.com/usestrix/strix) (Apache-2.0).  
 It does **not** rewrite Strix agents/scanners. Outputs are **MODELED** attack graphs — never confirmed multi-hop exploit chains.
 
-**Thesis end-to-end (VN/EN short):** see repo [`docs/demo-walkthrough.md`](../docs/demo-walkthrough.md).
+**Thesis end-to-end (VN/EN short):** see repo [`docs/demo-walkthrough.md`](../docs/demo-walkthrough.md).  
+**One-click Windows:** double-click [`Run-Demo.bat`](Run-Demo.bat) (or `scripts/Run-Demo.bat`).
 
 ## Provenance legend (aligned across CLI / API / UI)
 

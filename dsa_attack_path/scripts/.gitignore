@@ -1,0 +1,4 @@
+# PyInstaller scratch (optional exe); keep Run-Demo.bat + run_demo.py in git.
+build/
+dist/
+*.spec

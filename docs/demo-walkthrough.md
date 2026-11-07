@@ -11,6 +11,37 @@ Module DSA **không** thay Strix agents; kết quả là **MODELED** graph — k
 
 ---
 
+## One-click (Windows)
+
+Double-click hoặc chạy:
+
+```text
+c:\Users\ADMIN\Documents\project-attt\dsa_attack_path\Run-Demo.bat
+```
+
+(hoặc `dsa_attack_path\scripts\Run-Demo.bat`)
+
+Launcher sẽ: build/reuse `strix_dsa_cli.exe` → fixture + backend analyze (**simulated lateral OFF**) → copy vào `strix_runs\dsa-demo` → mở `strix view` nếu có `uv` / `.venv`.
+
+Flags hữu ích:
+
+```powershell
+cd dsa_attack_path\scripts
+python run_demo.py --skip-viewer   # chỉ analyze + stage
+python run_demo.py --no-open       # viewer không auto-browser
+python run_demo.py --rebuild-engine
+```
+
+Optional `.exe` (cần Python trên máy để gọi backend; không commit binary vào git):
+
+```powershell
+cd dsa_attack_path\scripts
+.\Build-Demo-Exe.bat
+# → scripts\dist\Run-DSA-Demo.exe
+```
+
+---
+
 ## 0. Chuẩn bị PATH (mỗi session PowerShell)
 
 ```powershell

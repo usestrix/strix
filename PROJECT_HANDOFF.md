@@ -28,7 +28,7 @@ Strix scan (unchanged) → strix_runs/<run>/{vulnerabilities.json,run.json}
 
 Canonical disclaimer: `dsa_attack_path/bridge/strix_dsa_bridge/constants.py`.
 
-**How to demo (thesis):** `docs/demo-walkthrough.md`  
+**How to demo (thesis):** double-click `dsa_attack_path/Run-Demo.bat` — details in `docs/demo-walkthrough.md`.  
 Also: `dsa_attack_path/RUNBOOK.md`, `docs/eval-results.md`, `docs/strix-dsa-architecture.md`.
 
 ---
@@ -50,7 +50,8 @@ Also: `dsa_attack_path/RUNBOOK.md`, `docs/eval-results.md`, `docs/strix-dsa-arch
 | PA-8 Dijkstra in meta | `d90d01e` | `modeled_paths.dijkstra_*`; SPA rose DJ |
 | PA-9 uv + viewer HTTP | `7357c4d` | `uv sync`; `tests/test_viewer.py` 27 passed |
 | PA-10 Bottlenecks UI | `3c1d7bd` | `meta.bottlenecks`; SPA BN panel + yellow highlight |
-| PA-11 Demo walkthrough | *(this push)* | `docs/demo-walkthrough.md` + handoff refresh |
+| PA-11 Demo walkthrough | `adbc3d8` | `docs/demo-walkthrough.md` + handoff refresh |
+| PA-12 One-click launcher | *(this push)* | `dsa_attack_path/Run-Demo.bat` + `scripts/run_demo.py` |
 
 Simulated lateral stays **OFF** by default. Outputs remain **MODELED**.
 
