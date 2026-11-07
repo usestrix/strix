@@ -35,6 +35,18 @@ Launcher sẽ: build/reuse `strix_dsa_cli.exe` → fixture + backend analyze (**
 
 Portal độc lập: dsa_attack_path\scripts\Open-Authorized-Portal.bat → http://127.0.0.1:8765/
 
+
+### Nếu queue scan báo OK nhưng UI vẫn hiện fixture cũ
+
+**Nguyên nhân thường gặp trên máy lab:** Strix thoát ngay vì **Docker chưa cài/không chạy** — log trong strix_runs/_authorization_queue/*.log. API cũ từng ghi scan_started=true dù process đã chết; viewer vẫn gắn run đang mở (vd. dsa-demo / Issues pp.example.com).
+
+**Cách xem đúng:**
+1. Queue lại — UI phải hiện lỗi Docker rõ (không còn giả OK).
+2. Hoặc **Stage MODELED Attack Path demo** → viewer **tự chuyển** sang run demo-… (SYNTHETIC; Issues gắn nhãn demo, không phải live findings).
+3. Live scan thật cần Docker Desktop + LLM key, rồi Past runs chọn run mới (không phải fixture cũ).
+
+URL có #/… sẽ bị strip trước khi queue.
+
 Flags hữu ích:
 
 ```powershell

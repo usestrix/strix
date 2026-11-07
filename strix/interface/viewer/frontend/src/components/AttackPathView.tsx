@@ -135,9 +135,15 @@ function defensePriority(edges: AttackPathEdge[], nodes: GraphNode[]): AttackPat
 
 interface AttackPathViewProps {
   runName: string | null;
+  onSwitchRun?: (runName: string) => void;
+  onRunsChanged?: () => void;
 }
 
-export default function AttackPathView({ runName }: AttackPathViewProps) {
+export default function AttackPathView({
+  runName,
+  onSwitchRun,
+  onRunsChanged,
+}: AttackPathViewProps) {
   const [payload, setPayload] = useState<AttackPathPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Product default: simulated lateral OFF in the UI.
@@ -233,7 +239,7 @@ export default function AttackPathView({ runName }: AttackPathViewProps) {
           <Route className="h-5 w-5 text-[#888]" />
           <h2 className="text-lg font-medium">Attack path</h2>
         </div>
-        <AuthorizedTargetForm />
+        <AuthorizedTargetForm onSwitchRun={onSwitchRun} onRunsChanged={onRunsChanged} />
         <p className="rounded-lg border border-[rgba(255,255,255,0.08)] bg-[#141414] p-4 text-sm leading-relaxed text-[#bbb]">
           {payload.reason ??
             "No modeled attack-path artifacts for this run. Generate them with the DSA backend after the scan."}
@@ -253,7 +259,7 @@ export default function AttackPathView({ runName }: AttackPathViewProps) {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 p-4 md:p-6">
-      <AuthorizedTargetForm />
+      <AuthorizedTargetForm onSwitchRun={onSwitchRun} onRunsChanged={onRunsChanged} />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 text-[#ededed]">

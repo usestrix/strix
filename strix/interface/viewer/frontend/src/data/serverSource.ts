@@ -147,6 +147,7 @@ export interface AuthorizedScanResponse {
   message?: string;
   warning?: string;
   modeled_note?: string;
+  synthetic_banner?: string;
   target_url?: string;
   run_name?: string;
   run_dir?: string;
@@ -155,6 +156,9 @@ export interface AuthorizedScanResponse {
   command?: string[] | string;
   next_steps?: string[];
   action?: string;
+  switch_to_run?: string | null;
+  log_excerpt?: string | null;
+  log_file?: string;
 }
 
 /** Queue an authorized Strix scan or stage a SYNTHETIC Attack Path demo (auth checkbox required). */
@@ -176,6 +180,8 @@ export async function postAuthorizedScan(body: {
     message: typeof data.message === "string" ? data.message : undefined,
     warning: typeof data.warning === "string" ? data.warning : undefined,
     modeled_note: typeof data.modeled_note === "string" ? data.modeled_note : undefined,
+    synthetic_banner:
+      typeof data.synthetic_banner === "string" ? data.synthetic_banner : undefined,
     target_url: typeof data.target_url === "string" ? data.target_url : undefined,
     run_name: typeof data.run_name === "string" ? data.run_name : undefined,
     run_dir: typeof data.run_dir === "string" ? data.run_dir : undefined,
@@ -188,6 +194,9 @@ export async function postAuthorizedScan(body: {
         : undefined,
     next_steps: Array.isArray(data.next_steps) ? (data.next_steps as string[]) : undefined,
     action: typeof data.action === "string" ? data.action : undefined,
+    switch_to_run: typeof data.switch_to_run === "string" ? data.switch_to_run : null,
+    log_excerpt: typeof data.log_excerpt === "string" ? data.log_excerpt : null,
+    log_file: typeof data.log_file === "string" ? data.log_file : undefined,
   };
 }
 

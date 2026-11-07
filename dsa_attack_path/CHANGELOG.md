@@ -1,5 +1,12 @@
 # Changelog — dsa_attack_path
 
+## 0.5.6 — Fix authorized scan status + run switch (PA-14)
+
+### Fixed
+- Strip `#fragments` from target URLs before queue/demo.
+- Docker preflight + settle wait — `scan_started` only if process still alive / clean; surface log errors in UI.
+- SYNTHETIC demo runs relabel targets (no leftover `app.example.com`) and auto-switch viewer via `switch_to_run`.
+
 ## 0.5.5 — Authorized URL input on UI (PA-13)
 
 ### Added

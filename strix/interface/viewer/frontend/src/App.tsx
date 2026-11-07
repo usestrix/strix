@@ -418,7 +418,17 @@ export default function App() {
                 />
               ) : view === "attack-path" ? (
                 <div className="-mx-3 sm:-mx-6 -mb-6 min-h-[70vh]">
-                  <AttackPathView runName={activeRun} />
+                  <AttackPathView
+                    runName={activeRun}
+                    onSwitchRun={(name) => {
+                      selectRun(name);
+                      void refreshRuns();
+                      userSetView("attack-path");
+                    }}
+                    onRunsChanged={() => {
+                      void refreshRuns();
+                    }}
+                  />
                 </div>
               ) : view === "agents" && agentCount > 0 ? (
                 <AgentsTab run={run} canSteer={canSteer} />
