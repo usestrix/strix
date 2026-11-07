@@ -11,7 +11,7 @@
 | Origin remote | `origin` → https://github.com/usestrix/strix.git (**no push access**) |
 | Branch | `cursor/dsa-attack-path-phase1-ae73` |
 | PR | https://github.com/usestrix/strix/pull/1666 |
-| Tip | `adbc3d8` — PA-11 demo walkthrough + handoff |
+| Tip | `1169f34` — PA-12 one-click demo launcher |
 | Agent Store docs | `C:\Users\ADMIN\AppData\Local\Cursor\AgentStores\cursor_agent_stores\bc-9c633c18-02e3-48ad-ac01-70b368f20dea\files\docs\` |
 | Tracker | PA-1 parent; Phases PA-2…PA-6 done; PA-8…PA-11 follow-ons |
 
@@ -51,7 +51,7 @@ Also: `dsa_attack_path/RUNBOOK.md`, `docs/eval-results.md`, `docs/strix-dsa-arch
 | PA-9 uv + viewer HTTP | `7357c4d` | `uv sync`; `tests/test_viewer.py` 27 passed |
 | PA-10 Bottlenecks UI | `3c1d7bd` | `meta.bottlenecks`; SPA BN panel + yellow highlight |
 | PA-11 Demo walkthrough | `adbc3d8` | `docs/demo-walkthrough.md` + handoff refresh |
-| PA-12 One-click launcher | *(this push)* | `dsa_attack_path/Run-Demo.bat` + `scripts/run_demo.py` |
+| PA-12 One-click launcher | `1169f34` | `dsa_attack_path/Run-Demo.bat` + `scripts/run_demo.py` |
 
 Simulated lateral stays **OFF** by default. Outputs remain **MODELED**.
 
