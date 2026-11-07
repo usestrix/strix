@@ -7,19 +7,32 @@ from types import SimpleNamespace
 import litellm
 import pytest
 
-from strix.report.pricing import split_provider_model
+from strix.report.pricing import resolve_litellm_model, split_provider_model
 from strix.report.state import _estimate_response_cost
 from strix.report.usage import _estimate_litellm_entry_cost
 
 
+@pytest.fixture(autouse=True)
+def _empty_resolver_cache():
+    """The resolver caches its answer; a synthetic entry must not outlive the test."""
+    resolve_litellm_model.cache_clear()
+    yield
+    resolve_litellm_model.cache_clear()
+
+
 def _register(monkeypatch: pytest.MonkeyPatch, name: str) -> str:
     """Add a synthetic provider-prefixed catalog entry and forbid inference."""
-    litellm.model_cost[name] = {
-        "input_cost_per_token": 1e-6,
-        "output_cost_per_token": 2e-6,
-        "litellm_provider": name.split("/", 1)[0],
-        "mode": "chat",
-    }
+    # setitem, not assignment: the catalog is shared by every test in the session.
+    monkeypatch.setitem(
+        litellm.model_cost,
+        name,
+        {
+            "input_cost_per_token": 1e-6,
+            "output_cost_per_token": 2e-6,
+            "litellm_provider": name.split("/", 1)[0],
+            "mode": "chat",
+        },
+    )
 
     def _inference_is_forbidden(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("cost estimation asked LiteLLM to infer the provider")
