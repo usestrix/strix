@@ -39,13 +39,14 @@ Portal độc lập: dsa_attack_path\scripts\Open-Authorized-Portal.bat → http
 
 ### Docker trên máy lab (PA-15)
 
-Trạng thái 2026-11-08: **Docker Engine OK** trên Windows 10 **22H2 (19045.6456)**.
+Trạng thái 2026-11-08: **Docker Engine OK** trên Windows 10 **22H2 (19045.6456)** — PA-16 smoke passed.
 
-- Docker Desktop **4.98** / Engine **29.9.2**; `docker version` + `hello-world` đã verify
-- Máy chỉ ~6 GB RAM — đã ghi `%USERPROFILE%\.wslconfig` (`memory=2GB`) để tránh `ERROR_NO_SYSTEM_RESOURCES`. Nếu Engine không lên: đóng app nặng → Start Docker Desktop lại
-- Trước live scan: mở Docker Desktop (Engine running) + LLM key; queue chỉ target đã authorize
+- Docker Desktop **4.98** / Engine **29.9.2**; `docker version` + `hello-world` OK; `_docker_preflight` green khi Engine up
+- MODELED demo: `python dsa_attack_path\scripts\run_demo.py --skip-viewer` → `strix_runs/dsa-demo`; reader `available=true` (BFS/DJ/BN)
+- Máy ~6 GB RAM — `%USERPROFILE%\.wslconfig` (`memory=2GB`). Engine down → đóng app nặng → Start Docker Desktop lại
+- **Live Queue scan còn thiếu LLM key** (`STRIX_LLM` / `LLM_API_KEY`…); chỉ queue URL đã authorize
 
-**Không có Docker / Engine down:** dùng **Stage MODELED Attack Path demo** (SYNTHETIC).
+**Không có Docker / Engine down / chưa có LLM key:** dùng **Stage MODELED Attack Path demo** (SYNTHETIC).
 
 ### Nếu queue scan báo OK nhưng UI vẫn hiện fixture cũ
 

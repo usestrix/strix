@@ -11,9 +11,9 @@
 | Origin remote | `origin` → https://github.com/usestrix/strix.git (**no push access**) |
 | Branch | `cursor/dsa-attack-path-phase1-ae73` |
 | PR | https://github.com/usestrix/strix/pull/1666 |
-| Tip | `9226a62` — PA-14 authorized scan / viewer fix |
+| Tip | `48773c8` — PA-15 Docker verified; PA-16 post-Docker smoke |
 | Agent Store docs | `C:\Users\ADMIN\AppData\Local\Cursor\AgentStores\cursor_agent_stores\bc-9c633c18-02e3-48ad-ac01-70b368f20dea\files\docs\` |
-| Tracker | PA-1 parent; Phases PA-2…PA-6 done; PA-8…PA-11 follow-ons |
+| Tracker | Phases PA-2…PA-6 + PA-8…PA-16 (Docker E2E smoke) |
 
 ---
 
@@ -54,6 +54,8 @@ Also: `dsa_attack_path/RUNBOOK.md`, `docs/eval-results.md`, `docs/strix-dsa-arch
 | PA-12 One-click launcher | `1169f34` | `dsa_attack_path/Run-Demo.bat` + `scripts/run_demo.py` |
 | PA-13 Authorized URL UI | `0dc7bf3` | Attack path form + `/api/attack-path/authorized-scan` + portal |
 | PA-14 Scan/viewer attach | `9226a62` | Docker preflight; strip `#`; honest `scan_started`; SYNTHETIC auto-switch |
+| PA-15 Docker Desktop | lab | Win10 **22H2 (19045)**; Docker Desktop **4.98**; Engine OK; `.wslconfig` memory=2GB |
+| PA-16 Post-Docker E2E | lab | MODELED demo + `_docker_preflight` green; no live Queue (no LLM key) |
 
 Simulated lateral stays **OFF** by default. Outputs remain **MODELED**.
 
@@ -103,8 +105,9 @@ Simulated lateral stays **OFF** by default. Outputs remain **MODELED**.
 | Viewer reader | 3 passed |
 | Full `test_viewer.py` (uv) | 27 passed |
 | Demo smoke (2026-11-07) | engine exit 0; meta BFS/DJ/BN present; reader `available=true` |
+| PA-16 lab smoke (2026-11-08) | Docker Client+Server OK; `run_demo.py --skip-viewer` OK; reader `available=true`; `_docker_preflight` → None; **no live scan** (LLM key unset) |
 
-Re-verify: see `docs/eval-results.md` and §5 of `docs/demo-walkthrough.md`.
+Re-verify: see `docs/eval-results.md` and §5 of `docs/demo-walkthrough.md`. Store: `internal/pa16-post-docker-e2e.md`.
 
 ---
 
@@ -112,12 +115,14 @@ Re-verify: see `docs/eval-results.md` and §5 of `docs/demo-walkthrough.md`.
 
 - Thesis presentation / recording from `docs/demo-walkthrough.md`  
 - Optional: PR destiny with usestrix maintainers  
+- **Real Queue scan** still needs: Docker Engine running + `STRIX_LLM` / `LLM_API_KEY` (or equivalent) + operator-authorized target URL only  
 - **Do not** invent fake pentest results or wire attack-path into agent loops  
 
 ### Env reminders
 - Git: `Hiếu Nguyễn Trung` / `nth1992007@gmail.com`  
 - Push: `git push fork cursor/dsa-attack-path-phase1-ae73`  
 - CMake / g++ paths as in walkthrough §0  
+- Docker: start Desktop first; lab RAM ~6 GB → keep `%USERPROFILE%\.wslconfig` memory=2GB  
 
 ---
 
@@ -130,4 +135,4 @@ Re-verify: see `docs/eval-results.md` and §5 of `docs/demo-walkthrough.md`.
 5. `docs/strix-dsa-architecture.md`  
 6. PR #1666  
 
-*Handoff refreshed for PA-11 (demo walkthrough).*
+*Handoff refreshed for PA-15/PA-16 (Docker + post-Docker smoke).*
