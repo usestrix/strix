@@ -1,5 +1,12 @@
 # Changelog — dsa_attack_path
 
+## 0.5.2 — Bottleneck analysis in meta + SPA (PA-10)
+
+### Added
+- `meta.bottlenecks`: ranked edges (`path_count`, share %, crown-jewel reach/impact) + crown-jewel reachability — Python mirror of C++ DFS frequency ranking.
+- Attack Path SPA **Bottlenecks** panel + yellow **BN** edge highlight; `analysis.txt` remains engine transcript fallback.
+- Bridge diamond-graph test; backend asserts `bottlenecks.edges` on artifact write / engine E2E.
+
 ## 0.5.1 — Dijkstra ids in meta.modeled_paths (PA-8)
 
 ### Added

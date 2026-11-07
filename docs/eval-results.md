@@ -6,6 +6,8 @@ Environment: CMake 4.x, TDM-GCC g++ 10.3, Python 3.14, Node/npm for viewer SPA.
 
 **PA-8:** `meta.modeled_paths` now includes `dijkstra_node_ids` / `dijkstra_edges` / `dijkstra_path_probability` (Python mirror of C++ `-log(p)` Dijkstra). `analysis.txt` remains the richer CLI fallback.
 
+**PA-10:** `meta.bottlenecks` ranks edges by crown-jewel reach + DFS path frequency (same order as C++). SPA shows a Bottlenecks panel + yellow **BN** highlights.
+
 ## Commands and results
 
 ### C++ engine
@@ -26,7 +28,7 @@ cd dsa_attack_path\bridge
 python -m unittest discover -s tests -v
 ```
 
-**Result:** `Ran 17 tests in ~0.2s` — **OK** (includes BFS + Dijkstra `test_paths.PathsTest`)
+**Result:** `Ran 18 tests in ~0.2s` — **OK** (includes BFS + Dijkstra + bottleneck `test_paths.PathsTest`)
 
 ### Backend
 
@@ -35,7 +37,7 @@ cd dsa_attack_path\backend
 python -m unittest discover -s tests -v
 ```
 
-**Result:** `Ran 6 tests in ~0.3s` — **OK** (includes C++ E2E when `build\strix_dsa_cli.exe` present; asserts `bfs_node_ids` + `dijkstra_node_ids`)
+**Result:** `Ran 6 tests in ~0.3s` — **OK** (includes C++ E2E when `build\strix_dsa_cli.exe` present; asserts `bfs`/`dijkstra` ids + `bottlenecks.edges`)
 
 ### Viewer artifact reader
 
@@ -52,10 +54,10 @@ python -m pytest tests/test_attack_path_viewer.py -q
 | Suite | Pass count |
 |-------|------------|
 | C++ ctest | 1 |
-| Bridge unittest | 17 |
+| Bridge unittest | 18 |
 | Backend unittest | 6 |
 | Viewer pytest | 3 |
-| **Combined** | **27** |
+| **Combined** | **28** |
 
 ## Demo smoke (manual)
 
@@ -67,7 +69,7 @@ python -m strix_dsa_backend .\fixtures\sample_run_dir --engine ..\build\strix_ds
 
 Expect `attack_path/{attack_graph.json,topology.txt,analysis.txt,meta.json}` with
 `product_defaults.allow_simulated_lateral=false` and non-empty
-`modeled_paths.bfs_node_ids` + `modeled_paths.dijkstra_node_ids`.
+`modeled_paths.bfs_node_ids` + `modeled_paths.dijkstra_node_ids` + non-empty `bottlenecks.edges`.
 
 ## PA-9 note (uv + full viewer HTTP)
 

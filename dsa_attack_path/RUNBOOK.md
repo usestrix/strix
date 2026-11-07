@@ -50,7 +50,7 @@ Writes:
   attack_graph.json   # provenance-labeled graph
   topology.txt        # C++ input
   analysis.txt        # engine transcript (modeled banner)
-  meta.json           # product defaults + modeled_paths (BFS + Dijkstra ids for UI)
+  meta.json           # product defaults + modeled_paths + bottlenecks (BFS/DJ/BN for UI)
 ```
 
 Optional Strix shim (same checkout): `strix attack-path <run>`.
@@ -65,7 +65,7 @@ strix view <name>
 
 - Missing `attack_path/` → graceful empty state (scan UI still works).
 - Simulated lateral checkbox **off by default**.
-- Sky **BFS** / rose **DJ** edges use `meta.modeled_paths` (modeled highlight only).
+- Sky **BFS** / rose **DJ** / yellow **BN** edges use `meta.modeled_paths` + `meta.bottlenecks` (modeled highlight only).
 
 ## 5. Full verification commands
 

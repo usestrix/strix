@@ -73,7 +73,12 @@ def analyze_run_dir(run_dir: Path, options: AnalyzeOptions | None = None) -> dic
     from strix_dsa_bridge.constants import DISCLAIMER, DISCLAIMER_BANNER
     from strix_dsa_bridge.emit import emit_graph_json, emit_topology_txt, load_findings_file
     from strix_dsa_bridge.mapper import BridgeOptions, build_attack_graph
-    from strix_dsa_bridge.paths import build_modeled_paths
+    from strix_dsa_bridge.paths import (
+        DEFAULT_MAX_DEPTH,
+        DEFAULT_MAX_PATHS,
+        build_bottleneck_analysis,
+        build_modeled_paths,
+    )
 
     findings = load_findings_file(vulns_path)
     run_record = _load_json(run_dir / "run.json", {})
@@ -157,11 +162,21 @@ def analyze_run_dir(run_dir: Path, options: AnalyzeOptions | None = None) -> dic
             encoding="utf-8",
         )
 
+    start_i = start if isinstance(start, int) else None
+    target_i = target if isinstance(target, int) else None
     modeled_paths = build_modeled_paths(
         graph,
-        start=start if isinstance(start, int) else None,
-        target=target if isinstance(target, int) else None,
+        start=start_i,
+        target=target_i,
         include_lateral=opts.allow_simulated_lateral,
+    )
+    bottlenecks = build_bottleneck_analysis(
+        graph,
+        start=start_i,
+        target=target_i,
+        include_lateral=opts.allow_simulated_lateral,
+        max_depth=opts.max_depth if opts.max_depth is not None else DEFAULT_MAX_DEPTH,
+        max_paths=opts.max_paths if opts.max_paths is not None else DEFAULT_MAX_PATHS,
     )
 
     meta = {
@@ -178,6 +193,7 @@ def analyze_run_dir(run_dir: Path, options: AnalyzeOptions | None = None) -> dic
         "warnings": graph.get("warnings"),
         "analysis_defaults": graph.get("analysis_defaults"),
         "modeled_paths": modeled_paths,
+        "bottlenecks": bottlenecks,
         "engine": engine_meta,
         "artifacts": {
             "attack_graph_json": str(graph_path),

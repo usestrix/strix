@@ -149,6 +149,7 @@ strix view my-run
 
 - **Canonical disclaimer:** `dsa_attack_path/bridge/strix_dsa_bridge/constants.py` (`DISCLAIMER` / `DISCLAIMER_BANNER`) — mirrored in backend analysis headers, viewer API fallback, and SPA copy.
 - **`meta.json` → `modeled_paths`:** optional BFS + Dijkstra node/edge id arrays for UI highlight (same graph, no schema fork). Sky “BFS” = fewest hops; rose “DJ” = max path-product via `-log(p)` (matches C++). Both are modeled aids, not confirmed pivots. `analysis.txt` remains the engine transcript fallback.
+- **`meta.json` → `bottlenecks`:** DFS path-frequency ranking (crown-jewel reach, impact, path share) matching C++ bottleneck order; SPA yellow “BN” highlight + sidebar panel.
 - **Runbook:** `dsa_attack_path/RUNBOOK.md`
 - **Eval evidence:** `docs/eval-results.md`
 - Framing: thesis-layered DSA module beside Strix — not a rewrite of Strix agents.

@@ -67,6 +67,43 @@ export interface ModeledPaths {
   weighting?: string;
 }
 
+export interface BottleneckEdgeSummary {
+  from?: number;
+  to?: number;
+  path_count?: number;
+  path_share_percent?: number;
+  crown_jewels_count?: number;
+  total_impact?: number;
+  probability?: number;
+  provenance?: string;
+  labels?: string[];
+  title?: string | null;
+  frequency_complete?: boolean;
+}
+
+export interface BottleneckCrownJewel {
+  id?: number;
+  name?: string;
+  impact?: number;
+  reachable?: boolean;
+  shortest_hops?: number;
+}
+
+export interface BottleneckAnalysis {
+  note?: string;
+  start?: number | null;
+  target?: number | null;
+  include_simulated_lateral?: boolean;
+  max_depth?: number;
+  max_paths?: number;
+  truncated?: boolean;
+  frequency_complete?: boolean;
+  total_paths?: number;
+  ranking?: string;
+  edges?: BottleneckEdgeSummary[];
+  crown_jewels?: BottleneckCrownJewel[];
+}
+
 export interface AttackPathMeta {
   schema_version?: string;
   generated_at?: string;
@@ -80,6 +117,7 @@ export interface AttackPathMeta {
   warnings?: string[];
   analysis_defaults?: { start?: number | null; target?: number | null };
   modeled_paths?: ModeledPaths;
+  bottlenecks?: BottleneckAnalysis;
   module_framing?: string;
   engine?: {
     invoked?: boolean;

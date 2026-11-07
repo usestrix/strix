@@ -180,6 +180,233 @@ def _edge_summaries(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+DEFAULT_MAX_DEPTH = 12
+DEFAULT_MAX_PATHS = 10000
+DEFAULT_BOTTLENECK_TOP = 10
+
+
+def _nodes_by_id(graph: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    out: dict[int, dict[str, Any]] = {}
+    for node in graph.get("nodes") or []:
+        if isinstance(node, dict) and "id" in node:
+            out[int(node["id"])] = node
+    return out
+
+
+def _reachable_from_start(
+    adj: dict[int, list[dict[str, Any]]], start: int
+) -> set[int]:
+    seen = {start}
+    queue: deque[int] = deque([start])
+    while queue:
+        current = queue.popleft()
+        for edge in adj.get(current, []):
+            nxt = int(edge["to"])
+            if nxt in seen:
+                continue
+            seen.add(nxt)
+            queue.append(nxt)
+    return seen
+
+
+def _enumerate_simple_paths(
+    adj: dict[int, list[dict[str, Any]]],
+    start: int,
+    target: int,
+    *,
+    max_depth: int,
+    max_paths: int,
+) -> tuple[list[list[int]], bool]:
+    """DFS simple-path enum matching C++ caps. Returns (paths, truncated)."""
+    if max_depth <= 0 or max_paths <= 0:
+        return [], False
+    paths: list[list[int]] = []
+    truncated = False
+
+    def visit(current: int, depth: int, path: list[int], visited: set[int]) -> None:
+        nonlocal truncated
+        if truncated:
+            return
+        if current == target:
+            if len(paths) >= max_paths:
+                truncated = True
+                return
+            paths.append(list(path))
+            return
+        if depth >= max_depth:
+            return
+        for edge in adj.get(current, []):
+            if truncated:
+                return
+            nxt = int(edge["to"])
+            if nxt in visited:
+                continue
+            visited.add(nxt)
+            path.append(nxt)
+            visit(nxt, depth + 1, path, visited)
+            path.pop()
+            visited.remove(nxt)
+
+    visit(start, 0, [start], {start})
+    return paths, truncated
+
+
+def _reverse_reaches_jewels(
+    adj: dict[int, list[dict[str, Any]]], jewel_ids: list[int]
+) -> dict[int, set[int]]:
+    """Map node_id -> set of crown-jewel ids reachable forward from that node."""
+    reverse: dict[int, list[int]] = {}
+    for frm, edges in adj.items():
+        for edge in edges:
+            reverse.setdefault(int(edge["to"]), []).append(int(frm))
+
+    # For each jewel, walk reverse edges; every visited node can reach that jewel.
+    can_reach: dict[int, set[int]] = {}
+    for jewel in jewel_ids:
+        queue: deque[int] = deque([jewel])
+        seen = {jewel}
+        while queue:
+            current = queue.popleft()
+            can_reach.setdefault(current, set()).add(jewel)
+            for prev in reverse.get(current, []):
+                if prev in seen:
+                    continue
+                seen.add(prev)
+                queue.append(prev)
+    return can_reach
+
+
+def build_bottleneck_analysis(
+    graph: dict[str, Any],
+    *,
+    start: int | None,
+    target: int | None,
+    include_lateral: bool = False,
+    max_depth: int = DEFAULT_MAX_DEPTH,
+    max_paths: int = DEFAULT_MAX_PATHS,
+    top_n: int = DEFAULT_BOTTLENECK_TOP,
+) -> dict[str, Any]:
+    """Rank edges by crown-jewel reach + DFS path frequency (C++ bottleneck order).
+
+    Mirrors ``Graph::analyze`` bottleneck ranking. ``analysis.txt`` remains the
+    engine transcript fallback when the C++ CLI is invoked.
+    """
+    from .constants import DISCLAIMER_BANNER
+
+    result: dict[str, Any] = {
+        "note": DISCLAIMER_BANNER,
+        "start": start,
+        "target": target,
+        "include_simulated_lateral": include_lateral,
+        "max_depth": max_depth,
+        "max_paths": max_paths,
+        "truncated": False,
+        "frequency_complete": True,
+        "total_paths": 0,
+        "ranking": "crown_jewels_count, total_impact, path_count, probability",
+        "edges": [],
+        "crown_jewels": [],
+    }
+    if start is None or target is None:
+        return result
+
+    start_i = int(start)
+    target_i = int(target)
+    adj = _adj(graph, include_lateral=include_lateral)
+    nodes = _nodes_by_id(graph)
+    jewel_ids = [
+        nid
+        for nid, node in nodes.items()
+        if node.get("is_crown_jewel") or str(node.get("zone") or "") == "CrownJewel"
+    ]
+
+    reachable = _reachable_from_start(adj, start_i)
+    can_reach = _reverse_reaches_jewels(adj, jewel_ids)
+
+    crown_jewels: list[dict[str, Any]] = []
+    for jid in jewel_ids:
+        node = nodes.get(jid, {})
+        hops = -1
+        if jid in reachable:
+            # cheapest hop count via BFS on same adj
+            parent_path = bfs_node_path(
+                graph, start_i, jid, include_lateral=include_lateral
+            )
+            hops = max(0, len(parent_path) - 1) if parent_path else -1
+        crown_jewels.append(
+            {
+                "id": jid,
+                "name": node.get("name"),
+                "impact": int(node.get("impact") or 0),
+                "reachable": jid in reachable,
+                "shortest_hops": hops if jid in reachable else -1,
+            }
+        )
+    result["crown_jewels"] = crown_jewels
+
+    paths, truncated = _enumerate_simple_paths(
+        adj, start_i, target_i, max_depth=max_depth, max_paths=max_paths
+    )
+    result["total_paths"] = len(paths)
+    result["truncated"] = truncated
+    result["frequency_complete"] = not truncated
+
+    freq: dict[tuple[int, int], int] = {}
+    for path in paths:
+        for i in range(len(path) - 1):
+            key = (path[i], path[i + 1])
+            freq[key] = freq.get(key, 0) + 1
+
+    # Edge lookup for provenance/labels
+    edge_by_pair: dict[tuple[int, int], dict[str, Any]] = {}
+    for edge in graph.get("edges") or []:
+        if not isinstance(edge, dict):
+            continue
+        edge_by_pair.setdefault((int(edge["from"]), int(edge["to"])), edge)
+
+    items: list[dict[str, Any]] = []
+    for (frm, to), count in freq.items():
+        edge = edge_by_pair.get((frm, to), {})
+        jewels_from_to = can_reach.get(to, set())
+        # Only count jewels when the edge's from-node is reachable from start (C++ filter).
+        if frm not in reachable:
+            jewels_from_to = set()
+        try:
+            probability = float(edge.get("probability", 0.0))
+        except (TypeError, ValueError):
+            probability = 0.0
+        impact = sum(int(nodes.get(j, {}).get("impact") or 0) for j in jewels_from_to)
+        share = (100.0 * count / len(paths)) if paths else 0.0
+        items.append(
+            {
+                "from": frm,
+                "to": to,
+                "path_count": count,
+                "path_share_percent": share,
+                "crown_jewels_count": len(jewels_from_to),
+                "total_impact": impact,
+                "probability": probability,
+                "provenance": edge.get("provenance"),
+                "labels": edge.get("labels") or [],
+                "title": edge.get("title"),
+                "frequency_complete": not truncated,
+            }
+        )
+
+    items.sort(
+        key=lambda item: (
+            -int(item["crown_jewels_count"]),
+            -int(item["total_impact"]),
+            -int(item["path_count"]),
+            -float(item["probability"] or 0.0),
+            int(item["from"]),
+            int(item["to"]),
+        )
+    )
+    result["edges"] = items[: max(0, top_n)]
+    return result
+
+
 def build_modeled_paths(
     graph: dict[str, Any],
     *,

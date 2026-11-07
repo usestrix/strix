@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 from strix_dsa_bridge.mapper import BridgeOptions, build_attack_graph  # noqa: E402
 from strix_dsa_bridge.paths import (  # noqa: E402
     bfs_node_path,
+    build_bottleneck_analysis,
     build_modeled_paths,
     dijkstra_node_path,
 )
@@ -69,6 +70,43 @@ class PathsTest(unittest.TestCase):
             ]
         }
         self.assertEqual(dijkstra_node_path(graph, 1, 3), [1, 2, 3])
+
+    def test_bottleneck_diamond_inbound(self) -> None:
+        # Mirrors C++ test_dfs_multiple_paths_and_bottleneck.
+        graph = {
+            "nodes": [
+                {"id": 1, "name": "Endpoint", "zone": "DMZ", "impact": 0, "is_crown_jewel": False},
+                {"id": 2, "name": "Server", "zone": "Internal", "impact": 0, "is_crown_jewel": False},
+                {"id": 3, "name": "Server", "zone": "Internal", "impact": 0, "is_crown_jewel": False},
+                {
+                    "id": 4,
+                    "name": "Critical Asset",
+                    "zone": "CrownJewel",
+                    "impact": 100,
+                    "is_crown_jewel": True,
+                },
+            ],
+            "edges": [
+                {"from": 1, "to": 2, "probability": 0.5, "status": "Active", "labels": []},
+                {"from": 1, "to": 3, "probability": 0.5, "status": "Active", "labels": []},
+                {"from": 2, "to": 4, "probability": 0.5, "status": "Active", "labels": []},
+                {"from": 3, "to": 4, "probability": 0.5, "status": "Active", "labels": []},
+            ],
+        }
+        bn = build_bottleneck_analysis(graph, start=1, target=4)
+        self.assertEqual(bn["total_paths"], 2)
+        self.assertFalse(bn["truncated"])
+        self.assertTrue(bn["edges"])
+        inbound = [
+            e for e in bn["edges"] if e["to"] == 4 and e["from"] in (2, 3)
+        ]
+        self.assertTrue(inbound)
+        for edge in inbound:
+            self.assertEqual(edge["path_count"], 1)
+            self.assertEqual(edge["crown_jewels_count"], 1)
+        jewels = bn["crown_jewels"]
+        self.assertEqual(len(jewels), 1)
+        self.assertTrue(jewels[0]["reachable"])
 
 
 if __name__ == "__main__":

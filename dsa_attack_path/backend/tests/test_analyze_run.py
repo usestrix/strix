@@ -68,6 +68,14 @@ class AnalyzeRunTest(unittest.TestCase):
             meta["modeled_paths"]["target"],
         )
         self.assertIsNotNone(meta["modeled_paths"].get("dijkstra_path_probability"))
+        self.assertIn("bottlenecks", meta)
+        self.assertIn("edges", meta["bottlenecks"])
+        self.assertGreaterEqual(meta["bottlenecks"]["total_paths"], 1)
+        self.assertTrue(meta["bottlenecks"]["edges"])
+        top = meta["bottlenecks"]["edges"][0]
+        self.assertIn("path_count", top)
+        self.assertIn("path_share_percent", top)
+        self.assertIn("crown_jewels_count", top)
 
         # No MODELED_LATERAL edges when default options are used.
         lateral = [
@@ -123,11 +131,13 @@ class AnalyzeRunTest(unittest.TestCase):
         text = Path(meta["artifacts"]["analysis_txt"]).read_text(encoding="utf-8")
         self.assertIn("MODELED attack-path analysis", text)
         self.assertIn("not confirmed multi-hop", text)
-        # Engine transcript remains the fallback; meta also carries Dijkstra ids.
+        # Engine transcript remains the fallback; meta also carries Dijkstra + bottlenecks.
         modeled = meta["modeled_paths"]
         self.assertGreaterEqual(len(modeled["dijkstra_node_ids"]), 2)
         self.assertTrue(modeled["dijkstra_edges"])
         self.assertIsNotNone(modeled["dijkstra_path_probability"])
+        self.assertTrue(meta["bottlenecks"]["edges"])
+        self.assertGreaterEqual(meta["bottlenecks"]["total_paths"], 1)
 
 
 class AttackPathShimTest(unittest.TestCase):

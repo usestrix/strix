@@ -8,12 +8,13 @@ import {
   type Node,
 } from "@xyflow/react";
 import dagre from "@dagrejs/dagre";
-import { AlertTriangle, Route, Shield } from "lucide-react";
+import { AlertTriangle, Route, Shield, Target } from "lucide-react";
 import { fetchAttackPath } from "@/data/serverSource";
 import type {
   AttackPathEdge,
   AttackPathNode as GraphNode,
   AttackPathPayload,
+  BottleneckEdgeSummary,
 } from "@/types/attack-path";
 import AttackPathNode, { type AttackPathNodeData } from "@/components/AttackPathNode";
 
@@ -32,7 +33,8 @@ function layoutGraph(
   edges: AttackPathEdge[],
   showLateral: boolean,
   bfsPairs: Set<string>,
-  dijkstraPairs: Set<string>
+  dijkstraPairs: Set<string>,
+  bottleneckPairs: Set<string>
 ): { rfNodes: Node[]; rfEdges: Edge[] } {
   const visibleEdges = edges.filter((e) => showLateral || !isLateralEdge(e));
   const g = new dagre.graphlib.Graph();
@@ -67,11 +69,13 @@ function layoutGraph(
     const simulated = edge.provenance === "simulated";
     const onBfs = bfsPairs.has(`${edge.from}->${edge.to}`);
     const onDijkstra = dijkstraPairs.has(`${edge.from}->${edge.to}`);
+    const onBottleneck = bottleneckPairs.has(`${edge.from}->${edge.to}`);
     const tags: string[] = [];
     if (onBfs) tags.push("BFS");
     if (onDijkstra) tags.push("DJ");
-    if (!onBfs && !onDijkstra) tags.push(simulated ? "sim" : "finding");
-    // Sky = BFS, rose = Dijkstra-only, teal when both; keep finding/sim colors otherwise.
+    if (onBottleneck) tags.push("BN");
+    if (!onBfs && !onDijkstra && !onBottleneck) tags.push(simulated ? "sim" : "finding");
+    // Sky = BFS, rose = Dijkstra, yellow = bottleneck-only, teal when BFS+DJ.
     let stroke = simulated ? "#b45309" : "#34d399";
     let strokeWidth = simulated ? 1.25 : 1.75;
     if (onBfs && onDijkstra) {
@@ -83,21 +87,25 @@ function layoutGraph(
     } else if (onDijkstra) {
       stroke = "#fb7185";
       strokeWidth = 2.5;
+    } else if (onBottleneck) {
+      stroke = "#eab308";
+      strokeWidth = 2.5;
     }
     rfEdges.push({
       id,
       source: String(edge.from),
       target: String(edge.to),
-      animated: onBfs || onDijkstra || !simulated,
+      animated: onBfs || onDijkstra || onBottleneck || !simulated,
       label: `${((edge.probability ?? 0) * 100).toFixed(0)}% · ${tags.join("+")}`,
       labelStyle: {
-        fill: onBfs || onDijkstra ? "#e2e8f0" : "#aaa",
+        fill: onBfs || onDijkstra || onBottleneck ? "#e2e8f0" : "#aaa",
         fontSize: 10,
       },
       style: {
         stroke,
         strokeWidth,
-        strokeDasharray: simulated && !onBfs && !onDijkstra ? "5 4" : undefined,
+        strokeDasharray:
+          simulated && !onBfs && !onDijkstra && !onBottleneck ? "5 4" : undefined,
       },
     });
   }
@@ -168,6 +176,17 @@ export default function AttackPathView({ runName }: AttackPathViewProps) {
     }
     return pairs;
   }, [payload?.meta?.modeled_paths?.dijkstra_edges]);
+  const bottleneckEdges = useMemo(
+    () => (payload?.meta?.bottlenecks?.edges ?? []).slice(0, 8),
+    [payload?.meta?.bottlenecks?.edges]
+  );
+  const bottleneckPairs = useMemo(() => {
+    const pairs = new Set<string>();
+    for (const edge of bottleneckEdges) {
+      if (edge.from != null && edge.to != null) pairs.add(`${edge.from}->${edge.to}`);
+    }
+    return pairs;
+  }, [bottleneckEdges]);
   const layout = useMemo(() => {
     if (!graph) return { rfNodes: [] as Node[], rfEdges: [] as Edge[] };
     return layoutGraph(
@@ -175,9 +194,10 @@ export default function AttackPathView({ runName }: AttackPathViewProps) {
       graph.edges ?? [],
       showSimulatedLateral,
       bfsPairs,
-      dijkstraPairs
+      dijkstraPairs,
+      bottleneckPairs
     );
-  }, [graph, showSimulatedLateral, bfsPairs, dijkstraPairs]);
+  }, [graph, showSimulatedLateral, bfsPairs, dijkstraPairs, bottleneckPairs]);
 
   const priority = useMemo(() => {
     if (!graph) return [] as AttackPathEdge[];
@@ -252,6 +272,9 @@ export default function AttackPathView({ runName }: AttackPathViewProps) {
           <span className="rounded border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-rose-300">
             DJ = modeled max path-product / Dijkstra −log(p)
           </span>
+          <span className="rounded border border-yellow-500/30 bg-yellow-500/10 px-2 py-1 text-yellow-200">
+            BN = modeled bottleneck (path frequency × crown reach)
+          </span>
         </div>
       </div>
 
@@ -319,6 +342,79 @@ export default function AttackPathView({ runName }: AttackPathViewProps) {
         </div>
 
         <aside className="flex min-h-0 flex-col gap-3 overflow-auto">
+          <section className="rounded-lg border border-[rgba(255,255,255,0.08)] bg-[#141414] p-3">
+            <div className="mb-2 flex items-center gap-1.5 text-sm font-medium text-[#ededed]">
+              <Target className="h-4 w-4 text-yellow-300" />
+              Bottlenecks
+            </div>
+            <p className="mb-2 text-[11px] leading-relaxed text-[#888]">
+              Modeled ranking from DFS path frequency toward the analysis target, sorted by
+              crown-jewel reach then impact (same order as the C++ engine). Not confirmed pivots.
+              {payload.meta?.bottlenecks?.truncated
+                ? " Enumeration truncated — treat shares as lower bounds."
+                : ""}
+            </p>
+            {(payload.meta?.bottlenecks?.total_paths ?? 0) > 0 && (
+              <p className="mb-2 text-[10px] text-[#777]">
+                {payload.meta?.bottlenecks?.total_paths} modeled path
+                {(payload.meta?.bottlenecks?.total_paths ?? 0) === 1 ? "" : "s"} enumerated
+                {payload.meta?.bottlenecks?.frequency_complete === false
+                  ? " (incomplete)"
+                  : ""}
+              </p>
+            )}
+            {bottleneckEdges.length === 0 ? (
+              <p className="text-xs text-[#777]">No bottleneck edges for this start/target.</p>
+            ) : (
+              <ol className="space-y-2">
+                {bottleneckEdges.map((edge: BottleneckEdgeSummary, idx: number) => {
+                  const from = graph.nodes.find((n) => n.id === edge.from);
+                  const to = graph.nodes.find((n) => n.id === edge.to);
+                  return (
+                    <li
+                      key={`bn-${edge.from}-${edge.to}-${idx}`}
+                      className="rounded border border-yellow-500/15 bg-[#101010] px-2 py-1.5 text-[11px]"
+                    >
+                      <div className="font-medium text-[#ddd]">
+                        {from?.name ?? edge.from} → {to?.name ?? edge.to}
+                      </div>
+                      <div className="mt-0.5 text-[#888]">
+                        paths={edge.path_count ?? 0}
+                        {edge.path_share_percent != null
+                          ? ` (${edge.path_share_percent.toFixed(1)}%)`
+                          : ""}
+                        {" · "}jewels={edge.crown_jewels_count ?? 0}
+                        {edge.total_impact != null ? ` · impact=${edge.total_impact}` : ""}
+                        {edge.probability != null ? ` · p=${edge.probability.toFixed(2)}` : ""}
+                      </div>
+                      {edge.provenance && (
+                        <div className="mt-0.5 text-[10px] text-[#777]">
+                          provenance={edge.provenance}
+                          {edge.title ? ` · ${edge.title}` : ""}
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+            {(payload.meta?.bottlenecks?.crown_jewels?.length ?? 0) > 0 && (
+              <div className="mt-3 border-t border-[rgba(255,255,255,0.06)] pt-2">
+                <div className="mb-1 text-[11px] font-medium text-[#ccc]">Crown jewels</div>
+                <ul className="space-y-1 text-[10px] text-[#888]">
+                  {payload.meta!.bottlenecks!.crown_jewels!.map((jewel) => (
+                    <li key={`cj-${jewel.id}`}>
+                      #{jewel.id} {jewel.name ?? ""} · impact={jewel.impact ?? 0} ·{" "}
+                      {jewel.reachable
+                        ? `reachable hops=${jewel.shortest_hops ?? "?"}`
+                        : "unreachable from start"}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </section>
+
           <section className="rounded-lg border border-[rgba(255,255,255,0.08)] bg-[#141414] p-3">
             <div className="mb-2 flex items-center gap-1.5 text-sm font-medium text-[#ededed]">
               <Shield className="h-4 w-4 text-emerald-400" />
