@@ -89,6 +89,56 @@ def test_source_defaults_are_private_and_git_aware(tmp_path: Path) -> None:
         source_upload.remove_bundle(bundle)
 
 
+@pytest.mark.parametrize("stage", ["stat", "digest"])
+@pytest.mark.parametrize("failure", [KeyboardInterrupt(), OSError("archive read failed")])
+def test_archive_finalization_failure_removes_bundle_and_reports_error(
+    stage: str,
+    failure: BaseException,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: Any,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "app.py").write_text("print('safe')\n", encoding="utf-8")
+    archives = tmp_path / "archives"
+    archives.mkdir()
+    monkeypatch.setattr(source_upload.tempfile, "tempdir", str(archives))
+    monkeypatch.setattr(http, "request", lambda *_args, **_kwargs: pytest.fail("must not upload"))
+    original_stat = type(tmp_path).stat
+    finalized: list[Path] = []
+
+    def fail_finalization(path: Path) -> None:
+        with zipfile.ZipFile(path) as archive:
+            assert archive.namelist() == ["app.py"]
+        finalized.append(path)
+        raise failure
+
+    def fail_archive_stat(path: Path, *args: Any, **kwargs: Any) -> os.stat_result:
+        if path.parent == archives and path.name.startswith("strix-source-"):
+            fail_finalization(path)
+        return original_stat(path, *args, **kwargs)
+
+    with monkeypatch.context() as faults:
+        if stage == "stat":
+            faults.setattr(type(tmp_path), "stat", fail_archive_stat)
+        else:
+            faults.setattr(source_upload, "_sha256", fail_finalization)
+        exit_code = cloud.run_cloud(
+            ["scans", "start", "--source", str(source), "--dry-run", "--json"]
+        )
+
+    assert exit_code == (130 if isinstance(failure, KeyboardInterrupt) else http.EXIT_ERROR)
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]
+    if isinstance(failure, KeyboardInterrupt):
+        assert payload["interrupted"] is True
+    else:
+        assert "archive read failed" in payload["error"]
+    assert len(finalized) == 1
+    assert not list(archives.iterdir())
+
+
 def test_hidden_and_sensitive_files_need_separate_opt_ins(tmp_path: Path) -> None:
     source = _git_source(tmp_path)
     (source / ".env").write_text("TOKEN=secret\n", encoding="utf-8")
@@ -681,6 +731,7 @@ def test_oversize_archive_names_largest_files_and_exclude_guidance(
     (tmp_path / "app.py").write_text("print('safe')\n", encoding="utf-8")
     (tmp_path / "big.bin").write_bytes(os.urandom(4096))
     monkeypatch.setattr(source_upload, "MAX_ARCHIVE_BYTES", 1024)
+    monkeypatch.setattr(source_upload.tempfile, "tempdir", str(tmp_path))
 
     with pytest.raises(http.CloudError, match=r"larger than the 0\.0 MiB upload limit") as raised:
         source_upload.prepare_source(
