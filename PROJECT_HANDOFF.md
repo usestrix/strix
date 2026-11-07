@@ -11,7 +11,7 @@
 | Origin remote | `origin` → https://github.com/usestrix/strix.git (**no push access**) |
 | Branch | `cursor/dsa-attack-path-phase1-ae73` |
 | PR | https://github.com/usestrix/strix/pull/1666 |
-| Tip (at handoff write) | See `git log -1` on branch — PA-11 adds demo walkthrough after `3c1d7bd` |
+| Tip | `adbc3d8` — PA-11 demo walkthrough + handoff |
 | Agent Store docs | `C:\Users\ADMIN\AppData\Local\Cursor\AgentStores\cursor_agent_stores\bc-9c633c18-02e3-48ad-ac01-70b368f20dea\files\docs\` |
 | Tracker | PA-1 parent; Phases PA-2…PA-6 done; PA-8…PA-11 follow-ons |
 
