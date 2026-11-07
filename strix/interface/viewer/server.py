@@ -112,6 +112,15 @@ def resolve_run_dir(base_dir: Path, run_param: str | None, default_run_dir: Path
     return candidate
 
 
+def is_synthetic_demo_run(run_dir: Path) -> bool:
+    """True when the run was staged as a SYNTHETIC Attack Path demo fixture.
+
+    Session holders may read these without email verification so Stage MODELED
+    can switch the SPA onto the new run. Real scan history stays email-gated.
+    """
+    return (run_dir / "SYNTHETIC_DEMO.txt").is_file()
+
+
 # Prefix of the cookie carrying the per-process session capability. The bound
 # port is appended (``strix_viewer_session_<port>``) because browsers scope
 # cookies by host only, never by port: concurrent viewers on 127.0.0.1 would
@@ -277,8 +286,14 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
 
             # Any run other than the one used to launch the viewer is part of the
             # email-gated history. The session check above applies to both paths;
-            # verification adds a second gate for historical run data.
-            if run_dir.resolve() != state.run_dir.resolve() and not auth.is_verified():
+            # verification adds a second gate for historical run data. SYNTHETIC
+            # Attack Path demos staged in this viewer are exempt so Stage MODELED
+            # can switch runs without forcing email verification (PA-17).
+            if (
+                run_dir.resolve() != state.run_dir.resolve()
+                and not auth.is_verified()
+                and not is_synthetic_demo_run(run_dir)
+            ):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unverified"})
                 return
 
@@ -340,6 +355,12 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                     runs_base=state.base_dir,
                     repo_root=repo_root,
                 )
+                # Point the viewer at the staged SYNTHETIC run so subsequent
+                # /api/run?run=… matches the launch-run path (no 401).
+                if payload.get("ok") and payload.get("run_dir"):
+                    staged = Path(str(payload["run_dir"]))
+                    if staged.is_dir() and staged.parent.resolve() == state.base_dir.resolve():
+                        state.run_dir = staged
             else:
                 payload = queue_authorized_scan(
                     target_url=target,

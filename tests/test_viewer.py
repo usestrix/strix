@@ -659,6 +659,77 @@ def test_historical_run_data_requires_verification(
         httpd.server_close()
 
 
+def test_synthetic_demo_run_readable_without_email_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PA-17: Stage MODELED switches to a SYNTHETIC run; session alone must suffice."""
+    launched = _make_run(tmp_path, "launched", status="completed", end_time="2026-01-01T00:00:00Z")
+    demo = _make_run(tmp_path, "demo-synth", status="completed", end_time="2026-01-01T00:00:00Z")
+    (demo / "SYNTHETIC_DEMO.txt").write_text("SYNTHETIC\n", encoding="utf-8")
+    _bundle(tmp_path, monkeypatch)
+
+    monkeypatch.setattr("strix.interface.viewer.auth.is_verified", lambda: False)
+
+    httpd, url, token = serve(launched, open_browser=False)
+    try:
+        cookie = _session_cookie(url, token)
+        assert _get_status(f"{url}/api/run?run=demo-synth", cookie=cookie) == 200
+        assert _get_status(f"{url}/api/attack-path?run=demo-synth", cookie=cookie) == 200
+        # Non-synthetic history still gated.
+        other = _make_run(tmp_path, "other-real", status="completed", end_time="2026-01-01T00:00:00Z")
+        assert other.is_dir()
+        assert _get_status(f"{url}/api/run?run=other-real", cookie=cookie) == 401
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_demo_fixture_retargets_viewer_run_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After Stage MODELED, state.run_dir follows the staged SYNTHETIC run."""
+    launched = _make_run(tmp_path, "launched", status="completed", end_time="2026-01-01T00:00:00Z")
+    # Fixture source used by stage_authorized_demo_fixture
+    fx = tmp_path / "dsa_attack_path" / "backend" / "fixtures" / "sample_run_dir"
+    fx.mkdir(parents=True)
+    (fx / "run.json").write_text(
+        json.dumps({"run_name": "sample", "status": "completed"}), encoding="utf-8"
+    )
+    (fx / "vulnerabilities.json").write_text("[]", encoding="utf-8")
+    ap = fx / "attack_path"
+    ap.mkdir()
+    (ap / "attack_graph.json").write_text(
+        json.dumps({"nodes": [], "edges": []}), encoding="utf-8"
+    )
+    (ap / "meta.json").write_text(json.dumps({"modeled_paths": {}}), encoding="utf-8")
+    _bundle(tmp_path, monkeypatch)
+    monkeypatch.setattr("strix.interface.viewer.auth.is_verified", lambda: False)
+
+    httpd, url, token = serve(launched, open_browser=False)
+    try:
+        cookie = _session_cookie(url, token)
+        status, body = _post(
+            url,
+            "/api/attack-path/authorized-scan",
+            {
+                "url": "https://demo.lab.local",
+                "authorized": True,
+                "action": "demo_fixture",
+            },
+            cookie=cookie,
+        )
+        assert status == 200
+        payload = json.loads(body)
+        assert payload.get("ok") is True
+        run_name = payload.get("switch_to_run") or payload.get("run_name")
+        assert isinstance(run_name, str) and run_name
+        assert _get_status(f"{url}/api/run?run={run_name}", cookie=cookie) == 200
+        assert _get_status(f"{url}/api/attack-path?run={run_name}", cookie=cookie) == 200
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def test_runs_list_requires_session_and_verification(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

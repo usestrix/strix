@@ -48,9 +48,20 @@ Trạng thái 2026-11-08: **Docker Engine OK** trên Windows 10 **22H2 (19045.64
 
 **Không có Docker / Engine down / chưa có LLM key:** dùng **Stage MODELED Attack Path demo** (SYNTHETIC).
 
+### Nếu Stage MODELED báo `/api/run?run=demo-… 401` (PA-17)
+
+**Nguyên nhân:** run SYNTHETIC mới không phải run lúc `strix view` launch → gate email history trả 401 khi chưa verify. **Đã fix** (SYNTHETIC + retarget `run_dir`); **restart viewer** để nhận code mới.
+
+**Cách dùng sau fix:**
+1. `dsa_attack_path\Run-Demo.bat` **hoặc** `uv run strix view dsa-demo` → mở URL có `?token=…` từ process đó  
+2. Attack path → tick authorize → **Stage MODELED Attack Path demo** → Attack path tab (không 401)  
+3. Hoặc Past runs → chọn `dsa-demo` / `demo-…` (SYNTHETIC)
+
+**Workaround ngay (chưa restart):** đóng tab cũ; trong repo `uv run strix view dsa-demo` (hoặc `strix view <demo-run-name>` vừa stage) → chỉ dùng URL+token in ra; đừng giữ tab viewer cũ.
+
 ### Nếu queue scan báo OK nhưng UI vẫn hiện fixture cũ
 
-**Nguyên nhân thường gặp trên máy lab:** Strix thoát ngay vì **Docker chưa cài/không chạy** — log trong strix_runs/_authorization_queue/*.log. API cũ từng ghi scan_started=true dù process đã chết; viewer vẫn gắn run đang mở (vd. dsa-demo / Issues pp.example.com).
+**Nguyên nhân thường gặp trên máy lab:** Strix thoát ngay vì **Docker chưa cài/không chạy** — log trong strix_runs/_authorization_queue/*.log. API cũ từng ghi scan_started=true dù process đã chết; viewer vẫn gắn run đang mở (vd. dsa-demo).
 
 **Cách xem đúng:**
 1. Queue lại — UI phải hiện lỗi Docker rõ (không còn giả OK).
