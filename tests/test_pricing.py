@@ -23,6 +23,7 @@ PRICE_ENV = (
     "STRIX_LLM_INPUT_COST_PER_MTOK",
     "STRIX_LLM_OUTPUT_COST_PER_MTOK",
     "STRIX_LLM_CACHED_INPUT_COST_PER_MTOK",
+    "STRIX_LLM_CACHED_INPUT_WRITE_COST_PER_MTOK",
 )
 
 
@@ -35,13 +36,19 @@ def _isolated_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(loader, "_cached", None)
 
 
-def _usage(input_tokens: int, output_tokens: int = 0, cached_tokens: int = 0) -> Usage:
+def _usage(
+    input_tokens: int,
+    output_tokens: int = 0,
+    cached_tokens: int = 0,
+    cache_write_tokens: int = 0,
+) -> Usage:
     usage = Usage()
     usage.requests = 1
     usage.input_tokens = input_tokens
     usage.output_tokens = output_tokens
     usage.total_tokens = input_tokens + output_tokens
     usage.input_tokens_details.cached_tokens = cached_tokens
+    usage.input_tokens_details.cache_write_tokens = cache_write_tokens
     return usage
 
 
@@ -116,6 +123,43 @@ def test_manual_rates_price_usage_and_override_observed_cost(
 
     assert ledger.total_cost == 0.0036
     assert ledger.to_record()["agents"][0]["cost"] == 0.0036
+
+
+def test_cache_write_tokens_are_priced_at_their_own_rate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cache write costs a different rate than a plain input token and a cache read."""
+    monkeypatch.setenv("STRIX_LLM_INPUT_COST_PER_MTOK", "2")
+    monkeypatch.setenv("STRIX_LLM_OUTPUT_COST_PER_MTOK", "8")
+    monkeypatch.setenv("STRIX_LLM_CACHED_INPUT_COST_PER_MTOK", "0.25")
+    monkeypatch.setenv("STRIX_LLM_CACHED_INPUT_WRITE_COST_PER_MTOK", "2.5")
+    ledger = LLMUsageLedger()
+
+    # 1000 input = 400 plain + 500 cache reads + 100 cache writes
+    ledger.record(
+        agent_id="a",
+        usage=_usage(1000, 200, cached_tokens=500, cache_write_tokens=100),
+        model="gateway/unpriced-model",
+    )
+
+    expected = (400 * 2 + 500 * 0.25 + 100 * 2.5 + 200 * 8) / 1_000_000
+    assert ledger.total_cost == pytest.approx(expected)
+
+
+def test_cache_write_tokens_keep_the_input_rate_without_a_write_rate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no write rate set, a write token costs what it cost before the setting existed."""
+    monkeypatch.setenv("STRIX_LLM_INPUT_COST_PER_MTOK", "2")
+    monkeypatch.setenv("STRIX_LLM_OUTPUT_COST_PER_MTOK", "8")
+    ledger = LLMUsageLedger()
+
+    ledger.record(
+        agent_id="a",
+        usage=_usage(1000, 200, cached_tokens=500, cache_write_tokens=100),
+        model="gateway/unpriced-model",
+    )
+
+    # The pre-existing formula, which charged every non-cached input token the input rate.
+    assert ledger.total_cost == pytest.approx((500 * 2 + 500 * 2 + 200 * 8) / 1_000_000)
 
 
 def test_manual_rates_from_config_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

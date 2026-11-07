@@ -70,6 +70,11 @@ class LlmSettings(BaseSettings):
     cached_input_cost_per_mtok: float | None = Field(
         default=None, ge=0, allow_inf_nan=False, alias="STRIX_LLM_CACHED_INPUT_COST_PER_MTOK"
     )
+    # A prompt-cache write costs more than a plain input token at every provider that
+    # bills for it, and the SDK reports those tokens apart from cache reads.
+    cached_input_write_cost_per_mtok: float | None = Field(
+        default=None, ge=0, allow_inf_nan=False, alias="STRIX_LLM_CACHED_INPUT_WRITE_COST_PER_MTOK"
+    )
     force_required_tool_choice: bool = Field(
         default=False,
         alias="STRIX_FORCE_REQUIRED_TOOL_CHOICE",
