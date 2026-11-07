@@ -28,7 +28,7 @@ def read_or_create_identity(*, device_name: str | None = None) -> dict[str, str]
         raw = json.loads(IDENTITY_PATH.read_text(encoding="utf-8"))
         if isinstance(raw, dict):
             record = cast("dict[str, Any]", raw)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         pass
 
     instance_id = record.get("client_instance_id")

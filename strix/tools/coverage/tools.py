@@ -81,7 +81,7 @@ def hydrate_coverage_from_disk(state_dir: Path) -> None:
             return
         try:
             data = json.loads(_coverage_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             logger.exception(
                 "coverage.json at %s is unreadable; starting with empty coverage",
                 _coverage_path,

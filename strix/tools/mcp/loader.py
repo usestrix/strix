@@ -114,7 +114,7 @@ def load_user_mcp_configs(path: Path | None = None) -> list[McpConnectionConfig]
 
     try:
         raw = json.loads(source.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         logger.exception("Could not read MCP config at %s; ignoring it", source)
         return []
 
