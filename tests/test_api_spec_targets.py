@@ -238,3 +238,13 @@ def test_a_fetched_collection_is_owner_only_from_creation() -> None:
     if os.name == "posix":
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert json.loads(path.read_text("utf-8"))["variable"][0]["key"] == "token"
+
+
+def test_environment_pairs_that_join_the_same_way_get_distinct_files() -> None:
+    """`a-b` + `c` and `a` + `b-c` read the same joined name; the digest keeps them apart."""
+    first = write_postman_environment({"tenantId": "A"}, "a-b", "c")
+    second = write_postman_environment({"tenantId": "B"}, "a", "b-c")
+
+    assert first != second
+    assert json.loads(Path(first).read_text("utf-8")) == {"tenantId": "A"}
+    assert json.loads(Path(second).read_text("utf-8")) == {"tenantId": "B"}

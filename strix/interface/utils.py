@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import ipaddress
 import json
 import logging
@@ -1552,7 +1553,12 @@ def write_postman_environment(
     staging.mkdir(parents=True, exist_ok=True)
     stem = sanitize_name(collection_uid)
     if environment_uid:
-        stem = f"{stem}-{sanitize_name(environment_uid)}"
+        # Joining the two sanitized ids is ambiguous: collection `a-b` with environment
+        # `c` and collection `a` with environment `b-c` both read `a-b-c`, and the second
+        # fetch would overwrite the first - every target would then read the wrong
+        # environment. The digest of the pair keeps the two files apart.
+        pair = f"{collection_uid}\0{environment_uid}".encode()
+        stem = f"{stem}-{sanitize_name(environment_uid)}-{hashlib.sha256(pair).hexdigest()[:8]}"
     path = staging / f"{stem}.postman_environment.json"
     _write_private_file(path, json.dumps(variables, indent=2).encode("utf-8"))
     return str(path)
