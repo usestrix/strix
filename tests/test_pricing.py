@@ -45,21 +45,50 @@ def _usage(input_tokens: int, output_tokens: int = 0, cached_tokens: int = 0) ->
     return usage
 
 
-def test_resolves_common_bare_model_names() -> None:
+def test_resolves_common_bare_model_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The resolver's contract, pinned to a fixed catalog.
+
+    LiteLLM's ``model_cost`` is mutable and changes with every release, so asserting
+    against the live catalog fails whenever a model moves or disappears (#1659). The
+    catalog below holds every shape the resolver has to handle.
+    """
+    catalog = {
+        "deepseek-v4-flash": {"litellm_provider": "deepseek"},
+        "deepseek/deepseek-v4-flash": {"input_cost_per_token": 1e-7, "output_cost_per_token": 2e-7},
+        # grok-4.5 is sold under several providers at the same price, so any of them is
+        # a valid answer and every one of them is priceable.
+        "xai/grok-4.5": {"input_cost_per_token": 3e-6, "output_cost_per_token": 1.5e-5},
+        "perplexity/xai/grok-4.5": {"input_cost_per_token": 3e-6, "output_cost_per_token": 1.5e-5},
+        # MiniMax-M3 costs something different per provider, so its bare name stays open.
+        "minimax/MiniMax-M3": {"input_cost_per_token": 1e-6, "output_cost_per_token": 2e-6},
+        "other/MiniMax-M3": {"input_cost_per_token": 9e-6, "output_cost_per_token": 9e-6},
+    }
+    monkeypatch.setattr(litellm, "model_cost", catalog)
+    # The resolver caches its answer, so the fake catalog's results must not outlive this
+    # test: a selected or reordered run would otherwise read them once the real catalog is
+    # back. Clearing here as well keeps the first lookup off a stale entry.
     resolve_litellm_model.cache_clear()
-    assert resolve_litellm_model("deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
-    assert resolve_litellm_model("openai/deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
-    # LiteLLM prices grok-4.5 identically under xai/, perplexity/xai/ and
-    # openrouter/x-ai/, so the resolver may return any of them; the contract
-    # is a provider-qualified name LiteLLM can price.
-    grok = resolve_litellm_model("grok-4.5")
-    assert grok is not None
-    assert grok.endswith("/grok-4.5")
-    assert grok in litellm.model_cost
-    # MiniMax-M3 is sold by several LiteLLM providers at different prices, so
-    # the resolver must not guess from its bare name. A provider-qualified
-    # model remains deterministic.
-    assert resolve_litellm_model("minimax/MiniMax-M3") == "minimax/MiniMax-M3"
+    try:
+        assert resolve_litellm_model("deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
+        assert resolve_litellm_model("openai/deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
+        grok = resolve_litellm_model("grok-4.5")
+        assert grok is not None
+        assert grok.endswith("/grok-4.5")
+        assert grok in catalog
+        # MiniMax-M3 is sold at different prices, so the resolver must not guess from its
+        # bare name. A provider-qualified model remains deterministic.
+        assert resolve_litellm_model("MiniMax-M3") is None
+        assert resolve_litellm_model("minimax/MiniMax-M3") == "minimax/MiniMax-M3"
+    finally:
+        resolve_litellm_model.cache_clear()
+
+
+def test_a_bare_name_never_resolves_to_another_bare_name() -> None:
+    """Whatever the live catalog holds today, the answer is a qualified name or nothing."""
+    resolve_litellm_model.cache_clear()
+    for bare in ("grok-4.5", "deepseek-v4-flash", "MiniMax-M3"):
+        resolved = resolve_litellm_model(bare)
+        assert resolved is None or "/" in resolved, resolved
 
 
 def test_resolver_returns_none_for_unresolvable_model() -> None:
