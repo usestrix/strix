@@ -63,7 +63,7 @@ AUTH_PATH = Path.home() / ".strix" / "subscription-auth.json"
 def _read_store() -> dict[str, Any]:
     try:
         data = json.loads(AUTH_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
 

@@ -13,6 +13,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from strix.config import codex
+from strix.interface.platform_identity import read_or_create_identity
+from strix.interface.viewer import auth as viewer_auth
+from strix.report import coverage as coverage_report
 from strix.tools.coverage import tools as coverage_tools
 from strix.tools.mcp import loader as mcp_loader
 from strix.tools.notes import tools as notes_tools
@@ -61,3 +65,38 @@ def test_a_decodable_config_is_still_read(tmp_path: Path) -> None:
     path.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
 
     assert mcp_loader.load_user_mcp_configs(path) == []
+
+
+def test_an_undecodable_subscription_store_reads_as_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _undecodable(tmp_path, "subscription-auth.json")
+    monkeypatch.setattr(codex, "AUTH_PATH", path)
+
+    assert codex._read_store() == {}
+
+
+def test_an_undecodable_identity_file_still_yields_an_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _undecodable(tmp_path, "identity.json")
+    monkeypatch.setattr("strix.interface.platform_identity.IDENTITY_PATH", path)
+
+    record = read_or_create_identity()
+
+    assert record["client_instance_id"]
+
+
+def test_an_undecodable_auth_file_reads_as_signed_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _undecodable(tmp_path, "auth.json")
+    monkeypatch.setattr(viewer_auth, "AUTH_PATH", path)
+
+    assert viewer_auth.read_auth() is None
+
+
+def test_an_undecodable_agent_graph_reads_as_empty(tmp_path: Path) -> None:
+    _undecodable(tmp_path, "agents.json")
+
+    assert coverage_report.read_agent_graph(tmp_path) == {}
