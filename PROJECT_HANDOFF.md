@@ -52,6 +52,7 @@ Also: `dsa_attack_path/RUNBOOK.md`, `docs/eval-results.md`, `docs/strix-dsa-arch
 | PA-10 Bottlenecks UI | `3c1d7bd` | `meta.bottlenecks`; SPA BN panel + yellow highlight |
 | PA-11 Demo walkthrough | `adbc3d8` | `docs/demo-walkthrough.md` + handoff refresh |
 | PA-12 One-click launcher | `1169f34` | `dsa_attack_path/Run-Demo.bat` + `scripts/run_demo.py` |
+| PA-13 Authorized URL UI | *(this push)* | Attack path form + `/api/attack-path/authorized-scan` + portal |
 
 Simulated lateral stays **OFF** by default. Outputs remain **MODELED**.
 

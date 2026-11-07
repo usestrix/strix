@@ -23,6 +23,18 @@ c:\Users\ADMIN\Documents\project-attt\dsa_attack_path\Run-Demo.bat
 
 Launcher sẽ: build/reuse `strix_dsa_cli.exe` → fixture + backend analyze (**simulated lateral OFF**) → copy vào `strix_runs\dsa-demo` → mở `strix view` nếu có `uv` / `.venv`.
 
+### Nhập URL trên giao diện (không cần terminal)
+
+1. Mở viewer (Run-Demo.bat hoặc uv run strix view dsa-demo).
+2. Tab **Attack path**.
+3. Form **Authorized target URL** ở đầu trang:
+   - Dán URL (http/https)
+   - Bắt buộc tick xác nhận quyền sở hữu / written permission
+   - **Queue authorized Strix scan** hoặc **Stage MODELED Attack Path demo**
+4. Nút bị **disabled** nếu chưa tick checkbox.
+
+Portal độc lập: dsa_attack_path\scripts\Open-Authorized-Portal.bat → http://127.0.0.1:8765/
+
 Flags hữu ích:
 
 ```powershell

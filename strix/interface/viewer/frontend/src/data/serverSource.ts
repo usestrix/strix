@@ -141,6 +141,56 @@ export async function fetchAttackPath(runName?: string | null): Promise<AttackPa
   };
 }
 
+export interface AuthorizedScanResponse {
+  ok: boolean;
+  error?: string | null;
+  message?: string;
+  warning?: string;
+  modeled_note?: string;
+  target_url?: string;
+  run_name?: string;
+  run_dir?: string;
+  scan_started?: boolean;
+  skipped_reason?: string | null;
+  command?: string[] | string;
+  next_steps?: string[];
+  action?: string;
+}
+
+/** Queue an authorized Strix scan or stage a SYNTHETIC Attack Path demo (auth checkbox required). */
+export async function postAuthorizedScan(body: {
+  url: string;
+  authorized: boolean;
+  action?: "queue_scan" | "demo_fixture";
+  scan_mode?: string;
+}): Promise<AuthorizedScanResponse> {
+  const { data, status } = await postJson("/api/attack-path/authorized-scan", {
+    url: body.url,
+    authorized: body.authorized,
+    action: body.action ?? "queue_scan",
+    scan_mode: body.scan_mode ?? "quick",
+  });
+  return {
+    ok: data.ok === true && status < 400,
+    error: typeof data.error === "string" ? data.error : null,
+    message: typeof data.message === "string" ? data.message : undefined,
+    warning: typeof data.warning === "string" ? data.warning : undefined,
+    modeled_note: typeof data.modeled_note === "string" ? data.modeled_note : undefined,
+    target_url: typeof data.target_url === "string" ? data.target_url : undefined,
+    run_name: typeof data.run_name === "string" ? data.run_name : undefined,
+    run_dir: typeof data.run_dir === "string" ? data.run_dir : undefined,
+    scan_started: data.scan_started === true,
+    skipped_reason: typeof data.skipped_reason === "string" ? data.skipped_reason : null,
+    command: Array.isArray(data.command)
+      ? (data.command as string[])
+      : typeof data.command === "string"
+        ? data.command
+        : undefined,
+    next_steps: Array.isArray(data.next_steps) ? (data.next_steps as string[]) : undefined,
+    action: typeof data.action === "string" ? data.action : undefined,
+  };
+}
+
 /** One-shot fetch of every endpoint (used on mount and on final settle). */
 export async function fetchAll(runName?: string | null): Promise<LoadedRun> {
   const { summary, raw, finished } = await fetchRunSummary(runName);

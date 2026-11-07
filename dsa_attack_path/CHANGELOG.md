@@ -1,5 +1,13 @@
 # Changelog — dsa_attack_path
 
+## 0.5.5 — Authorized URL input on UI (PA-13)
+
+### Added
+- Viewer Attack path form: paste URL + mandatory authorization checkbox; queue Strix scan or stage SYNTHETIC modeled demo.
+- API `POST /api/attack-path/authorized-scan` (session + `authorized=true` hard gate).
+- Standalone portal: `scripts/Open-Authorized-Portal.bat` → http://127.0.0.1:8765/
+- Walkthrough updated with UI URL steps.
+
 ## 0.5.4 — One-click Windows demo launcher (PA-12)
 
 ### Added

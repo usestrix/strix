@@ -29,6 +29,10 @@ from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 from strix.core.paths import run_record_path
 from strix.interface.viewer import auth
 from strix.interface.viewer.attack_path import read_attack_path
+from strix.interface.viewer.authorized_scan import (
+    queue_authorized_scan,
+    stage_authorized_demo_fixture,
+)
 from strix.interface.viewer.transcript import (
     build_run_state,
     primary_target,
@@ -186,6 +190,8 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                     self._handle_feedback()
                 elif path == "/api/agents/steer":
                     self._handle_steer()
+                elif path == "/api/attack-path/authorized-scan":
+                    self._handle_authorized_scan()
                 else:
                     self._send_json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
             except BrokenPipeError:
@@ -309,6 +315,44 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                     "email": record.get("email") if record else None,
                 },
             )
+
+        def _handle_authorized_scan(self) -> None:
+            """Queue a Strix scan or stage a SYNTHETIC Attack Path demo for a URL.
+
+            Hard gate: ``authorized`` must be true. Session cookie required so
+            an exposed ``--host`` port cannot start scans anonymously.
+            """
+            if not self._has_session():
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
+                return
+            body = self._read_body()
+            authorized = bool(body.get("authorized") is True)
+            target = str(body.get("url") or body.get("target_url") or "").strip()
+            action = str(body.get("action") or "queue_scan").strip().lower()
+            scan_mode = str(body.get("scan_mode") or "quick").strip() or "quick"
+            if scan_mode not in {"quick", "standard", "deep"}:
+                scan_mode = "quick"
+            repo_root = state.base_dir.parent
+            if action == "demo_fixture":
+                payload = stage_authorized_demo_fixture(
+                    target_url=target,
+                    authorized=authorized,
+                    runs_base=state.base_dir,
+                    repo_root=repo_root,
+                )
+            else:
+                payload = queue_authorized_scan(
+                    target_url=target,
+                    authorized=authorized,
+                    runs_base=state.base_dir,
+                    repo_root=repo_root,
+                    scan_mode=scan_mode,
+                    start_process=True,
+                )
+            status = HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_REQUEST
+            if payload.get("error") == "authorization_required":
+                status = HTTPStatus.FORBIDDEN
+            self._send_json(status, payload)
 
         def _handle_otp_start(self) -> None:
             if not self._has_session():
