@@ -248,3 +248,17 @@ def test_environment_pairs_that_join_the_same_way_get_distinct_files() -> None:
     assert first != second
     assert json.loads(Path(first).read_text("utf-8")) == {"tenantId": "A"}
     assert json.loads(Path(second).read_text("utf-8")) == {"tenantId": "B"}
+
+
+def test_collection_ids_that_sanitize_alike_get_distinct_files() -> None:
+    """`a/b` and `a:b` both sanitize to `a-b`; the digest keeps the two collections apart."""
+    first = write_fetched_collection(
+        {"info": {"_postman_id": "a/b"}, "item": [{"name": "slash"}]}, "a/b"
+    )
+    second = write_fetched_collection(
+        {"info": {"_postman_id": "a:b"}, "item": [{"name": "colon"}]}, "a:b"
+    )
+
+    assert first != second
+    assert json.loads(Path(first).read_text("utf-8"))["item"][0]["name"] == "slash"
+    assert json.loads(Path(second).read_text("utf-8"))["item"][0]["name"] == "colon"

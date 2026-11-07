@@ -1511,7 +1511,11 @@ def write_fetched_collection(collection: dict[str, Any], collection_uid: str) ->
     """
     staging = Path(tempfile.gettempdir()) / "strix_api_specs" / "fetched"
     staging.mkdir(parents=True, exist_ok=True)
-    path = staging / f"{sanitize_name(collection_uid)}.postman_collection.json"
+    # Two ids can sanitize to one name (`a/b` and `a:b` both read `a-b`), and the second
+    # fetch would replace the first - every target would then be handed the other
+    # collection. The digest of the id keeps them apart, as it does for the environment.
+    digest = hashlib.sha256(collection_uid.encode()).hexdigest()[:8]
+    path = staging / f"{sanitize_name(collection_uid)}-{digest}.postman_collection.json"
     # A collection carries its own variables and auth blocks, so it is written private
     # from the first byte like the environment beside it, not with the process umask.
     _write_private_file(path, json.dumps(collection, indent=2).encode("utf-8"))
