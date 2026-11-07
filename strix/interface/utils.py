@@ -1288,7 +1288,7 @@ def derive_local_base_name(path_str: str) -> str:
 
 
 def assign_workspace_subdirs(targets_info: list[dict[str, Any]]) -> None:
-    name_counts: dict[str, int] = {}
+    used: set[str] = set()
 
     for target in targets_info:
         target_type = target["type"]
@@ -1303,10 +1303,15 @@ def assign_workspace_subdirs(targets_info: list[dict[str, Any]]) -> None:
         if base_name is None:
             continue
 
-        count = name_counts.get(base_name, 0) + 1
-        name_counts[base_name] = count
-
-        workspace_subdir = base_name if count == 1 else f"{base_name}-{count}"
+        # A per-name counter is not enough: `repo`, `repo` and `repo-2` would give the
+        # second and the third the same `repo-2`, and the run would mount - and clone
+        # into - one directory for two targets. Count until the name is unused.
+        workspace_subdir = base_name
+        count = 1
+        while workspace_subdir in used:
+            count += 1
+            workspace_subdir = f"{base_name}-{count}"
+        used.add(workspace_subdir)
 
         details["workspace_subdir"] = workspace_subdir
 

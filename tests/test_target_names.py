@@ -2,7 +2,11 @@
 
 import pytest
 
-from strix.interface.utils import derive_repo_base_name, sanitize_name
+from strix.interface.utils import (
+    assign_workspace_subdirs,
+    derive_repo_base_name,
+    sanitize_name,
+)
 
 
 @pytest.mark.parametrize(
@@ -37,3 +41,29 @@ def test_sanitize_name_rejects_names_that_are_no_name(name: str) -> None:
 )
 def test_derive_repo_base_name_never_returns_a_parent_directory(url: str, expected: str) -> None:
     assert derive_repo_base_name(url) == expected
+
+
+def test_workspace_subdirs_stay_unique_when_a_base_name_already_carries_a_counter() -> None:
+    """`repo`, `repo`, `repo-2` must not give two targets the same directory."""
+    targets = [
+        {"type": "repository", "details": {"target_repo": "https://host/a/repo"}},
+        {"type": "repository", "details": {"target_repo": "https://host/b/repo"}},
+        {"type": "repository", "details": {"target_repo": "https://host/c/repo-2"}},
+    ]
+
+    assign_workspace_subdirs(targets)
+
+    subdirs = [target["details"]["workspace_subdir"] for target in targets]
+    assert subdirs == ["repo", "repo-2", "repo-2-2"]
+    assert len(set(subdirs)) == len(subdirs)
+
+
+def test_workspace_subdirs_keep_the_plain_counter_for_repeated_names() -> None:
+    targets = [
+        {"type": "repository", "details": {"target_repo": "https://host/a/app"}},
+        {"type": "repository", "details": {"target_repo": "https://host/b/app"}},
+    ]
+
+    assign_workspace_subdirs(targets)
+
+    assert [target["details"]["workspace_subdir"] for target in targets] == ["app", "app-2"]
