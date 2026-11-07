@@ -92,6 +92,13 @@ def _esc(value: Any) -> str:
     return html.escape(_normalize_text(value)).replace("\n", "<br/>")
 
 
+def _code_paragraph(value: Any, style: ParagraphStyle) -> Paragraph:
+    """Keep code whitespace while retaining Paragraph's wrapping and pagination."""
+    source = _normalize_text(value).expandtabs()
+    markup = html.escape(source).replace(" ", "&nbsp;").replace("\n", "<br/>")
+    return Paragraph(markup or "&nbsp;", style)
+
+
 class _NumberedCanvas(pdfcanvas.Canvas):  # type: ignore[misc]  # reportlab base is untyped
     """Two-pass canvas that prints 'Page X of Y' on every page after the cover."""
 
@@ -501,7 +508,7 @@ def _markdown_flowables(  # noqa: PLR0915 - cohesive block parser, splitting hur
                 code.append(lines[i])
                 i += 1
             i += 1  # closing fence
-            flow.append(Paragraph(_esc("\n".join(code)) or "&nbsp;", styles["code"]))
+            flow.append(_code_paragraph("\n".join(code), styles["code"]))
             continue
         if not stripped:
             flush_para()
@@ -555,7 +562,7 @@ def _field_block(
         return []
     flow: list[Flowable] = [Paragraph(label.upper(), styles["field_label"])]
     if code:
-        flow.append(Paragraph(_esc(value), styles["code"]))
+        flow.append(_code_paragraph(value, styles["code"]))
     else:
         flow.extend(_markdown_flowables(str(value), styles))
     return flow
