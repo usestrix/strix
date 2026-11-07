@@ -20,6 +20,7 @@ from strix.config.models import (
     routes_through_litellm,
 )
 from strix.core.sessions import scrub_images_from_items
+from strix.llm.context_budget import count_tokens
 
 
 if TYPE_CHECKING:
@@ -339,6 +340,35 @@ def _prompt_cache_extra_args(model_name: str) -> dict[str, Any] | None:
     }
 
 
+# An inherited-context block is background only, so it does not need the child's whole
+# window: keeping it small leaves room for the task and the child's own first turns.
+# The parent's full history stays readable by asking it again, unlike a truncated run.
+INHERITED_CONTEXT_MAX_TOKENS = 8_000
+
+
+def _bounded_inherited_history(
+    parent_history: list[Any], *, model: str | None, max_tokens: int
+) -> tuple[list[Any], int]:
+    """Return the newest inherited items that fit ``max_tokens``, and how many were dropped.
+
+    Whole items are kept or dropped, so a message is never half-serialized. When even
+    the newest item does not fit, it is kept alone: an empty context block would hide
+    that the parent had one.
+    """
+    kept: list[Any] = []
+    dropped = 0
+    total = 0
+    for item in reversed(parent_history):
+        size = count_tokens(model or "", json.dumps(item, ensure_ascii=False, default=str))
+        if kept and total + size > max_tokens:
+            dropped += 1
+            continue
+        kept.append(item)
+        total += size
+    kept.reverse()
+    return kept, dropped
+
+
 def child_initial_input(
     *,
     name: str,
@@ -346,6 +376,8 @@ def child_initial_input(
     parent_id: str,
     task: str,
     parent_history: list[Any],
+    model: str | None = None,
+    max_inherited_tokens: int = INHERITED_CONTEXT_MAX_TOKENS,
 ) -> list[dict[str, Any]]:
     """Build the initial input for a child agent as a single user message.
 
@@ -356,14 +388,20 @@ def child_initial_input(
     """
     parts: list[str] = []
     if parent_history:
-        rendered = json.dumps(
-            scrub_images_from_items(parent_history),
-            ensure_ascii=False,
-            default=str,
+        history = scrub_images_from_items(parent_history)
+        history, dropped = _bounded_inherited_history(
+            history, model=model, max_tokens=max_inherited_tokens
+        )
+        rendered = json.dumps(history, ensure_ascii=False, default=str)
+        omitted = (
+            f"[{dropped} earlier inherited message(s) omitted: over the "
+            f"{max_inherited_tokens}-token budget.]\n"
+            if dropped
+            else ""
         )
         parts.append(
             "== Inherited context from parent (background only) ==\n"
-            f"{rendered}\n"
+            f"{omitted}{rendered}\n"
             "== End of inherited context ==\n"
             "Use the above as background only; do not continue the "
             "parent's work. Your task follows.",

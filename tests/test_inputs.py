@@ -62,6 +62,51 @@ def test_child_initial_input_no_consecutive_same_role(parent_history: list[Any])
     assert all(prev != nxt for prev, nxt in pairwise(roles))
 
 
+def _history_of(count: int) -> list[dict[str, str]]:
+    return [{"role": "assistant", "content": f"step {index} " + "x" * 40} for index in range(count)]
+
+
+def test_inherited_history_under_the_budget_is_rendered_whole() -> None:
+    history = _history_of(2)
+    content = child_initial_input(**_child_kwargs(history))[0]["content"]
+
+    assert "earlier inherited message(s) omitted" not in content
+    assert "step 0" in content
+    assert "step 1" in content
+
+
+def test_inherited_history_over_the_budget_keeps_the_newest_and_says_so() -> None:
+    history = _history_of(6)
+
+    kwargs = {**_child_kwargs(history), "max_inherited_tokens": 10}
+    content = child_initial_input(**kwargs)[0]["content"]
+
+    # Newest survives, oldest are dropped, and the child is told the context is partial.
+    assert "step 5" in content
+    assert "step 0" not in content
+    assert "earlier inherited message(s) omitted" in content
+    # Only the newest item is kept, and the count says how many went missing.
+    assert content.count("step ") == 1
+    assert "5 earlier inherited message(s) omitted" in content
+
+
+def test_an_oversized_newest_item_is_still_rendered() -> None:
+    """An empty inherited block would hide that the parent had context at all."""
+    history = [{"role": "assistant", "content": "y" * 4_000}]
+
+    kwargs = {**_child_kwargs(history), "max_inherited_tokens": 10}
+    content = child_initial_input(**kwargs)[0]["content"]
+
+    assert "Inherited context from parent" in content
+    assert "y" * 100 in content
+
+
+def test_no_history_leaves_the_block_out() -> None:
+    content = child_initial_input(**_child_kwargs([]))[0]["content"]
+
+    assert "Inherited context" not in content
+
+
 def _cache_points(model_name: str) -> Any:
     extra = make_model_settings(None, model_name=model_name).extra_args or {}
     return extra.get("cache_control_injection_points")
