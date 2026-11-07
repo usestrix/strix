@@ -98,3 +98,15 @@ schema.graphql
 /.benchmarks/
 /references/
 /strix_runs_main/
+
+# DSA Attack Path local CMake build
+dsa_attack_path/build/
+
+# DSA bridge local outputs / unittest scratch
+dsa_attack_path/bridge/out/
+dsa_attack_path/bridge/tests/_cli_out/
+dsa_attack_path/bridge/tests/*_out/
+
+# DSA backend generated fixture runs / outputs
+dsa_attack_path/backend/fixtures/sample_run_dir/
+

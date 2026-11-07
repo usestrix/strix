@@ -1,0 +1,31 @@
+# =============================================================================
+# SIMULATED / SYNTHETIC LAB TOPOLOGY — NOT A REAL NETWORK
+# =============================================================================
+# This file is educational sample data for the Strix DSA Attack Path engine.
+# Probabilities are ranking assumptions for algorithm demos only.
+# Do NOT present CLI output from this file as penetration-test findings.
+# IDs: 1 = simulated foothold; 8 = simulated crown-jewel target.
+# =============================================================================
+[NODES]
+# ID, Name, Type, Impact, Zone, isEntryPoint, isCrownJewel
+1, Simulated Web Entry, Endpoint, 20, DMZ, true, false
+2, Simulated DMZ Gateway, Gateway, 30, DMZ, false, false
+3, Simulated App Server A, Application Server, 45, Internal, false, false
+4, Simulated App Server B, Application Server, 40, Internal, false, false
+5, Simulated Identity Host, Identity Service, 55, Management, false, false
+6, Simulated DB Replica, Database, 70, SecureZone, false, false
+7, Simulated Jump Host, Endpoint, 35, Management, false, false
+8, Simulated Crown Ledger, Critical Asset, 100, CrownJewel, false, true
+
+[EDGES]
+# from, to, protocol, relation, probability, status
+1, 2, HTTP, InternetExposed, 0.80, Active
+2, 3, HTTP, Unclassified, 0.60, Active
+2, 4, HTTP, Unclassified, 0.55, Active
+3, 6, SQL, SameZoneData, 0.45, Active
+4, 5, LDAP, CrossZoneAdmin, 0.50, Active
+5, 7, SSH, CrossZoneAdmin, 0.40, Active
+7, 8, SSH, CrossZoneAdmin, 0.35, Active
+6, 8, SQL, CrossZoneAdmin, 0.30, Active
+3, 4, HTTP, Unclassified, 0.50, Active
+4, 3, HTTP, Unclassified, 0.50, Active

@@ -1,4 +1,5 @@
 import type { Vulnerability } from "@/types/issues";
+import type { AttackPathPayload } from "@/types/attack-path";
 import {
   parseRunJson,
   parseVulnerabilitiesJson,
@@ -123,6 +124,79 @@ export async function fetchTranscript(runName?: string | null): Promise<Transcri
   return {
     agents: Array.isArray(obj?.agents) ? obj.agents : [],
     events: Array.isArray(obj?.events) ? obj.events : [],
+  };
+}
+
+/** Modeled attack-path artifacts (Phase 4). Always returns a payload; available may be false. */
+export async function fetchAttackPath(runName?: string | null): Promise<AttackPathPayload> {
+  const obj = (await getJson("/api/attack-path" + runQuery(runName))) as Partial<AttackPathPayload>;
+  return {
+    available: obj?.available === true,
+    reason: typeof obj?.reason === "string" ? obj.reason : null,
+    graph: obj?.graph ?? null,
+    meta: obj?.meta ?? null,
+    analysis_text: typeof obj?.analysis_text === "string" ? obj.analysis_text : null,
+    disclaimer: typeof obj?.disclaimer === "string" ? obj.disclaimer : undefined,
+    simulated_lateral_default: obj?.simulated_lateral_default === true,
+  };
+}
+
+export interface AuthorizedScanResponse {
+  ok: boolean;
+  error?: string | null;
+  message?: string;
+  warning?: string;
+  modeled_note?: string;
+  synthetic_banner?: string;
+  target_url?: string;
+  run_name?: string;
+  run_dir?: string;
+  scan_started?: boolean;
+  skipped_reason?: string | null;
+  command?: string[] | string;
+  next_steps?: string[];
+  action?: string;
+  switch_to_run?: string | null;
+  log_excerpt?: string | null;
+  log_file?: string;
+}
+
+/** Queue an authorized Strix scan or stage a SYNTHETIC Attack Path demo (auth checkbox required). */
+export async function postAuthorizedScan(body: {
+  url: string;
+  authorized: boolean;
+  action?: "queue_scan" | "demo_fixture";
+  scan_mode?: string;
+}): Promise<AuthorizedScanResponse> {
+  const { data, status } = await postJson("/api/attack-path/authorized-scan", {
+    url: body.url,
+    authorized: body.authorized,
+    action: body.action ?? "queue_scan",
+    scan_mode: body.scan_mode ?? "quick",
+  });
+  return {
+    ok: data.ok === true && status < 400,
+    error: typeof data.error === "string" ? data.error : null,
+    message: typeof data.message === "string" ? data.message : undefined,
+    warning: typeof data.warning === "string" ? data.warning : undefined,
+    modeled_note: typeof data.modeled_note === "string" ? data.modeled_note : undefined,
+    synthetic_banner:
+      typeof data.synthetic_banner === "string" ? data.synthetic_banner : undefined,
+    target_url: typeof data.target_url === "string" ? data.target_url : undefined,
+    run_name: typeof data.run_name === "string" ? data.run_name : undefined,
+    run_dir: typeof data.run_dir === "string" ? data.run_dir : undefined,
+    scan_started: data.scan_started === true,
+    skipped_reason: typeof data.skipped_reason === "string" ? data.skipped_reason : null,
+    command: Array.isArray(data.command)
+      ? (data.command as string[])
+      : typeof data.command === "string"
+        ? data.command
+        : undefined,
+    next_steps: Array.isArray(data.next_steps) ? (data.next_steps as string[]) : undefined,
+    action: typeof data.action === "string" ? data.action : undefined,
+    switch_to_run: typeof data.switch_to_run === "string" ? data.switch_to_run : null,
+    log_excerpt: typeof data.log_excerpt === "string" ? data.log_excerpt : null,
+    log_file: typeof data.log_file === "string" ? data.log_file : undefined,
   };
 }
 

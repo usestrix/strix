@@ -1,0 +1,12 @@
+{
+  "run_id": "fixture-run-001",
+  "run_name": "dsa-bridge-sample",
+  "status": "completed",
+  "targets_info": [
+    {"original": "https://app.example.com"},
+    {"original": "https://admin.example.com"},
+    {"original": "https://unused-target.example.com"}
+  ],
+  "scan_mode": "quick",
+  "note": "FIXTURE ONLY — not an actual Strix scan artifact from a live engagement."
+}
