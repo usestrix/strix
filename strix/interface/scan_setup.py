@@ -31,6 +31,7 @@ from strix.interface.utils import (
     rewrite_localhost_targets,
     stage_api_specs,
     write_fetched_collection,
+    write_postman_environment,
 )
 from strix.telemetry import posthog, scarf
 from strix.utils.api_spec import (
@@ -225,6 +226,10 @@ def _resolve_api_spec(target: str, details: dict[str, Any]) -> None:
                 fetch_postman_environment(environment_uid, api_key) if environment_uid else None
             )
             details["target_spec"] = write_fetched_collection(raw, collection_uid)
+            if extra_variables:
+                details["environment_file"] = write_postman_environment(
+                    extra_variables, collection_uid, environment_uid
+                )
         else:
             raw = load_spec(str(details["target_spec"]))
             extra_variables = None
