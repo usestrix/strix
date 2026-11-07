@@ -351,21 +351,23 @@ def _bounded_inherited_history(
 ) -> tuple[list[Any], int]:
     """Return the newest inherited items that fit ``max_tokens``, and how many were dropped.
 
-    Whole items are kept or dropped, so a message is never half-serialized. When even
-    the newest item does not fit, it is kept alone: an empty context block would hide
-    that the parent had one.
+    Whole items are kept or dropped, so a message is never half-serialized, and the
+    kept items are always a suffix of ``parent_history``: keeping an older item after
+    a newer one that did not fit would drop a correction while keeping the conclusion
+    it corrects. Each candidate is measured as the JSON list the child receives, not
+    item by item, so the separators and brackets count against the same budget. When
+    even the newest item does not fit, it is kept alone: an empty context block would
+    hide that the parent had one.
     """
     kept: list[Any] = []
     dropped = 0
-    total = 0
-    for item in reversed(parent_history):
-        size = count_tokens(model or "", json.dumps(item, ensure_ascii=False, default=str))
-        if kept and total + size > max_tokens:
-            dropped += 1
-            continue
-        kept.append(item)
-        total += size
-    kept.reverse()
+    for index in range(len(parent_history) - 1, -1, -1):
+        candidate = [parent_history[index], *kept]
+        rendered = json.dumps(candidate, ensure_ascii=False, default=str)
+        if kept and count_tokens(model or "", rendered) > max_tokens:
+            dropped = index + 1
+            break
+        kept = candidate
     return kept, dropped
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from itertools import pairwise
 from typing import Any
 
@@ -9,12 +10,14 @@ import litellm
 import pytest
 
 from strix.core.inputs import (
+    _bounded_inherited_history,
     build_root_task,
     build_scan_targets,
     build_scope_context,
     child_initial_input,
     make_model_settings,
 )
+from strix.llm.context_budget import count_tokens
 
 
 def _child_kwargs(parent_history: list[Any]) -> dict[str, Any]:
@@ -545,3 +548,31 @@ def test_reasoning_effort_sent_as_configured_and_none_omitted() -> None:
     settings = make_model_settings("high", model_name="gpt-daybreak-blue-latest")
     assert settings.reasoning is not None
     assert settings.reasoning.effort == "high"
+
+
+def test_inherited_history_is_a_suffix_so_no_gap_hides_a_correction() -> None:
+    """A newer message that does not fit ends the selection; an older one is never kept past it."""
+    history = [
+        {"role": "assistant", "content": "old conclusion"},
+        {"role": "assistant", "content": "correction " + "x" * 4000},
+        {"role": "assistant", "content": "newest"},
+    ]
+
+    kept, dropped = _bounded_inherited_history(history, model=None, max_tokens=120)
+
+    assert kept == [history[-1]]
+    assert dropped == 2
+
+
+def test_inherited_history_fits_the_budget_as_rendered() -> None:
+    """The list the child receives is measured whole, and the next older item would not fit."""
+    history = [{"role": "assistant", "content": "y" * 300} for _ in range(4)]
+
+    kept, dropped = _bounded_inherited_history(history, model=None, max_tokens=250)
+
+    assert kept == history[dropped:]
+    assert dropped
+    rendered = json.dumps(kept, ensure_ascii=False, default=str)
+    wider = json.dumps([history[dropped - 1], *kept], ensure_ascii=False, default=str)
+    assert count_tokens("", rendered) <= 250
+    assert count_tokens("", wider) > 250
