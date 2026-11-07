@@ -69,6 +69,12 @@ def _render_api_spec(details: dict[str, Any]) -> list[str]:
     ]
     if base_urls := details.get("base_urls") or []:
         lines.append("  - Base URL(s): " + ", ".join(base_urls))
+    if environment_path := details.get("environment_path"):
+        lines.append(
+            "  - Environment variables from the selected environment are in "
+            f"{environment_path}; resolve `{{{{name}}}}` placeholders from it and do not "
+            "print the values."
+        )
     lines.append(
         "  - Read the specification and test every operation it declares, using "
         "its declared parameters, request bodies, and auth. Endpoints in the "

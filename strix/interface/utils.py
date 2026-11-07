@@ -1514,6 +1514,21 @@ def write_fetched_collection(collection: dict[str, Any], collection_uid: str) ->
     return str(path)
 
 
+def write_postman_environment(variables: dict[str, str], collection_uid: str) -> str:
+    """Write a fetched Postman environment beside its collection and return the path.
+
+    The collection keeps its ``{{name}}`` placeholders, so the values have to travel
+    with it: without them the agent can only guess what the selected environment
+    meant. The file is owner-only, like the API key it was fetched with.
+    """
+    staging = Path(tempfile.gettempdir()) / "strix_api_specs" / "fetched"
+    staging.mkdir(parents=True, exist_ok=True)
+    path = staging / f"{sanitize_name(collection_uid)}.postman_environment.json"
+    path.write_text(json.dumps(variables, indent=2), encoding="utf-8")
+    path.chmod(0o600)
+    return str(path)
+
+
 def stage_api_specs(targets_info: list[dict[str, Any]], run_name: str) -> list[dict[str, Any]]:
     """Copy every ``api_spec`` target into one directory for the sandbox.
 
@@ -1542,6 +1557,20 @@ def stage_api_specs(targets_info: list[dict[str, Any]], run_name: str) -> list[d
         used.add(name)
         shutil.copy2(source, staging / name)
         details["workspace_path"] = f"/workspace/{API_SPEC_WORKSPACE_SUBDIR}/{name}"
+
+        # A fetched Postman environment belongs to its collection: copy it into the same
+        # directory, or the placeholders in the spec have nothing to resolve against.
+        environment_file = str(details.get("environment_file") or "")
+        if environment_file:
+            environment_name = Path(environment_file).name
+            while environment_name in used:
+                environment_name = f"env-{environment_name}"
+            used.add(environment_name)
+            shutil.copy2(environment_file, staging / environment_name)
+            (staging / environment_name).chmod(0o600)
+            details["environment_path"] = (
+                f"/workspace/{API_SPEC_WORKSPACE_SUBDIR}/{environment_name}"
+            )
 
     return [
         {
