@@ -5,198 +5,126 @@
 | Item | Value |
 |------|--------|
 | Workspace | `c:\Users\ADMIN\Documents\project-attt` |
-| Goal | Thesis MVP: extend Strix with graph DSA attack-path analysis (BFS/DFS/Dijkstra/bottleneck), C++ core preferred, independent module |
+| Goal | Thesis MVP: graph DSA attack-path (BFS/DFS/Dijkstra/bottleneck) beside Strix |
 | Upstream | https://github.com/usestrix/strix (Apache-2.0) |
 | Fork remote | `fork` → https://github.com/nth1992007-boop/strix.git |
 | Origin remote | `origin` → https://github.com/usestrix/strix.git (**no push access**) |
 | Branch | `cursor/dsa-attack-path-phase1-ae73` |
 | PR | https://github.com/usestrix/strix/pull/1666 |
-| Last commit (Phase 5) | `12f06ae` — Phase 5 eval polish (pushed to fork) |
-| Agent Store (docs) | `C:\Users\ADMIN\AppData\Local\Cursor\AgentStores\cursor_agent_stores\bc-9c633c18-02e3-48ad-ac01-70b368f20dea\files\docs\` |
-| Tracker parent | PA-1 (thesis product); Phase tasks PA-2…PA-6 |
+| Tip (at handoff write) | See `git log -1` on branch — PA-11 adds demo walkthrough after `3c1d7bd` |
+| Agent Store docs | `C:\Users\ADMIN\AppData\Local\Cursor\AgentStores\cursor_agent_stores\bc-9c633c18-02e3-48ad-ac01-70b368f20dea\files\docs\` |
+| Tracker | PA-1 parent; Phases PA-2…PA-6 done; PA-8…PA-11 follow-ons |
 
 ---
 
-## 1. Project goals + current architecture
-
-### Goals
-- Keep Strix AI pentesting intact.
-- Add **independent** attack-path analysis: directed asset graph + BFS reachability, DFS path enum, Dijkstra (`-log p`), bottleneck ranking.
-- Clear separation: **finding-derived** vs **simulated** scaffolding — never present modeled paths as confirmed multi-hop exploits.
-- Prefer C++ for algorithm core; Python bridge/backend; Strix local viewer for dashboard.
-
-### Architecture (Phases 1–5 complete)
+## 1. Architecture (unchanged shape)
 
 ```
-Strix scan / agent loops (unchanged)
-        │
-        ▼
-strix_runs/<run>/{vulnerabilities.json, run.json}
-        │  explicit post-run CLI only (no agent hard-wire)
-        ▼
-dsa_attack_path/backend  →  bridge  →  C++ engine (strix_dsa_cli)
-        │
-        ▼
-strix_runs/<run>/attack_path/
-  attack_graph.json | topology.txt | analysis.txt | meta.json
-        │
-        ▼
-Viewer GET /api/attack-path  +  SPA "Attack path" tab
+Strix scan (unchanged) → strix_runs/<run>/{vulnerabilities.json,run.json}
+        → dsa_attack_path backend/bridge → C++ strix_dsa_cli (optional)
+        → <run>/attack_path/{attack_graph.json,topology.txt,analysis.txt,meta.json}
+        → Viewer GET /api/attack-path + SPA "Attack path"
 ```
 
-| Layer | Location | Role |
-|-------|----------|------|
-| C++ engine | `dsa_attack_path/` | Graph model, BFS/DFS/Dijkstra/bottleneck, CMake, CLI, unit tests |
-| Bridge | `dsa_attack_path/bridge/` | `vulnerabilities.json` → labeled graph + topology.txt + `paths.py` |
-| Backend | `dsa_attack_path/backend/` | Post-run: write `attack_path/` under a Strix run dir |
-| Strix shim | `strix/interface/attack_path_cli.py` + `main.py` dispatch | Optional `strix attack-path` |
-| Viewer | `strix/interface/viewer/` | `/api/attack-path` + Attack path SPA |
+Canonical disclaimer: `dsa_attack_path/bridge/strix_dsa_bridge/constants.py`.
 
-Canonical disclaimer: `dsa_attack_path/bridge/strix_dsa_bridge/constants.py` → `DISCLAIMER`.
-
-Architecture narrative: `docs/strix-dsa-architecture.md` (also mirrored in Agent Store `docs/`).
+**How to demo (thesis):** `docs/demo-walkthrough.md`  
+Also: `dsa_attack_path/RUNBOOK.md`, `docs/eval-results.md`, `docs/strix-dsa-architecture.md`.
 
 ---
 
 ## 2. Completed work
 
-### Phase 1 — Graph model + C++ DSA engine (pushed `84fa87f`)
-- Independent C++17 library + CLI + CMake + tests + simulated lab topology.
-- Algorithms: BFS, DFS (caps), Dijkstra on `-log(p)`, bottleneck by path frequency.
+### MVP phases (PR series)
+| Phase | Commit (approx) | Status |
+|-------|-----------------|--------|
+| 1 C++ engine | `84fa87f` | Done |
+| 2 Bridge | `3a801cc` | Done |
+| 3 Backend | `1686b85` | Done |
+| 4 Viewer SPA | `1a923b3` | Done |
+| 5 Eval/docs | `12f06ae` | Done |
 
-### Phase 2 — Strix → DSA bridge (pushed `3a801cc`)
-- Stdlib Python package maps finding-centric JSON → provenance-labeled graph.
-- Simulated entry node; optional lateral (`--allow-simulated-lateral`, off by default).
-- Fixtures + unittest suite.
+### Post-MVP on same PR
+| Task | Commit | What |
+|------|--------|------|
+| PA-8 Dijkstra in meta | `d90d01e` | `modeled_paths.dijkstra_*`; SPA rose DJ |
+| PA-9 uv + viewer HTTP | `7357c4d` | `uv sync`; `tests/test_viewer.py` 27 passed |
+| PA-10 Bottlenecks UI | `3c1d7bd` | `meta.bottlenecks`; SPA BN panel + yellow highlight |
+| PA-11 Demo walkthrough | *(this push)* | `docs/demo-walkthrough.md` + handoff refresh |
 
-### Phase 3 — Backend integration (pushed `1686b85`)
-- Writes `strix_runs/<run>/attack_path/` artifacts.
-- Product default: simulated lateral **OFF**.
-- Thin `strix attack-path` shim; **no** ReportState/agent-loop hard-wire.
-
-### Phase 4 — Dashboard visualization (pushed `1a923b3`)
-- `GET /api/attack-path` reuses `attack_graph.json` + `meta.json` (+ `analysis.txt`).
-- SPA Attack path tab: provenance badges, defense priority, lateral toggle off by default, graceful empty state.
-- Viewer static bundle rebuilt and committed.
-
-### Phase 5 — Eval / docs polish (**done**)
-- Canonical disclaimer alignment across bridge/backend/C++ CLI/viewer/SPA.
-- `paths.py` + `meta.modeled_paths` (BFS node/edge ids); SPA sky BFS highlight.
-- `dsa_attack_path/RUNBOOK.md`, `docs/eval-results.md`, architecture Phase 5 section, CHANGELOG `0.5.0`.
-- Viewer static rebuild: `index-B7ItA10z.js` / `index-BVQpdXLp.css`.
-- Verified **25** checks green (ctest 1 + bridge 15 + backend 6 + viewer 3).
+Simulated lateral stays **OFF** by default. Outputs remain **MODELED**.
 
 ---
 
-## 3. Key files
+## 3. Key paths
 
-### DSA module
-| Path | Purpose |
-|------|---------|
-| `dsa_attack_path/` | C++ engine + CMake + simulated lab |
-| `dsa_attack_path/bridge/` | Findings → graph; `constants.py`, `paths.py` |
-| `dsa_attack_path/backend/` | Post-run orchestrator |
-| `dsa_attack_path/RUNBOOK.md` | Demo runbook |
-| `dsa_attack_path/CHANGELOG.md` | Through `0.5.0` |
-
-### Strix touchpoints (minimal)
-| Path | Purpose |
-|------|---------|
-| `strix/interface/main.py` | Dispatch `strix attack-path` |
-| `strix/interface/attack_path_cli.py` | Shim → backend |
-| `strix/interface/viewer/attack_path.py` | Read artifacts for API |
-| `strix/interface/viewer/server.py` | Route `/api/attack-path` |
-| `strix/interface/viewer/frontend/src/components/AttackPathView.tsx` | SPA tab |
-| `strix/interface/viewer/static/*` | Built SPA bundle |
-
-### Docs / tests
-| Path | Purpose |
-|------|---------|
-| `docs/strix-dsa-architecture.md` | Integration design (Phases 1–5) |
-| `docs/eval-results.md` | Phase 5 pass-count evidence |
-| `tests/test_attack_path_viewer.py` | Viewer reader unit tests |
-| Agent Store `docs/` | Mirrored architecture + handoff |
+| Path | Role |
+|------|------|
+| `dsa_attack_path/` | C++ engine, bridge, backend |
+| `dsa_attack_path/bridge/strix_dsa_bridge/paths.py` | BFS / Dijkstra / bottleneck helpers → meta |
+| `strix/interface/viewer/` | `/api/attack-path` + AttackPathView SPA |
+| `docs/demo-walkthrough.md` | User-facing thesis demo |
+| `docs/eval-results.md` | Pass counts |
+| `PROJECT_HANDOFF.md` | This file |
 
 ---
 
-## 4. Important technical decisions
+## 4. Decisions (still in force)
 
-1. **Independent modules** under `dsa_attack_path/` — do not rewrite Strix core; only thin optional hooks.
-2. **No automatic post-scan in `ReportState`** — explicit CLI only (avoids agent-loop coupling).
-3. **Provenance on every node/edge** (`from_finding` | `simulated`) + labels; TXT topology encodes prefixes `[SIM]`/`[FINDING]`/`[RUN]`.
-4. **Simulated lateral OFF by default** (CLI flags + UI checkbox).
-5. **Reuse one graph schema** — viewer API wraps existing JSON; `modeled_paths` is optional meta for UI.
-6. **Push via fork** `nth1992007-boop/strix` → PR into `usestrix/strix` (origin push denied).
-7. **Thesis framing** — layered module for attack-path research, not a hostile Strix rewrite.
-8. **C++ toolchain on this machine:** TDM-GCC `g++`, CMake via winget (`C:\Program Files\CMake\bin`), generator `MinGW Makefiles`.
-9. **Viewer SPA** must be rebuilt with `npm run build` in `strix/interface/viewer/frontend` and static output committed (Makefile target `viewer`).
+1. Independent `dsa_attack_path/` — no agent-loop hard-wire  
+2. Explicit post-run CLI only  
+3. Provenance on every node/edge  
+4. One graph schema; meta is additive UI aid; `analysis.txt` = engine transcript fallback  
+5. Push via **fork** only  
+6. Windows toolchain: CMake + TDM-GCC MinGW Makefiles  
 
 ---
 
-## 5. Remaining gaps (non-blocking)
+## 5. Gaps (non-blocking)
 
 | Issue | Notes |
 |-------|--------|
-| Dijkstra not in `modeled_paths` | Only BFS fewest-hop ids; C++ still prints Dijkstra in `analysis.txt` |
-| Full Strix `test_viewer.py` HTTP | Needs synced `uv` env; DSA gates on the 25-check matrix |
-| Upstream merge destiny | Thesis module on PR #1666 — maintainers decide |
-| Live desktop demo | Documented in RUNBOOK; not automated in CI |
+| Upstream merge | Maintainer decision on PR #1666 |
+| Live browser demo | Walkthrough covers `uv run strix view`; not CI-automated |
+| Dijkstra in C++ JSON | Still stdout/`analysis.txt`; Python meta already has ids |
 
 ---
 
-## 6. Latest test results (2026-11-07, Phase 5)
+## 6. Latest verified results
 
 | Suite | Result |
 |-------|--------|
-| C++ ctest | **1/1 passed** |
-| Bridge unittest | **15 OK** |
-| Backend unittest | **6 OK** |
-| Viewer pytest | **3 passed** |
-| **Combined** | **25** |
+| C++ ctest | 1/1 |
+| Bridge unittest | 18 OK |
+| Backend unittest | 6 OK |
+| Viewer reader | 3 passed |
+| Full `test_viewer.py` (uv) | 27 passed |
+| Demo smoke (2026-11-07) | engine exit 0; meta BFS/DJ/BN present; reader `available=true` |
 
-Details: `docs/eval-results.md`.
-
-### Quick re-verify recipe
-```powershell
-$env:Path = "C:\Program Files\CMake\bin;C:\TDM-GCC-64\bin;" + $env:Path
-$env:PYTHONPATH = "c:\Users\ADMIN\Documents\project-attt"
-
-cd c:\Users\ADMIN\Documents\project-attt\dsa_attack_path
-cmake --build build
-ctest --test-dir build --output-on-failure
-
-cd bridge
-python -m unittest discover -s tests -v
-
-cd ..\backend
-python -m unittest discover -s tests -v
-
-cd c:\Users\ADMIN\Documents\project-attt
-python -m pytest tests/test_attack_path_viewer.py -q
-```
+Re-verify: see `docs/eval-results.md` and §5 of `docs/demo-walkthrough.md`.
 
 ---
 
-## 7. Tracker / next steps
+## 7. Next steps
 
-- PA-6 — Phase 5 polish complete; mark for-review / done once PR comment lands.
-- Optional later: Dijkstra ids in `modeled_paths`; `uv` full viewer HTTP suite; maintainer merge discussion.
-- **Do not** hard-wire attack-path into agent loops or invent fake CVE/pentest results.
+- Thesis presentation / recording from `docs/demo-walkthrough.md`  
+- Optional: PR destiny with usestrix maintainers  
+- **Do not** invent fake pentest results or wire attack-path into agent loops  
 
-### Local env reminders
-- Git identity: `Hiếu Nguyễn Trung` / `nth1992007@gmail.com`
-- GitHub credentials via git credential helper (`nth1992007-boop`); push to `fork` only
-- CMake: `C:\Program Files\CMake\bin`; g++: `C:\TDM-GCC-64\bin`
+### Env reminders
+- Git: `Hiếu Nguyễn Trung` / `nth1992007@gmail.com`  
+- Push: `git push fork cursor/dsa-attack-path-phase1-ae73`  
+- CMake / g++ paths as in walkthrough §0  
 
 ---
 
-## Related reading order
+## Reading order
 
-1. This file  
-2. `dsa_attack_path/RUNBOOK.md`  
-3. `docs/eval-results.md`  
-4. `docs/strix-dsa-architecture.md`  
-5. `dsa_attack_path/CHANGELOG.md`  
+1. `docs/demo-walkthrough.md`  
+2. This handoff  
+3. `dsa_attack_path/RUNBOOK.md`  
+4. `docs/eval-results.md`  
+5. `docs/strix-dsa-architecture.md`  
 6. PR #1666  
 
-*Handoff updated after Phase 5 completion.*
+*Handoff refreshed for PA-11 (demo walkthrough).*

@@ -1,5 +1,11 @@
 # Changelog — dsa_attack_path
 
+## 0.5.3 — Thesis demo walkthrough (PA-11)
+
+### Added
+- Repo `docs/demo-walkthrough.md` — Windows end-to-end thesis demo (build → fixture analyze → viewer Attack path).
+- `PROJECT_HANDOFF.md` refreshed for PA-8…PA-11 tip status.
+
 ## 0.5.2 — Bottleneck analysis in meta + SPA (PA-10)
 
 ### Added
