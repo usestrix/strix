@@ -162,6 +162,24 @@ def test_cache_write_tokens_keep_the_input_rate_without_a_write_rate(
     assert ledger.total_cost == pytest.approx((500 * 2 + 500 * 2 + 200 * 8) / 1_000_000)
 
 
+def test_cache_write_tokens_never_exceed_the_input(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reports from different providers disagree about the split; the cost must not go negative."""
+    monkeypatch.setenv("STRIX_LLM_INPUT_COST_PER_MTOK", "2")
+    monkeypatch.setenv("STRIX_LLM_OUTPUT_COST_PER_MTOK", "8")
+    monkeypatch.setenv("STRIX_LLM_CACHED_INPUT_COST_PER_MTOK", "0.25")
+    monkeypatch.setenv("STRIX_LLM_CACHED_INPUT_WRITE_COST_PER_MTOK", "2.5")
+    ledger = LLMUsageLedger()
+
+    # 100 input tokens reported as 500 reads and 500 writes: clamp to the input, price it once.
+    ledger.record(
+        agent_id="a",
+        usage=_usage(100, cached_tokens=500, cache_write_tokens=500),
+        model="gateway/unpriced-model",
+    )
+
+    assert ledger.total_cost == pytest.approx(100 * 0.25 / 1_000_000)
+
+
 def test_manual_rates_from_config_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / "config.json"
     path.write_text(
