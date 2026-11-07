@@ -30,6 +30,7 @@ from strix.interface.utils import (
     resolve_diff_scope_context,
     rewrite_localhost_targets,
     stage_api_specs,
+    unique_workspace_subdir,
     write_fetched_collection,
 )
 from strix.telemetry import posthog, scarf
@@ -285,8 +286,15 @@ def attach_workspace_mount(args: argparse.Namespace) -> None:
     mount = getattr(args, "workspace_mount", None)
     if not mount:
         return
-    args.workspace_subdir = derive_local_base_name(mount)
     local_sources = list(getattr(args, "local_sources", None) or [])
+    # A workspace mount is named after its directory, and a target of the same name
+    # already holds that subdir: sharing it would mount two things in one place.
+    used = {
+        str(source.get("workspace_subdir"))
+        for source in local_sources
+        if source.get("workspace_subdir")
+    }
+    args.workspace_subdir = unique_workspace_subdir(derive_local_base_name(mount), used)
     local_sources.append(
         {
             "source_path": mount,
