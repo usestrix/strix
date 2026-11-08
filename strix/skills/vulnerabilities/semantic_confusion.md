@@ -59,6 +59,27 @@ The highest-signal condition is `security_check(value_A)` followed by `sink(tran
 - Test malformed Unicode and replacement behavior; a rejected code point may become an allowed delimiter or wildcard later.
 - Test path, query, and fragment separately. Browsers and routers commonly transform each source differently.
 
+For security-sensitive URLs, record a component ledger rather than only the displayed string:
+
+| Stage | Required observation |
+|---|---|
+| transport | exact raw parameter bytes and encoding depth |
+| framework | value after automatic query/form decoding |
+| security decision | parser-reported scheme, host, port, path, query, and fragment |
+| response construction | exact value written to `Location`, HTML, or script navigation |
+| final consumer | browser-parsed origin and the component containing sensitive data |
+
+Vary adjacent delimiters independently at raw, once-, and twice-encoded depth; uniform whole-value encoding misses asymmetric combinations. Name the intended post-parser value `F` and wire token `T`, require `query_decode(T) == F`, and inspect the prepared or captured request. A failed round trip is a harness failure, not evidence about the candidate.
+
+When early and late consumers disagree, synthesize backward:
+
+1. choose the final origin and component boundary the late consumer must see;
+2. place the controlled origin before that boundary and the allowlisted authority/path after it;
+3. encode each delimiter only enough to keep the early parser on the allowlisted authority;
+4. replay the actual transformation chain and verify both component interpretations.
+
+For URL authorization boundaries, cover fragment/query/slash/backslash plus userinfo across independent depths. The finding requires a security-relevant change in origin or data destination, not merely an encoded character.
+
 ### Email and Account Identity Drift
 
 Treat an email address as both a principal selector and a delivery destination. Trace the complete boundary before testing:
@@ -132,15 +153,17 @@ Build a bounded matrix from relevant axes instead of blindly combining everythin
 
 | Axis | Representative variants |
 |---|---|
-| Encoding | raw, once encoded, twice encoded, mixed case, malformed Unicode |
+| Encoding | raw, once encoded, twice encoded, asymmetric depth per adjacent delimiter, mixed case, malformed Unicode |
 | Structure | duplicate, comma-joined, empty member, quoted, comment-like suffix |
 | Path | `/`, `\\`, `//`, dot segments, absolute, sibling-prefix collision |
-| URL | userinfo, numeric IP, alternate IP radix, trailing dot, fragment/query split |
+| URL | userinfo, numeric IP, alternate IP radix, trailing dot, raw/encoded/double-encoded authority, fragment, query, and path delimiters |
 | Transport | HTTP/1.1, HTTP/2, chunked/fixed body, delayed DATA, oversized body |
 | Lifecycle | normal, error, retry, internal redirect, cache hit, background worker |
 | Consumer | edge, application, library, filesystem, interpreter, browser |
 
 Select axes supported by evidence from the target. Record which component saw which representation.
+
+After a late decode or reparse, keep the class open until supported compound pairs have verified transport round trips. Payload volume or one safe atomic result cannot close compositions; a serialization mismatch leaves `needs_follow_up`.
 
 ### Repeatable Harnesses
 
@@ -159,6 +182,7 @@ Treat the first differential as a primitive, then ask what authority the later c
 - internal redirect state carryover -> handler selection or policy bypass
 - search-path or namespace fallback -> attacker-controlled code resolution
 - browser/router decode -> client-side path traversal, CSRF-like action, SSRF, or XSS sink
+- URL validator/redirect-builder drift -> wrong-origin navigation, authorization-code disclosure, or allowlist escape
 
 Enumerate existing local gadgets only after the primitive is proven. Prefer generic classes such as interpreters, template engines, debug tools, package scripts, local sockets, and autoload paths over a vendor-specific file list.
 
@@ -173,6 +197,8 @@ Enumerate existing local gadgets only after the primitive is proven. Prefer gene
 7. **Prove the primitive safely** - Use a synthetic protected canary, reversible marker, constant callback identifier, or no-op handler whose behavior and side effects are understood.
 8. **Escalate by capability** - Track Read -> influence -> write -> dispatch -> execute transitions with evidence and prerequisites for every edge.
 9. **Cross-check versions/configurations** - Reproduce on a fixed version or hardened configuration when possible.
+
+When the final consumer is a browser navigation, first capture the raw redirect without following it, then use `browser_security` to prove the final origin. If sensitive data moves into a URL fragment, remember that the fragment is not transmitted in the receiver's HTTP request; browser-side observation is necessary.
 
 ## Validation
 

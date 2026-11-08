@@ -72,7 +72,7 @@ Test every input vector with every applicable technique.
 - Exhaustive brute force protection testing
 - Session fixation, hijacking, prediction
 - JWT/token manipulation
-- OAuth flow abuse scenarios
+- OAuth flow abuse scenarios: assign one chain owner across the IdP and client, and give that owner `protocols/oauth`, `open_redirect`, `semantic_confusion`, and `browser_security`; do not split a conclusion across agents. Before any ad hoc list, the owner must execute the reference `prepare()` matrix from `protocols/oauth`, changing only the controlled receiver and trusted callback. A rewritten or handwritten generator is not a substitute. Require computed `expected == observed == unique tuples`, no placeholder or unused depth variables, verified `F -> T` transport for every row, captured raw `Location`, browser-final origin, code placement, and redemption. Use a local distinct-origin receiver as test instrumentation when a discovered receiver is outside scope; never probe the unapproved asset. A missing receiver, partial/killed matrix, failed assertion, or uncaptured row is `needs_follow_up` and forbids `ruled_out`. Do not privilege a fixed delimiter/depth tuple or treat payload count as closure. Independently reproduce any claimed differential.
 - Password reset vulnerabilities: token leakage, reuse, timing
 - MFA bypass techniques
 - Account enumeration through all channels

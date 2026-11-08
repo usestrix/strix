@@ -64,6 +64,10 @@ JWT/OIDC failures often enable token forgery, token confusion, cross-service acc
 - State/nonce weaknesses: predictable or missing → CSRF/logical interception of login
 - Device/Backchannel flows: codes and tokens accepted by unintended clients or services
 
+### OAuth Redirect Workflow Handoff
+
+When `/authorize`, `redirect_uri`, an OAuth callback, or code exchange appears, load `protocols/oauth`. Pair `open_redirect` and `semantic_confusion` for parser drift and `browser_security` for navigation or fragments. One OAuth owner must span the authorized IdP, client, and linked receiver rather than testing them as disconnected surfaces. Preserve the representation chain and test code placement, PKCE/client authentication, redemption, and victim authority end to end; obvious foreign-host rejections do not close the surface.
+
 ### Refresh and Session
 
 - Refresh token rotation not enforced: reuse old refresh token indefinitely; no reuse detection
