@@ -668,6 +668,39 @@ async def test_dependency_report_records_reachability(report_state: ReportState)
     assert report["severity"] == "high"
 
 
+async def test_dependency_report_records_not_reached(report_state: ReportState) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2021-23337 in lodash 4.17.20",
+        description="Command injection via template.",
+        target="repo/package.json",
+        cve="CVE-2021-23337",
+        package_name="lodash",
+        installed_version="4.17.20",
+        impact="Command injection where template is used.",
+        remediation_steps="Upgrade to 4.17.21.",
+        assumptions="Static search only; no dynamic dispatch into lodash was found.",
+        package_ecosystem="npm",
+        manifest_path="package-lock.json",
+        fixed_version="4.17.21",
+        cwe=None,
+        advisory_cvss=7.2,
+        technical_analysis=None,
+        fix_effort="low",
+        reachability="not_reached",
+        reachability_evidence=(
+            "src/util/strings.ts:3 imports lodash; a complete search of src/ finds no "
+            "call to _.template, the only API the advisory affects."
+        ),
+        contextual_cvss_breakdown=_DEP_CONTEXT,
+        contextual_cvss_reasoning=_DEP_REASONING,
+    )
+
+    assert result["success"] is True
+    report = report_state.vulnerability_reports[0]
+    assert report["dependency_metadata"]["reachability"] == "not_reached"
+    assert "the vulnerable code of this advisory is not reached" in report["evidence"]
+
+
 async def test_dependency_report_rejects_reachability_without_evidence(
     report_state: ReportState,
 ) -> None:
