@@ -159,8 +159,9 @@ fi
    references of its jar) for the affected API. No chain references it ⇒
    `not_reached` (below), citing every artifact you inspected; referenced ⇒
    that package's call is the usage site, continue the trace upward from
-   there; any chain unclear or not inspected ⇒ `imported` when the direct
-   dep is used at all.
+   there. If you could not inspect every chain, or one of them is unclear,
+   the package is still loaded, so the level is `imported`, never
+   `not_reached`.
 2. **Symbol match — per CVE, not per package.** Read each CVE's own advisory
    (GHSA/NVD/OSV `affected[].ecosystem_specific.imports` or the advisory
    text) for the affected functions/classes/APIs. Search application code for
