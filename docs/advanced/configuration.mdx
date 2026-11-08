@@ -208,6 +208,36 @@ When remote vars are set, Strix dual-writes telemetry to both local JSONL and th
   Timeout in seconds for connecting to the sandbox container.
 </ParamField>
 
+<ParamField path="STRIX_SANDBOX_MEM_LIMIT" type="string">
+  Memory cap for the sandbox container, passed to Docker's `mem_limit` (for example `4g`). Unset
+  leaves Docker's own default, so the container is unbounded.
+</ParamField>
+
+<ParamField path="STRIX_SANDBOX_SHM_SIZE" type="string">
+  Size of the container's `/dev/shm` (for example `1g`). Unset leaves Docker's default, which some
+  browser workloads exhaust.
+</ParamField>
+
+<ParamField path="STRIX_SANDBOX_CPUS" type="number">
+  CPU limit for the container in cores; fractions such as `1.5` are accepted. Unset leaves the
+  container unbounded. A value Docker cannot parse is ignored.
+</ParamField>
+
+<ParamField path="STRIX_SANDBOX_PIDS_LIMIT" type="integer">
+  Maximum number of processes in the container. Unset leaves Docker's default, so nothing stops a
+  fork bomb inside the sandbox from consuming host process slots.
+</ParamField>
+
+<ParamField path="STRIX_SANDBOX_LOG_MAX_SIZE" default="50m" type="string">
+  Size at which the container's json-file log rotates. Set it to `0`, `off`, `none` or `unlimited`
+  to go back to Docker's unbounded default.
+</ParamField>
+
+<ParamField path="STRIX_SANDBOX_LOG_MAX_FILE" default="3" type="integer">
+  Number of rotated log files kept. The on-disk cap is `STRIX_SANDBOX_LOG_MAX_SIZE` times this
+  number, so the defaults bound a run to 150 MB of container log.
+</ParamField>
+
 ## Config File
 
 Strix stores configuration in `~/.strix/cli-config.json`. You can also specify a custom config file:
