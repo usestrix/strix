@@ -70,6 +70,8 @@ SCENARIOS = {
         turns=(("exec_command:0", ""), ("exec_command:0", None), (_MISSING,))
     ),
     "valid-ids": _Scenario(turns=(("call_a",), ("call_b", "call_c"))),
+    "parallel-duplicate-ids": _Scenario(turns=(("dup", "dup"),)),
+    "parallel-duplicates-after-recycle": _Scenario(turns=(("dup",), ("dup", "dup"))),
 }
 
 # One model per provider family Strix recommends or documents, each on the

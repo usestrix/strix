@@ -380,3 +380,48 @@ def test_turn_rewriter_gives_parallel_blank_calls_distinct_ids() -> None:
     )
 
     assert rewriter.rewrite_item(a).call_id != rewriter.rewrite_item(b).call_id
+
+
+def _call(item_id: str, call_id: str, name: str) -> ResponseFunctionToolCall:
+    return ResponseFunctionToolCall(
+        id=item_id, call_id=call_id, name=name, arguments="{}", type="function_call"
+    )
+
+
+def test_turn_rewriter_gives_parallel_duplicates_distinct_ids() -> None:
+    """Two calls that arrive with one id must not keep sharing it (#1611)."""
+    rewriter = TurnCallIdRewriter([])
+    a = _call("fc_1", "dup", "a")
+    b = _call("fc_2", "dup", "b")
+
+    rewritten = rewriter.rewrite_items([a, b])
+
+    assert rewritten[0].call_id == "dup"
+    assert rewritten[1].call_id != "dup"
+    assert rewritten[0].call_id != rewritten[1].call_id
+
+
+def test_turn_rewriter_keeps_parallel_duplicates_stable_across_sightings() -> None:
+    """A streamed item event and the completed response must agree on the id."""
+    rewriter = TurnCallIdRewriter([])
+    a = _call("fc_1", "dup", "a")
+    b = _call("fc_2", "dup", "b")
+
+    streamed = rewriter.rewrite_item(b, 1)
+    completed = rewriter.rewrite_items([a, b])
+
+    assert streamed.call_id == completed[1].call_id
+    assert completed[0].call_id != completed[1].call_id
+
+
+def test_turn_rewriter_splits_duplicates_of_a_recycled_id() -> None:
+    """An id already in the history must not be handed to both new calls."""
+    history = [{"type": "function_call", "call_id": "dup", "name": "a"}]
+    rewriter = TurnCallIdRewriter(history)
+    a = _call("fc_1", "dup", "a")
+    b = _call("fc_2", "dup", "b")
+
+    call_ids = [item.call_id for item in rewriter.rewrite_items([a, b])]
+
+    assert "dup" not in call_ids
+    assert len(set(call_ids)) == 2

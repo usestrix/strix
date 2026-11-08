@@ -20,7 +20,6 @@ from collections import defaultdict, deque
 from typing import Any
 from uuid import uuid4
 
-from agents.models.fake_id import FAKE_RESPONSES_ID
 from openai.types.responses import ResponseFunctionToolCall
 
 
@@ -97,60 +96,38 @@ def dedupe_input(model_input: str | list[Any]) -> str | list[Any]:
 
 
 class TurnCallIdRewriter:
-    """Rewrite a single turn's tool-call ids that are blank or collide with the history.
+    """Rewrite a single turn's tool-call ids that are blank or already taken.
 
     A turn's items surface several times (streamed item events, then the
-    completed response), so the same original id must always map to the same
-    replacement within the turn.
+    completed response), so one call must keep the same id on every sighting.
+    The call's position in the turn's output is what tells two calls apart when
+    the provider reuses one id for them, or gives them no id at all; a real item
+    id stands in when the caller has no position to offer.
     """
 
     def __init__(self, model_input: str | list[Any]) -> None:
         self._used = set() if isinstance(model_input, str) else collect_call_ids(model_input)
-        self._remap: dict[str, str] = {}
-        self._blank_remap: dict[str, str] = {}
-        self._settled: set[str] = set()
+        self._assigned: dict[str, str] = {}
 
-    def _rewrite_blank(
-        self, item: ResponseFunctionToolCall, position: int | None
-    ) -> ResponseFunctionToolCall:
-        """Give a call with no id one that stays the same on every sighting.
-
-        A real item id tells parallel calls apart. Chat Completions routes give
-        every item the same placeholder id, so there the call's position in
-        the turn's output tells them apart instead.
-        """
-        if item.id and item.id != FAKE_RESPONSES_ID:
-            key = item.id
-        else:
-            key = f"{FAKE_RESPONSES_ID}#{position}"
-        replacement = self._blank_remap.get(key)
-        if replacement is None:
-            replacement = new_call_id()
-            self._blank_remap[key] = replacement
-            self._used.add(replacement)
-            self._settled.add(replacement)
-        return item.model_copy(update={"call_id": replacement})
+    def _slot(self, item: ResponseFunctionToolCall, position: int | None) -> str:
+        if position is not None:
+            return f"output:{position}"
+        if item.id:
+            return f"item:{item.id}"
+        return "anonymous"
 
     def rewrite_item(self, item: Any, position: int | None = None) -> Any:
         """Rewrite one item; ``position`` is its index in the turn's output."""
         if not isinstance(item, ResponseFunctionToolCall):
             return item
-        original = item.call_id
-        if not original:
-            return self._rewrite_blank(item, position)
-        if original in self._settled:
-            return item
-        replacement = self._remap.get(original)
-        if replacement is None:
-            if original not in self._used:
-                self._used.add(original)
-                self._settled.add(original)
-                return item
-            replacement = new_call_id()
-            self._remap[original] = replacement
-            self._used.add(replacement)
-            self._settled.add(replacement)
-        return item.model_copy(update={"call_id": replacement})
+        slot = self._slot(item, position)
+        assigned = self._assigned.get(slot)
+        if assigned is None:
+            original = item.call_id
+            assigned = original if original and original not in self._used else new_call_id()
+            self._assigned[slot] = assigned
+            self._used.add(assigned)
+        return item if item.call_id == assigned else item.model_copy(update={"call_id": assigned})
 
     def rewrite_items(self, items: list[Any]) -> list[Any]:
         return [self.rewrite_item(item, position) for position, item in enumerate(items)]
