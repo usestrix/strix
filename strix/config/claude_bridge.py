@@ -49,7 +49,7 @@ RESULT_SCHEMA: dict[str, Any] = {
     "properties": {
         "text": {
             "type": "string",
-            "description": "Your reasoning and narration for this single step.",
+            "description": "A short operator-facing note on what this step does.",
         },
         "tool_calls": {
             "type": "array",
