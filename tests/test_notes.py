@@ -12,6 +12,7 @@ import strix.tools.notes.tools as notes_tools
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -131,3 +132,27 @@ def test_list_notes_still_filters_on_real_values() -> None:
 
     result = notes_tools._list_notes_impl(category="findings")
     assert [n["title"] for n in result["notes"]] == ["recon"]
+
+
+def test_a_rejected_update_leaves_the_note_unchanged() -> None:
+    note_id = notes_tools._create_note_impl("Original title", "original content")["note_id"]
+
+    result = notes_tools._update_note_impl(note_id, title="Rejected title", content="  \n ")
+
+    assert result == {"success": False, "error": "Content cannot be empty"}
+    assert notes_tools._notes_storage[note_id]["title"] == "Original title"
+    assert notes_tools._notes_storage[note_id]["content"] == "original content"
+
+
+def test_a_rejected_update_is_not_written_by_a_later_successful_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(notes_tools, "_notes_path", tmp_path / "notes.json")
+    note_id = notes_tools._create_note_impl("Keep me", "body")["note_id"]
+
+    rejected = notes_tools._update_note_impl(note_id, title="Rejected", content=" ")
+    notes_tools._create_note_impl("Another", "content")
+
+    assert rejected["success"] is False
+    notes_tools.hydrate_notes_from_disk(tmp_path)
+    assert notes_tools._notes_storage[note_id]["title"] == "Keep me"

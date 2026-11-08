@@ -295,19 +295,24 @@ def _update_note_impl(
 ) -> dict[str, Any]:
     with _notes_lock:
         try:
-            if note_id not in _notes_storage:
+            note = _notes_storage.get(note_id)
+            if note is None:
                 return {"success": False, "error": f"Note with ID '{note_id}' not found"}
-            note = _notes_storage[note_id]
+            # Validate every field before touching the stored note: returning
+            # ``success: false`` must leave the note exactly as it was, or the
+            # rejected edit rides along on the next successful write.
+            changes: dict[str, Any] = {}
             if title is not None:
                 if not title.strip():
                     return {"success": False, "error": "Title cannot be empty"}
-                note["title"] = title.strip()
+                changes["title"] = title.strip()
             if content is not None:
                 if not content.strip():
                     return {"success": False, "error": "Content cannot be empty"}
-                note["content"] = content.strip()
+                changes["content"] = content.strip()
             if tags is not None:
-                note["tags"] = tags
+                changes["tags"] = tags
+            note.update(changes)
             note["updated_at"] = datetime.now(UTC).isoformat()
         except (ValueError, TypeError) as e:
             return {"success": False, "error": f"Failed to update note: {e}"}

@@ -236,18 +236,22 @@ def _apply_single_update(
     priority: str | None = None,
     status: str | None = None,
 ) -> dict[str, Any] | None:
-    if todo_id not in agent_todos:
+    todo = agent_todos.get(todo_id)
+    if todo is None:
         return {"todo_id": todo_id, "error": f"Todo with ID '{todo_id}' not found"}
-    todo = agent_todos[todo_id]
+    # Validate every field before touching the stored todo: a rejected field
+    # must not leave the earlier accepted ones applied, because a mixed batch
+    # persists the whole list as soon as one sibling update succeeds.
+    changes: dict[str, Any] = {}
     if title is not None:
         if not title.strip():
             return {"todo_id": todo_id, "error": "Title cannot be empty"}
-        todo["title"] = title.strip()
+        changes["title"] = title.strip()
     if description is not None:
-        todo["description"] = description.strip() if description else None
+        changes["description"] = description.strip() if description else None
     if priority is not None:
         try:
-            todo["priority"] = _normalize_priority(priority, str(todo.get("priority", "normal")))
+            changes["priority"] = _normalize_priority(priority, str(todo.get("priority", "normal")))
         except ValueError as exc:
             return {"todo_id": todo_id, "error": str(exc)}
     if status is not None:
@@ -257,8 +261,11 @@ def _apply_single_update(
                 "todo_id": todo_id,
                 "error": f"Invalid status. Must be one of: {', '.join(VALID_STATUSES)}",
             }
-        todo["status"] = status_candidate
-        todo["completed_at"] = datetime.now(UTC).isoformat() if status_candidate == "done" else None
+        changes["status"] = status_candidate
+        changes["completed_at"] = (
+            datetime.now(UTC).isoformat() if status_candidate == "done" else None
+        )
+    todo.update(changes)
     todo["updated_at"] = datetime.now(UTC).isoformat()
     return None
 

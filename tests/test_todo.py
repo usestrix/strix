@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from agents.tool_context import ToolContext
 
 from strix.tools.todo import tools
-from strix.tools.todo.tools import _coerce_priority, create_todo
+from strix.tools.todo.tools import _coerce_priority, create_todo, update_todo
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -103,3 +107,46 @@ async def test_non_string_priority_does_not_fail_the_batch() -> None:
     assert result["success"] is True
     assert result["created_count"] == 3
     assert {c["priority"] for c in result["created"]} == {"normal"}
+
+
+async def _update(updates: list[Any], agent_id: str = "root") -> dict[str, Any]:
+    ctx = ToolContext(
+        context={"agent_id": agent_id},
+        tool_name="update_todo",
+        tool_call_id="call-2",
+        tool_arguments="{}",
+    )
+    raw = await update_todo.on_invoke_tool(ctx, json.dumps({"updates": json.dumps(updates)}))
+    return json.loads(raw)  # type: ignore[no-any-return]
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_update_does_not_keep_its_earlier_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tools, "_todos_path", tmp_path / "todos.json")
+    created = await _create([{"title": "Recon"}, {"title": "Report"}])
+    ids = {entry["title"]: entry["todo_id"] for entry in created["created"]}
+
+    result = await _update(
+        [
+            {
+                "todo_id": ids["Recon"],
+                "title": "Renamed",
+                "description": "new detail",
+                "priority": "sky-high",
+            },
+            {"todo_id": ids["Report"], "status": "in_progress"},
+        ]
+    )
+
+    assert result["success"] is False
+    assert result["updated"] == [ids["Report"]]
+    assert [error["todo_id"] for error in result["errors"]] == [ids["Recon"]]
+
+    tools.hydrate_todos_from_disk(tmp_path)
+    stored = tools._todos_storage["root"][ids["Recon"]]
+    assert stored["title"] == "Recon"
+    assert stored["description"] is None
+    assert stored["priority"] == "normal"
+    assert stored["status"] == "pending"
