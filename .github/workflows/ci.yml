@@ -25,6 +25,11 @@ jobs:
       - uses: ./.github/actions/setup-python-env
       - run: uv lock --check
       - run: uv run --frozen ruff check .
+      # PLW1514 is a preview rule, so it runs on its own here rather than turning
+      # preview on for every rule in pyproject.toml. It requires every text-mode
+      # file call to state its encoding: the locale default is the ANSI code page
+      # on Windows.
+      - run: uv run --frozen ruff check --preview --select PLW1514 .
       - run: uv run --frozen ruff format --check .
       - run: uv run --frozen mypy strix/
       - run: uv run --frozen bandit -r strix/ -c pyproject.toml
