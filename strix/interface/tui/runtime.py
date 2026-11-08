@@ -389,6 +389,19 @@ class GoTuiRuntime:
         packaged = get_strix_resource_path("bin", tui_executable())
         if packaged.is_file():
             return [str(packaged)]
+        # Source checkout without Go on PATH: fall back to the sidecar that
+        # ``make build`` / ``scripts/build.sh`` compile into build/sidecar/.
+        # The path is pinned to this checkout, never looked up on PATH.
+        # tui_source_dir() is <root>/strix/interface/tui.
+        checkout_build = source.parents[2] / "build" / "sidecar" / tui_executable()
+        if (source / "go.mod").is_file() and checkout_build.is_file():
+            return [str(checkout_build)]
+        if (source / "go.mod").is_file():
+            raise RuntimeError(
+                "Bubble Tea TUI binary not found. This is a source checkout: install Go 1.24+ "
+                "and make sure `go` is on PATH, or build the sidecar with "
+                f"`go build -o {checkout_build} ./cmd/strix-tui` from {source}."
+            )
         raise RuntimeError(
             "Bubble Tea TUI binary not found. Reinstall Strix from an official platform wheel."
         )
