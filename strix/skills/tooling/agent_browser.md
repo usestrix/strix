@@ -207,7 +207,7 @@ agent-browser snapshot -i
 ```
 
 Credentials in shell history are a leak. For anything sensitive, use the
-auth vault (see [references/authentication.md](references/authentication.md)):
+auth vault (see `references/authentication.md`):
 
 ```bash
 agent-browser auth save my-app --url https://app.example.com/login \
@@ -367,7 +367,7 @@ agent-browser click @e3
 agent-browser record stop
 ```
 
-See [references/video-recording.md](references/video-recording.md) for
+See `references/video-recording.md` for
 codec options, GIF export, and more.
 
 ### Iframes
@@ -491,8 +491,8 @@ snapshot — fall back to `eval` in the iframe's origin or use the
 
 **Authentication expires mid-workflow**
 Use `--session-name <name>` or `state save`/`state load` so your session
-survives browser restarts. See [references/session-management.md](references/session-management.md)
-and [references/authentication.md](references/authentication.md).
+survives browser restarts. See `references/session-management.md`
+and `references/authentication.md`.
 
 ## Global flags worth knowing
 
