@@ -161,3 +161,39 @@ def test_title_is_the_instruction_else_the_most_severe_finding(tmp_path: Path) -
         "focus on auth",
         "SQL injection",
     ]
+
+
+def test_a_damaged_record_does_not_hide_the_healthy_runs(tmp_path: Path) -> None:
+    """One unreadable run must not take the whole listing down with it (#1653)."""
+    base = tmp_path / "strix_runs"
+    _write_run(
+        base,
+        "healthy_1111",
+        {
+            "status": "completed",
+            "targets_info": [{"type": "web_application", "original": "https://example.com"}],
+        },
+        modified=3_000,
+        findings=1,
+    )
+    _write_run(base, "not-utf8_2222", {"status": "completed"}, modified=2_000)
+    (base / "not-utf8_2222" / "run.json").write_bytes(b"\xff\xfe\x00{")
+    _write_run(
+        base,
+        "scalar-targets_3333",
+        {"status": "failed", "targets_info": 123, "workspace_mount": "/home/me/app"},
+        modified=1_000,
+    )
+    (base / "scalar-targets_3333" / "vulnerabilities.json").write_bytes(b"\xff\xfe\x00[")
+
+    runs = {run.run_name: run for run in list_run_summaries(cwd=tmp_path)}
+
+    assert set(runs) == {"healthy_1111", "not-utf8_2222", "scalar-targets_3333"}
+    assert runs["healthy_1111"].target == "https://example.com"
+    assert runs["healthy_1111"].findings == 1
+    # Unreadable metadata keeps the existing empty-summary policy.
+    assert runs["not-utf8_2222"].status == "unknown"
+    assert runs["not-utf8_2222"].target == ""
+    # A targets_info that is not an array falls through to the workspace fallback.
+    assert runs["scalar-targets_3333"].target == "/home/me/app (workspace)"
+    assert runs["scalar-targets_3333"].findings == 0

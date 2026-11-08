@@ -76,9 +76,13 @@ def _title(record: dict[str, Any], findings: Any) -> str:
 
 def _describe_target(record: dict[str, Any]) -> str:
     targets = record.get("targets_info")
+    # A hand-edited or damaged record can carry anything here. Treat a non-list
+    # as "no targets" and fall through to the workspace/instruction fallback,
+    # rather than failing the whole listing over one run's metadata.
+    entries = targets if isinstance(targets, list) else []
     originals = [
         str(entry["original"])
-        for entry in targets or []
+        for entry in entries
         if isinstance(entry, dict) and entry.get("original")
     ]
     if originals:
@@ -93,9 +97,15 @@ def _describe_target(record: dict[str, Any]) -> str:
 
 
 def _load_json(path: Path, *, default: Any) -> Any:
+    """Best-effort read: one damaged artifact must not break a whole listing.
+
+    ``UnicodeDecodeError`` is separate from ``JSONDecodeError`` (both are
+    ``ValueError``s) and is the one a record written by another tool, or cut
+    short mid-write, actually raises: the bytes are not UTF-8 at all.
+    """
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return default
 
 

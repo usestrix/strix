@@ -83,14 +83,14 @@ def read_report_markdown(run_dir: Path) -> str:
     report_path = run_dir / "penetration_test_report.md"
     try:
         return report_path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return ""
 
 
 def _load_json(path: Path, *, default: Any) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return default
 
 

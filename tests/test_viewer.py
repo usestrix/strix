@@ -751,3 +751,15 @@ def test_server_rejects_path_traversal(tmp_path: Path, monkeypatch: pytest.Monke
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_damaged_artifacts_read_as_defaults(tmp_path: Path) -> None:
+    """The viewer shares the run listing's best-effort reader policy (#1653)."""
+    run_dir = tmp_path / "damaged_1111"
+    run_dir.mkdir()
+    for name in ("run.json", "vulnerabilities.json", "penetration_test_report.md"):
+        (run_dir / name).write_bytes(b"\xff\xfe\x00")
+
+    assert read_run_summary(run_dir)["finished"] is False
+    assert read_vulnerabilities(run_dir) == []
+    assert read_report_markdown(run_dir) == ""
