@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from strix.tools.coverage.tools import _record_impl, hydrate_coverage_from_disk
-from strix.tools.finish.tool import _coverage_summary
+from strix.tools.finish.tool import _coverage_summary, _narrative_reconciliation
 
 
 if TYPE_CHECKING:
@@ -63,3 +63,37 @@ def test_an_empty_ledger_still_warns_first() -> None:
 
     assert summary["coverage_recorded"] == 0
     assert "No coverage was recorded" in summary["coverage_warning"]
+
+
+def test_narrative_describing_weaknesses_with_zero_findings_is_flagged() -> None:
+    summary = _narrative_reconciliation(
+        vuln_count=0,
+        executive_summary="The host exposes an unsecured Docker Registry.",
+        technical_analysis="Missing security headers were observed on all responses.",
+    )
+
+    assert "narrative_warning" in summary
+    assert set(summary["narrative_weakness_markers"]) >= {
+        "unsecured",
+        "missing security header",
+    }
+
+
+def test_zero_findings_with_clean_narrative_raises_no_warning() -> None:
+    summary = _narrative_reconciliation(
+        vuln_count=0,
+        executive_summary="The assessed surfaces were reviewed and no issues were found.",
+        technical_analysis="All tested endpoints enforced authentication correctly.",
+    )
+
+    assert summary == {}
+
+
+def test_filed_findings_suppress_narrative_warning() -> None:
+    summary = _narrative_reconciliation(
+        vuln_count=3,
+        executive_summary="An unauthenticated registry was exposed.",
+        technical_analysis="Multiple vulnerabilities confirmed.",
+    )
+
+    assert summary == {}
