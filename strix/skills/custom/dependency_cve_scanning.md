@@ -152,12 +152,15 @@ fi
    `PyYAML` → `yaml`). No hits ⇒ `not_imported`, with the search scope stated
    in `reachability_evidence`. For a **transitive** dependency, the check is
    whether application code imports it directly; if not, it is reachable only
-   through the direct dependency — inspect the direct dependency's own code
-   (its installed sources, or the class references of its jar) for the
-   affected API. Never referenced ⇒ `not_reached` (below), citing the
-   artifact you inspected; referenced ⇒ the direct dependency's call is the
-   usage site, continue with the symbol match from there; unclear ⇒
-   `imported` when the direct dep is used at all.
+   through the packages that depend on it — walk every introducing chain
+   from the lockfile (e.g. `express > body-parser > qs`) and inspect the code
+   of the package one hop above the vulnerable one on each chain
+   (`body-parser`, not just `express`; its installed sources, or the class
+   references of its jar) for the affected API. No chain references it ⇒
+   `not_reached` (below), citing every artifact you inspected; referenced ⇒
+   that package's call is the usage site, continue the trace upward from
+   there; any chain unclear or not inspected ⇒ `imported` when the direct
+   dep is used at all.
 2. **Symbol match — per CVE, not per package.** Read each CVE's own advisory
    (GHSA/NVD/OSV `affected[].ecosystem_specific.imports` or the advisory
    text) for the affected functions/classes/APIs. Search application code for
