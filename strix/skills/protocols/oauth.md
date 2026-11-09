@@ -63,36 +63,19 @@ com.app://callback  (mobile custom scheme)
 - `redirect_uri` parameter pollution (first vs last wins)
 - Wildcard subdomain acceptance: `*.app.com` → register `attacker.app.com` or find dangling subdomain
 
-#### Decode / Parse / Render Differentials
+#### Redirect URI Representation Differentials
 
-Treat validation, redirect construction, and browser navigation as separate consumers. For each candidate, preserve this representation ledger:
+For every in-scope authorization endpoint, treat the validator, redirect builder, and browser as separate consumers. Before `ruled_out`, its OAuth owner must copy and execute `redirect_differential_matrix()` unchanged, substituting only the discovered receiver origin and full registered URI, and preserve this ledger:
 
 ```text
-raw authorize-request bytes
-  -> query-parser value
-  -> explicit decode/canonicalization
-  -> URL components checked by the validator
-  -> value used to build Location
-  -> browser-parsed origin/path/query/fragment
-  -> authorization-code destination
+wire T -> query value F -> validator components -> raw Location
+       -> browser origin/component -> code destination -> redemption
 ```
 
-Do not collapse these stages into “URL decoded.” Disable redirect following while mapping server behavior, then use a controlled browser to prove the final origin and the component containing the code.
-
-#### Mandatory Execution Gate
-
-Before ruling out a `redirect_uri` differential:
-
-1. Keep one owner across the authorization server and client callback. Use a discovered receiver only when it is authorized. Otherwise, start a distinct-origin receiver inside the controlled test environment; this is test instrumentation, not permission to probe the discovered asset. If no controlled receiver is reachable from the browser, record `needs_follow_up` rather than a negative result.
-2. Execute the reference harness below before any ad hoc payload list. Substitute only the controlled receiver and trusted callback values. Do not replace it with a custom generator; a port to another language must preserve its completeness and round-trip assertions. Never hand-splice already-encoded wire fragments.
-3. Capture a bounded compound matrix for controlled-receiver prefix + trusted-authority suffix using `#`, `?`, slash, and backslash boundaries combined with authority delimiters at independent depths, plus clean and obvious-rejection controls. Do not privilege a presumed winning tuple; derive interesting rows from observed response differences.
-4. Persist a row ledger containing the tuple, framework value, intended wire token, captured wire token, status, raw `Location`, browser-final origin, code destination, and redemption result. Missing, duplicate, timed-out, or killed rows are incomplete coverage regardless of payload count.
-
-#### Transport Round-Trip Contract
-
-Define depth at the post-query-parser value `F`, not at the source literal. Use this executable pattern, substituting authorized receiver and trusted callback values:
+Derive adjacent delimiter families from the observed URL grammar: a late structural boundary and an authority/userinfo boundary. Vary their encoding depths independently, starting at `E0..E2`, with clean-allowed and obvious-foreign controls. Do not assume a winning tuple. For web redirects, compose `receiver_origin + delimiters + registered_authority/path`. Depth is defined in `F`; serialize `F` once into `T`:
 
 ```python
+from itertools import product
 from urllib.parse import quote, unquote
 
 def E(value, depth):
@@ -100,75 +83,23 @@ def E(value, depth):
         value = quote(value, safe="")
     return value
 
-def prepare(receiver, left, left_depth, right, right_depth, trusted):
-    F = receiver + E(left, left_depth) + E(right, right_depth) + trusted
-    T = quote(F, safe="")
-    V = unquote(F)
-    R = unquote(V)
-    assert unquote(T) == F
-    return {
-        "left": left,
-        "left_depth": left_depth,
-        "right": right,
-        "right_depth": right_depth,
-        "F": F,
-        "T": T,
-        "V": V,
-        "R": R,
-    }
-
-LEFTS = ("#", "?", "/", "\\")
-RIGHTS = ("@",)
-DEPTHS = tuple(range(3))
-
-rows = [
-    prepare(
-        "http://receiver.invalid",
-        left,
-        left_depth,
-        right,
-        right_depth,
-        "trusted.invalid/callback",
-    )
-    for left in LEFTS
-    for right in RIGHTS
-    for left_depth in DEPTHS
-    for right_depth in DEPTHS
-]
-expected = len(LEFTS) * len(RIGHTS) * len(DEPTHS) * len(DEPTHS)
-tuples = {
-    (row["left"], row["left_depth"], row["right"], row["right_depth"])
-    for row in rows
-}
-assert len(rows) == expected
-assert len(tuples) == expected
-assert all(unquote(row["T"]) == row["F"] for row in rows)
+def redirect_differential_matrix(receiver_origin, registered_uri, depths=range(3)):
+    assert "://" in receiver_origin and "://" in registered_uri
+    registered_authority_path = registered_uri.split("://", 1)[1]
+    lefts, rights, depths = ("#", "?", "/", "\\"), ("@",), tuple(depths)
+    rows = []
+    axes = product(lefts, rights, depths, depths)
+    for left, right, ld, rd in axes:
+        F = receiver_origin + E(left, ld) + E(right, rd) + registered_authority_path
+        T = quote(F, safe="")
+        assert unquote(T) == F
+        rows.append((left, right, ld, rd, F, T))
+    expected = len(lefts) * len(rights) * len(depths) ** 2
+    assert len(rows) == expected == len({row[:4] for row in rows})
+    return rows
 ```
 
-When manually building the query, send `T` unchanged after `redirect_uri=`. When using `params=`, `URLSearchParams`, or `urlencode`, pass `F` and inspect the prepared request to confirm it produced `T`; never pass raw `F` or serialize `T` again. Never mark `%` safe. Apply depth by repeated calls to `E`; repeating an encoded substring is not nested encoding. Reject placeholder expressions, unused loop variables, or a ledger whose observed and unique tuple counts do not equal `expected`. Extend the named stages if the observed pipeline has more or fewer transformations. Store `F`, `T`, `query_decode(T)`, `V`, `R`, status, and raw `Location`; label any mismatch `harness_invalid`. Payload count alone is not coverage.
-
-Send this bounded matrix before expanding into a larger generic fuzz set. Batch or resume it if necessary. A timeout, killed process, partial output, handwritten substitute, or uncaptured request leaves the family `needs_follow_up`; none can support `ruled_out`.
-
-Use a bounded matrix rather than a generic spray:
-
-- vary fragment, query, slash, backslash, and userinfo delimiters independently at depths `E0..E2`, extending only when evidence shows another transformation;
-- cover `#` + `@`, `?` + `@`, slash + `@`, and backslash + `@`, including asymmetric depths;
-- test both mutations after the trusted callback and this controlled-prefix layout:
-
-```text
-<controlled-receiver-origin>
-  + E_i(<late structural delimiter>)
-  + E_j(<authority/userinfo delimiter>)
-  + <registered-authority-and-callback-path>
-```
-
-- pair every candidate with clean registered, obvious foreign, literal, and shallower-encoded controls.
-
-Synthesize backward from the dangerous browser-final structure: choose the receiver and code boundary, encode each delimiter enough to remain non-structural during validation, then verify both validator components and browser-final URL. The finding requires a security-relevant difference, not merely an accepted encoded string.
-
-**Closure gate:** after decoder or parser drift appears, do not rule out an external-origin bypass until the compound matrix has passing completeness and round-trip assertions, every row has a captured request and raw response, and a controlled browser verifies the final origin for every accepted differential. A same-origin fragment is a primitive to compose with authority-changing delimiters. If the intended framework value cannot be proven from the captured request, the matrix was partial, or a receiver/browser proof was unavailable, record `needs_follow_up`, not `ruled_out`. Do not claim structural impossibility while an observed extra decode or reparse remains unmodeled.
-
-Keep testing local and authorized. Use a synthetic account and a controlled receiver on a distinct origin. Never send a code or token to an unapproved external collector.
+Call `redirect_differential_matrix(receiver_origin, registered_uri)` before any custom payload list; a rewritten generator cannot support `ruled_out`. When manually building the query, send `T`; when a client serializes parameters, pass `F`. Inspect the prepared request: never mark `%` safe or serialize `T` again. Record the tuple, intended and captured `F/T`, status, raw `Location`, browser destination/code placement, and redemption result. Use only an authorized or local distinct-origin receiver. A partial matrix, failed assertion, missing capture, or unavailable browser/receiver is `needs_follow_up`, not `ruled_out`. An accepted encoding without a security-relevant destination change is not a finding.
 
 ### Authorization Code Issues
 
@@ -176,7 +107,6 @@ Keep testing local and authorized. Use a synthetic account and a controlled rece
 - Codes in URL fragments, Referer headers, browser history, server logs, analytics
 - Code replay before expiry; missing one-time-use enforcement
 - Code sent to wrong redirect_uri if binding is weak
-- When a crafted redirect changes origin after validation, determine whether the code lands in the request URL, query, or fragment. URL fragments are not sent in the receiver's HTTP request; browser-side evidence such as `location.hash` is required to prove collection.
 
 **Code Injection / Mix-Up**
 - Attacker initiates flow, victim completes login, code delivered to attacker's redirect
@@ -241,13 +171,11 @@ Authorization servers must support PKCE, public clients must use it, and confide
 ## Testing Methodology
 
 1. **Map flows** — Identify all grant types, clients, and redirect URIs in use
-2. **Map representations** — Preserve raw request bytes, query-decoded value, validator components, emitted `Location`, and browser-final URL
-3. **Redirect matrix** — For each client, test bounded asymmetric delimiter-depth pairs, including receiver-prefix + trusted-authority-suffix candidates, with clean and obvious-rejection controls
-4. **Prove destination** — Use a controlled distinct-origin receiver; capture the final origin and the exact component containing the code
-5. **CSRF** — Initiate OAuth without `state`; swap sessions mid-flow
-6. **PKCE** — Replay codes with wrong/missing verifier; downgrade challenge method
-7. **Token exchange** — Compare authorize-step and token-step binding of the exact `redirect_uri`; test cross-client/audience acceptance
-8. **Mobile/deep links** — Custom schemes, intent filters, universal links hijacking
+2. **Redirect matrix** — For each client, test redirect_uri validation with encoding and parser differentials
+3. **CSRF** — Initiate OAuth without `state`; swap sessions mid-flow
+4. **PKCE** — Replay codes with wrong/missing verifier; downgrade challenge method
+5. **Token exchange** — Swap codes/tokens between clients; test cross-audience acceptance
+6. **Mobile/deep links** — Custom schemes, intent filters, universal links hijacking
 
 ## Validation
 
@@ -256,13 +184,10 @@ Authorization servers must support PKCE, public clients must use it, and confide
 3. Prove CSRF: victim completes login into attacker's linked session without consent UI bypass where applicable
 4. Document exact validation gap (redirect binding, PKCE, state, audience)
 5. Provide full authorize → callback → token request chain with before/after evidence
-6. For parser/decoding mismatches, include the validator-seen URL components, raw `Location`, browser-final origin, and whether the code was in query or fragment
-7. State whether PKCE, confidential-client authentication, redirect binding, one-time use, or sender constraints prevent redemption; code disclosure and account takeover are separate claims
 
 ## False Positives
 
 - Redirect URI rejected consistently across all bypass attempts
-- After the closure gate is satisfied, a strange encoded URI is accepted but the emitted and browser-final origins remain registered and no code/token reaches another origin. A same-origin result from only one delimiter/depth is not enough to close the family.
 - Public client correctly requires PKCE S256 with strict verifier validation
 - `state`/`nonce` enforced and bound; CSRF test fails as expected
 - Token audience/issuer correctly validated at resource server
@@ -282,8 +207,6 @@ Authorization servers must support PKCE, public clients must use it, and confide
 3. Test both web and mobile clients — validation rules often differ
 4. Check logout/revocation — tokens may remain valid after "logout"
 5. Chain with open redirect or XSS on the legitimate redirect_uri to exfiltrate codes
-6. `state` protects transaction integrity; it does not make a code safe after the browser is redirected to an attacker-controlled origin
-7. A code leak can be valid even when PKCE prevents redemption, but severity must reflect the demonstrated capability and deployment prerequisites
 
 ## Tooling
 
