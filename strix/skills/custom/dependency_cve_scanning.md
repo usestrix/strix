@@ -141,13 +141,6 @@ so finish the analysis before you file.
   blob, a private bundle with no source) and nothing you can inspect reaches
   it. Evidence: the search scope and the negative result.
 
-A loaded package is never `not_applicable`: once the shipped code imports or
-links it, each advisory is `reachable` or `not_reachable` by its own path
-(an unused server mode of a client-only `ws` import is `not_reachable`). The
-only `not_applicable` cases for a loaded package are a patched or unaffected
-installed copy and a platform this code does not run on. Sibling advisories
-on one package share the "loaded or not" fact and differ only in the symbol.
-
 The verdict is per CVE, not per package. Sibling CVEs on one package usually
 affect different symbols or modes (one hits a parser, another a header
 check): run the check against each advisory's own affected functions and
