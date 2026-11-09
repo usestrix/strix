@@ -480,9 +480,10 @@ class ReportState:
     ) -> dict[str, Any] | None:
         """Apply a revision to an existing report, keeping its id.
 
-        A field that only describes a field this update replaces is dropped when
-        the update carries no replacement for it, so the revised report cannot
-        state a new rating beside the superseded reasoning for the old one.
+        A field that only describes a field this update replaces is dropped
+        unless the update carries it, so the revised report cannot state a new
+        rating beside the superseded reasoning for the old one. Carrying a
+        dependent field keeps it even when its value is unchanged.
 
         When ``validate`` is given, it receives the stored report and the merged
         candidate before anything is persisted. A non-empty result rejects the
@@ -517,7 +518,9 @@ class ReportState:
             for primary, dependents in _DEPENDENT_REPORT_FIELDS.items()
             if primary in changed
             for dependent in dependents
-            if dependent not in changed and report.get(dependent) not in (None, "", [], {})
+            if dependent not in changed
+            and dependent not in fields
+            and report.get(dependent) not in (None, "", [], {})
         }
 
         if not changed and not superseded:
