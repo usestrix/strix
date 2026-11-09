@@ -129,13 +129,20 @@ def classify(exc: BaseException) -> FailureInfo:
 
 
 class HttpStatusRecorder:
-    """Capture the latest response's failure from one HTTP connection."""
+    """Capture the last non-success response from one HTTP connection.
+
+    A later success clears a recorded 401, so a bearer refreshed and retried
+    in the auth flow does not leave a stale auth failure behind.
+    """
 
     def __init__(self) -> None:
         self._failure: FailureInfo | None = None
 
     async def __call__(self, response: httpx.Response) -> None:
-        self._failure = None
+        if 200 <= response.status_code < 300:
+            if self._failure is not None and self._failure.kind == "auth":
+                self._failure = None
+            return
         if not 200 <= response.status_code < 300:
             request = response.request
             self._failure = _from_status(
