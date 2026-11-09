@@ -336,7 +336,7 @@ async def test_dependency_report_sets_class_and_metadata(report_state: ReportSta
         advisory_cvss=7.2,
         technical_analysis=None,
         fix_effort="trivial",
-        reachability="imported",
+        reachability="not_reachable",
         reachability_evidence=_DEP_EVIDENCE,
         contextual_cvss_breakdown=_DEP_CONTEXT,
         contextual_cvss_reasoning=_DEP_REASONING,
@@ -357,7 +357,7 @@ async def test_dependency_report_sets_class_and_metadata(report_state: ReportSta
         "package_ecosystem": "npm",
         "manifest_path": "package-lock.json",
         "fixed_version": "4.17.21",
-        "reachability": "imported",
+        "reachability": "not_reachable",
         "reachability_evidence": _DEP_EVIDENCE,
         "contextual_cvss_breakdown": _DEP_CONTEXT,
         "contextual_cvss_score": pytest.approx(7.5, abs=0.05),
@@ -386,7 +386,7 @@ async def test_dependency_report_records_transitive_chain(report_state: ReportSt
         fix_effort="trivial",
         introduced_by="express@4.18.1",
         dependency_path="express@4.18.1 > body-parser@1.20.0 > qs@6.10.2",
-        reachability="imported",
+        reachability="not_reachable",
         reachability_evidence=_DEP_EVIDENCE,
         contextual_cvss_breakdown=_DEP_CONTEXT,
         contextual_cvss_reasoning=_DEP_REASONING,
@@ -427,7 +427,7 @@ async def test_dependency_report_persists_code_locations(report_state: ReportSta
         advisory_cvss=7.2,
         technical_analysis=None,
         fix_effort="trivial",
-        reachability="vulnerable_symbol_used",
+        reachability="reachable",
         reachability_evidence=_DEP_EVIDENCE,
         code_locations=[
             {
@@ -468,7 +468,7 @@ async def test_dependency_report_fix_locations_require_verification(
         advisory_cvss=7.2,
         technical_analysis=None,
         fix_effort="trivial",
-        reachability="imported",
+        reachability="not_reachable",
         reachability_evidence=_DEP_EVIDENCE,
         code_locations=[
             {
@@ -509,7 +509,7 @@ async def test_dependency_report_fix_locations_persist_with_verification(
         advisory_cvss=7.2,
         technical_analysis=None,
         fix_effort="trivial",
-        reachability="imported",
+        reachability="not_reachable",
         reachability_evidence=_DEP_EVIDENCE,
         code_locations=[
             {
@@ -556,7 +556,7 @@ async def test_dependency_report_rejects_unusable_locations(
         advisory_cvss=7.2,
         technical_analysis=None,
         fix_effort="trivial",
-        reachability="imported",
+        reachability="not_reachable",
         reachability_evidence=_DEP_EVIDENCE,
         code_locations=[{"file": "/abs/path.ts", "snippet": "require('lodash')"}],
         contextual_cvss_breakdown=_DEP_CONTEXT,
@@ -587,7 +587,7 @@ async def test_dependency_report_omits_blank_chain_fields(report_state: ReportSt
         fix_effort="trivial",
         introduced_by="  ",
         dependency_path=None,
-        reachability="imported",
+        reachability="not_reachable",
         reachability_evidence=_DEP_EVIDENCE,
         contextual_cvss_breakdown=_DEP_CONTEXT,
         contextual_cvss_reasoning=_DEP_REASONING,
@@ -618,7 +618,7 @@ async def test_dependency_report_with_no_contextual_impact_is_info(
         advisory_cvss=0.0,
         technical_analysis=None,
         fix_effort="low",
-        reachability="not_imported",
+        reachability="not_applicable",
         reachability_evidence="No file imports the package.",
         contextual_cvss_breakdown={**_DEP_CONTEXT, "availability": "N"},
         contextual_cvss_reasoning="No application code imports the package.",
@@ -649,7 +649,7 @@ async def test_dependency_report_records_reachability(report_state: ReportState)
         advisory_cvss=7.2,
         technical_analysis=None,
         fix_effort="low",
-        reachability="vulnerable_symbol_used",
+        reachability="reachable",
         reachability_evidence="src/render.ts:14 calls `_.template()`.",
         contextual_cvss_breakdown=_DEP_CONTEXT,
         contextual_cvss_reasoning=_DEP_REASONING,
@@ -657,7 +657,7 @@ async def test_dependency_report_records_reachability(report_state: ReportState)
 
     assert result["success"] is True
     report = report_state.vulnerability_reports[0]
-    assert report["dependency_metadata"]["reachability"] == "vulnerable_symbol_used"
+    assert report["dependency_metadata"]["reachability"] == "reachable"
     assert (
         report["dependency_metadata"]["reachability_evidence"]
         == "src/render.ts:14 calls `_.template()`."
@@ -688,7 +688,7 @@ async def test_dependency_report_rejects_reachability_without_evidence(
         advisory_cvss=5.0,
         technical_analysis=None,
         fix_effort="low",
-        reachability="not_imported",
+        reachability="not_applicable",
     )
 
     assert result["success"] is False
@@ -725,7 +725,7 @@ async def test_dependency_report_rejects_unknown_reachability_level(
     assert not report_state.vulnerability_reports
 
 
-async def test_dependency_report_records_unknown_reachability(report_state: ReportState) -> None:
+async def test_dependency_report_requires_a_reachability_verdict(report_state: ReportState) -> None:
     result = await _do_create_dependency(
         title="CVE-2024-0001 in sample 1.0.0",
         description="Published advisory affects the pinned version.",
@@ -748,10 +748,9 @@ async def test_dependency_report_records_unknown_reachability(report_state: Repo
         contextual_cvss_reasoning=_DEP_REASONING,
     )
 
-    assert result["success"] is True, result
-    metadata = report_state.vulnerability_reports[0]["dependency_metadata"]
-    assert metadata["reachability"] == "unknown"
-    assert metadata["reachability_evidence"] == "Grep for the package found no import."
+    assert result["success"] is False, result
+    assert any("reachability is required" in e for e in result["errors"])
+    assert not report_state.vulnerability_reports
 
 
 async def test_dependency_report_requires_advisory_cvss(report_state: ReportState) -> None:
@@ -828,7 +827,7 @@ async def test_dependency_report_dedupe_candidate_includes_dependency_metadata(
         advisory_cvss=0.0,
         technical_analysis=None,
         fix_effort="low",
-        reachability="imported",
+        reachability="not_reachable",
         reachability_evidence=_DEP_EVIDENCE,
         contextual_cvss_breakdown=_DEP_CONTEXT,
         contextual_cvss_reasoning=_DEP_REASONING,
@@ -847,7 +846,7 @@ async def test_dependency_report_dedupe_candidate_includes_dependency_metadata(
             "package_ecosystem": "npm",
             "manifest_path": "package-lock.json",
             "fixed_version": "1.0.1",
-            "reachability": "imported",
+            "reachability": "not_reachable",
             "reachability_evidence": _DEP_EVIDENCE,
             "contextual_cvss_breakdown": _DEP_CONTEXT,
             "contextual_cvss_score": pytest.approx(7.5, abs=0.05),
@@ -1381,7 +1380,7 @@ async def test_dependency_report_computes_contextual_cvss(
         cwe="CWE-94",
         fix_effort="trivial",
         manifest_path="package-lock.json",
-        reachability="vulnerable_symbol_used",
+        reachability="reachable",
         reachability_evidence="scripts/import.py:88 calls `_.template()`.",
         contextual_cvss_breakdown=_CONTEXTUAL_BREAKDOWN,
         contextual_cvss_reasoning="Only scripts/import.py reaches the sink.",
@@ -1421,7 +1420,7 @@ async def test_dependency_report_requires_contextual_breakdown(
         cwe="CWE-94",
         fix_effort="trivial",
         manifest_path="package-lock.json",
-        reachability="imported",
+        reachability="not_reachable",
         reachability_evidence=_DEP_EVIDENCE,
     )
     assert result["success"] is False
