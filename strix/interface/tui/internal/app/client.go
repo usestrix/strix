@@ -26,6 +26,7 @@ var ErrCommandPending = errors.New("command is already pending")
 
 type Client struct {
 	conn           io.ReadWriteCloser
+	writeMu        sync.Mutex
 	mu             sync.Mutex
 	seq            atomic.Uint64
 	pending        map[string]string
@@ -182,6 +183,10 @@ func (c *Client) sendEnvelope(envelope protocol.Envelope, maximum int) error {
 	framed := make([]byte, 4+len(raw))
 	binary.BigEndian.PutUint32(framed[:4], uint32(len(raw)))
 	copy(framed[4:], raw)
+	// Keep frames intact without holding the pending-state lock during I/O.
+	// Reading a response must remain possible while a write is backpressured.
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	return writeAll(c.conn, framed)
 }
 
@@ -204,22 +209,23 @@ func (c *Client) Send(command string, payload any) (string, error) {
 	key := pendingKey(command, rawPayload)
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.pending == nil {
 		c.pending = map[string]string{}
 		c.pendingByKey = map[string]string{}
 		c.requestKeyByID = map[string]string{}
 	}
 	if existing := c.pendingByKey[key]; existing != "" {
+		c.mu.Unlock()
 		return "", fmt.Errorf("%w: %s (%s)", ErrCommandPending, command, existing)
 	}
 	c.pending[requestID] = command
 	c.pendingByKey[key] = requestID
 	c.requestKeyByID[requestID] = key
+	c.mu.Unlock()
 	if err := c.sendEnvelope(envelope, maxCommandBytes); err != nil {
-		delete(c.pending, requestID)
-		delete(c.pendingByKey, key)
-		delete(c.requestKeyByID, requestID)
+		// A response may already have resolved this request and allowed a new
+		// one with the same key. Release only our own pending reservation.
+		c.Resolve(requestID, command)
 		return "", err
 	}
 	return requestID, nil
