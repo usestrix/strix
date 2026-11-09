@@ -119,8 +119,18 @@ echo "✅ System-wide proxy configuration complete"
 
 echo "Adding CA to browser trust store..."
 sudo -u pentester mkdir -p /home/pentester/.pki/nssdb
-sudo -u pentester certutil -N -d sql:/home/pentester/.pki/nssdb --empty-password
-sudo -u pentester certutil -A -n "Testing Root CA" -t "C,," -i /app/certs/ca.crt -d sql:/home/pentester/.pki/nssdb
+# Create the NSS database only on first start. On container restarts it
+# already exists, and `certutil -N` would prompt for a database password;
+# with no TTY attached, NSS retries the read forever and the entrypoint
+# hangs (see https://github.com/usestrix/strix/issues/1498).
+if [ ! -f /home/pentester/.pki/nssdb/cert9.db ]; then
+    sudo -u pentester certutil -N -d sql:/home/pentester/.pki/nssdb --empty-password
+fi
+# Import the CA only once: `certutil -A` fails when the nickname is already
+# present, which would abort this `set -e` script on restart.
+if ! sudo -u pentester certutil -L -d sql:/home/pentester/.pki/nssdb -n "Testing Root CA" >/dev/null 2>&1; then
+    sudo -u pentester certutil -A -n "Testing Root CA" -t "C,," -i /app/certs/ca.crt -d sql:/home/pentester/.pki/nssdb
+fi
 echo "✅ CA added to browser trust store"
 
 mkdir -p /workspace/.agent-browser-screenshots
