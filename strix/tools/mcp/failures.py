@@ -129,12 +129,13 @@ def classify(exc: BaseException) -> FailureInfo:
 
 
 class HttpStatusRecorder:
-    """Capture the last non-success response from one HTTP connection."""
+    """Capture the latest response's failure from one HTTP connection."""
 
     def __init__(self) -> None:
         self._failure: FailureInfo | None = None
 
     async def __call__(self, response: httpx.Response) -> None:
+        self._failure = None
         if not 200 <= response.status_code < 300:
             request = response.request
             self._failure = _from_status(
