@@ -3,7 +3,7 @@ import logging
 import re
 import subprocess
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -53,6 +53,18 @@ class ReportRollbackError(RuntimeError):
             "could not be restored; the report is still on file and the indexes are "
             "rewritten on the next save"
         )
+
+
+class ReportRevisionValidationError(ValueError):
+    """Raised when a revision would leave a report violating filing-time rules.
+
+    Raised before persistence, so the report still carries its previous
+    content and the update can be retried with the missing fields supplied.
+    """
+
+    def __init__(self, errors: Sequence[str]) -> None:
+        self.errors = list(errors)
+        super().__init__("; ".join(self.errors))
 
 
 def _strix_version() -> str | None:
@@ -464,12 +476,18 @@ class ReportState:
         update_reason: str | None = None,
         updated_by_agent_id: str | None = None,
         updated_by_agent_name: str | None = None,
+        validate: Callable[[dict[str, Any], dict[str, Any]], Sequence[str]] | None = None,
     ) -> dict[str, Any] | None:
         """Apply a revision to an existing report, keeping its id.
 
         A field that only describes a field this update replaces is dropped when
         the update carries no replacement for it, so the revised report cannot
         state a new rating beside the superseded reasoning for the old one.
+
+        When ``validate`` is given, it receives the stored report and the merged
+        candidate before anything is persisted. A non-empty result rejects the
+        revision with :class:`ReportRevisionValidationError`, leaving the old
+        content intact and the update retryable.
 
         Returns the revised report, or ``None`` when the id is unknown or when
         nothing in ``fields`` changes it.
@@ -531,6 +549,12 @@ class ReportState:
         revised = {**report, **changed}
         for dependent in superseded:
             revised.pop(dependent, None)
+
+        if validate is not None:
+            errors = list(validate(report, revised))
+            if errors:
+                raise ReportRevisionValidationError(errors)
+
         revised["update_history"] = history
         revised["updated_at"] = entry["timestamp"]
 
