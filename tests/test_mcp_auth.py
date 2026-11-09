@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from mcp.types import CallToolResult, TextContent, Tool
 
 from strix.tools.mcp import BearerAuth, McpConnectionConfig, McpConnectionRequest, McpRegistry
 from strix.tools.mcp import client as mcp_client
@@ -51,8 +52,11 @@ async def test_refresh_retries_once_and_persists_across_server_builds() -> None:
 
 
 @pytest.mark.asyncio
-async def test_concurrent_unauthorized_requests_share_refresh() -> None:
-    refresh = AsyncMock(return_value="new")
+@pytest.mark.parametrize("replacement", ["new", None, "old", "raises"])
+async def test_concurrent_unauthorized_requests_share_refresh(replacement: str | None) -> None:
+    refresh = AsyncMock(return_value=replacement)
+    if replacement == "raises":
+        refresh.side_effect = ValueError("refresh unavailable")
     auth = RefreshingBearerAuth("old", refresh)
     both_sent = asyncio.Event()
     old_requests = 0
@@ -61,7 +65,7 @@ async def test_concurrent_unauthorized_requests_share_refresh() -> None:
         nonlocal old_requests
         if request.headers["Authorization"] == "Bearer old":
             old_requests += 1
-            if old_requests == 2:
+            if old_requests == 5:
                 both_sent.set()
             await both_sent.wait()
             return httpx.Response(401)
@@ -69,11 +73,13 @@ async def test_concurrent_unauthorized_requests_share_refresh() -> None:
 
     async with _client(auth, handler) as client:
         responses = await asyncio.wait_for(
-            asyncio.gather(*(client.get("https://example.test/mcp") for _ in range(2))),
+            asyncio.gather(*(client.get("https://example.test/mcp") for _ in range(5))),
             timeout=2,
         )
-    assert [response.status_code for response in responses] == [200, 200]
-    assert old_requests == 2
+    assert [response.status_code for response in responses] == [
+        200 if replacement == "new" else 401
+    ] * 5
+    assert old_requests == 5
     refresh.assert_awaited_once()
 
 
@@ -140,3 +146,78 @@ async def test_registry_passes_refresher_to_session(monkeypatch: pytest.MonkeyPa
     await session._open()
     assert captured == [session._bearer_auth, session._bearer_auth]
     await session.aclose()
+
+
+@pytest.mark.asyncio
+async def test_refreshed_token_can_refresh_again_after_expiry() -> None:
+    refresh = AsyncMock(side_effect=["new", "newer"])
+    auth = RefreshingBearerAuth("old", refresh)
+    valid = "new"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200 if request.headers["Authorization"] == f"Bearer {valid}" else 401)
+
+    async with _client(auth, handler) as client:
+        assert (await client.get("https://example.test/mcp")).status_code == 200
+        valid = "newer"
+        assert (await client.get("https://example.test/mcp")).status_code == 200
+    assert refresh.await_count == 2
+
+
+@pytest.mark.parametrize("with_refresher", [True, False])
+@pytest.mark.asyncio
+async def test_eager_attachment_preserves_bearer_refresh(
+    monkeypatch: pytest.MonkeyPatch, with_refresher: bool
+) -> None:
+    refresh = AsyncMock(return_value="new")
+    original_build = mcp_client._build_server
+    valid = "old"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200 if request.headers["Authorization"] == f"Bearer {valid}" else 401)
+
+    def build(config: McpConnectionConfig, auth: RefreshingBearerAuth | None = None) -> Any:
+        built = original_build(config, auth)
+        params = cast("Any", built.server).params
+        client = params["httpx_client_factory"](headers=params["headers"])
+        client._transport = httpx.MockTransport(handler)
+        server = AsyncMock()
+        server.use_structured_content = False
+        server.list_tools.return_value = [Tool(name="read", inputSchema={"type": "object"})]
+        server.cleanup.side_effect = client.aclose
+
+        async def call_tool(*_args: Any, **_kwargs: Any) -> CallToolResult:
+            response = await client.post("https://example.test/mcp")
+            response.raise_for_status()
+            return CallToolResult(content=[TextContent(type="text", text="ok")])
+
+        server.call_tool = call_tool
+        return mcp_client.BuiltMcpServer(server, built.recorder)
+
+    monkeypatch.setattr(mcp_client, "_build_server", build)
+    registry = McpRegistry()
+    try:
+        connections = await mcp_client.attach_mcp_requests(
+            [McpConnectionRequest(_config(), refresh_token=refresh if with_refresher else None)],
+            registry,
+        )
+        assert len(connections) == 1
+        entry = registry.get("refresh")
+        assert entry is not None
+        assert entry.refresh_token is (refresh if with_refresher else None)
+        session = await entry.ensure_connected()
+        assert await session.dispatch("read", {}, label="refresh_read") == {
+            "type": "text",
+            "text": "ok",
+        }
+        valid = "new"
+        result = await session.dispatch("read", {}, label="refresh_read")
+        if with_refresher:
+            assert result == {"type": "text", "text": "ok"}
+            assert not session.is_dead
+            refresh.assert_awaited_once()
+        else:
+            assert result["success"] is False
+            assert session.is_dead
+    finally:
+        await registry.close()

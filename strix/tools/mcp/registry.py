@@ -362,6 +362,7 @@ class McpRegistry:
         tool_count: int = 0,
         result_transform: ResultTransform | None = None,
         provider: str | None = None,
+        refresh_token: Callable[[], Awaitable[str | None]] | None = None,
     ) -> McpConnectionEntry:
         """Register one connection under ``name`` (last write wins).
 
@@ -383,6 +384,7 @@ class McpRegistry:
             tool_count=tool_count,
             result_transform=result_transform,
             provider=provider,
+            refresh_token=refresh_token,
             state="connected",
         )
         entry.set_status_sink(self._status_sink)
