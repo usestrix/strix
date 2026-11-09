@@ -379,20 +379,31 @@ func TestSetupPromptRetainsAllTargetsBeforeAcknowledgement(t *testing.T) {
 		t.Logf("%s: %v", message.command, message.err)
 	}
 
-	targets, started := 0, false
-	for connection.Len() > 0 {
+	targets, lastTargetAt, startedAt := 0, -1, -1
+	for index := 0; connection.Len() > 0; index++ {
 		size := int(binary.BigEndian.Uint32(connection.Next(4)))
 		var envelope protocol.Envelope
 		if err := json.Unmarshal(connection.Next(size), &envelope); err != nil {
 			t.Fatal(err)
 		}
-		if envelope.Type == "setup.add_target" {
+		switch envelope.Type {
+		case "setup.add_target":
 			targets++
+			lastTargetAt = index
+		case "setup.start":
+			if startedAt < 0 {
+				startedAt = index
+			}
 		}
-		started = started || envelope.Type == "setup.start"
 	}
-	t.Logf("transmitted targets=%d, setup.start sent=%v", targets, started)
+	t.Logf("transmitted targets=%d, last target at=%d, setup.start at=%d", targets, lastTargetAt, startedAt)
 	if targets != 2 {
 		t.Fatalf("sent %d targets, want 2", targets)
+	}
+	if startedAt < 0 {
+		t.Fatal("setup.start was not sent")
+	}
+	if startedAt < lastTargetAt {
+		t.Fatalf("setup.start (envelope %d) was sent before the last setup.add_target (envelope %d)", startedAt, lastTargetAt)
 	}
 }
