@@ -1689,15 +1689,7 @@ def _dependency_severity(advisory_cvss: float | None) -> tuple[float, str]:
     return score, "none"
 
 
-_VALID_REACHABILITY = frozenset(
-    {
-        "not_imported",
-        "imported",
-        "vulnerable_symbol_used",
-        "reachable_call_path",
-        "unknown",
-    }
-)
+_VALID_REACHABILITY = frozenset({"reachable", "not_reachable", "not_applicable"})
 
 
 def _validate_manifest_path(manifest_path: str | None) -> str | None:
@@ -1838,11 +1830,12 @@ def _build_dependency_metadata(
 
 
 _REACHABILITY_EVIDENCE_LABELS = {
-    "not_imported": "not imported by application code",
-    "imported": "imported by application code; affected API usage unconfirmed",
-    "vulnerable_symbol_used": "the advisory's affected API is used in application code",
-    "reachable_call_path": (
-        "a call path from application code to the vulnerable function was proven"
+    "reachable": "the advisory's vulnerable code runs in this codebase",
+    "not_reachable": (
+        "the package is loaded, but this advisory's vulnerable code does not run here"
+    ),
+    "not_applicable": (
+        "the advisory does not apply here: the shipped code never loads the vulnerable package"
     ),
 }
 
@@ -1899,7 +1892,7 @@ async def _do_create_dependency(  # noqa: PLR0912, PLR0915
     introduced_by: str | None = None,
     dependency_path: str | None = None,
     manifest_path: str | None = None,
-    reachability: str = "unknown",
+    reachability: str | None = None,
     reachability_evidence: str | None = None,
     code_locations: list[dict[str, Any]] | None = None,
     fix_verification: str | None = None,
@@ -1955,17 +1948,22 @@ async def _do_create_dependency(  # noqa: PLR0912, PLR0915
         )
     errors.extend(_validate_fix_verification(parsed_locations, fix_verification))
 
-    reachability = (reachability or "unknown").strip().lower()
-    if reachability not in _VALID_REACHABILITY:
+    reachability = (reachability or "").strip().lower()
+    if not reachability:
+        errors.append(
+            "reachability is required: 'reachable', 'not_reachable' or 'not_applicable'. "
+            "There is no 'unknown': finish the usage analysis for this CVE before filing it."
+        )
+    elif reachability not in _VALID_REACHABILITY:
         errors.append(
             f"Invalid reachability: {reachability!r}. Must be one of: {sorted(_VALID_REACHABILITY)}"
         )
     elif not (reachability_evidence or "").strip():
         errors.append(
-            "reachability_evidence is required: cite the concrete proof (import "
-            "file:line, matched symbol usage, or govulncheck call path), or, for "
-            "'unknown', say what you searched and why the result is inconclusive. "
-            "Never claim a reachability level without evidence."
+            "reachability_evidence is required: cite the concrete proof (the call site "
+            "and its source-to-sink trace for 'reachable'; the complete search or the "
+            "condition that keeps the vulnerable path from running for 'not_reachable'; "
+            "the search scope for 'not_applicable'). Never claim a verdict without evidence."
         )
 
     errors.extend(_validate_contextual_cvss(contextual_cvss_breakdown, contextual_cvss_reasoning))
@@ -2115,7 +2113,7 @@ async def create_dependency_report(
     fix_effort: str = "low",
     introduced_by: str | None = None,
     dependency_path: str | None = None,
-    reachability: str = "unknown",
+    reachability: str | None = None,
     reachability_evidence: str | None = None,
     code_locations: list[dict[str, Any]] | None = None,
     fix_verification: str | None = None,
@@ -2145,23 +2143,26 @@ async def create_dependency_report(
     - Re-reporting the same CVE/package already filed.
 
     **Reachability**: do NOT silently downgrade or suppress a finding
-    because the vulnerable code path may be unreachable — report it, and
-    record what the usage analysis showed via the structured
-    ``reachability`` + ``reachability_evidence`` fields (see the
-    dependency-cve-scanning skill for the analysis procedure). The level
-    is an evidence ladder, never an exploitability verdict:
+    because the vulnerable code path is not reached — report it, and record
+    the verdict of the usage analysis in the structured ``reachability`` +
+    ``reachability_evidence`` fields (see the dependency-cve-scanning skill
+    for the procedure). The verdict answers one question for this advisory
+    in this codebase, "does the vulnerable code run here?", and the tool
+    rejects a report without it or without evidence:
 
-    - ``not_imported`` — the package is never imported/required by
-      application code (strongest de-prioritization signal; still not
-      proof of safety — dynamic loading, reflection, or framework wiring
-      can evade static search).
-    - ``imported`` — application code imports the package, but usage of
-      the advisory's affected API was not confirmed.
-    - ``vulnerable_symbol_used`` — the advisory's affected
-      function/class/API appears in application code.
-    - ``reachable_call_path`` — a call-graph tool (e.g. ``govulncheck``)
-      proved a path from application code to the vulnerable function.
-    - ``unknown`` — usage analysis was not performed or was inconclusive.
+    - ``reachable`` — the advisory's vulnerable code executes here:
+      application code, or a package it calls on the application's behalf,
+      calls the affected function, mode or feature.
+    - ``not_reachable`` — the package is loaded, but this advisory's
+      vulnerable path does not execute here (no caller of the affected API
+      after a complete search, a call behind a condition that is false here,
+      a parent package that never references the affected API, a mode this
+      code never uses, a triggering argument that is a constant here).
+    - ``not_applicable`` — the advisory does not apply to this codebase:
+      nothing the shipped code loads imports the package, it is build or
+      test tooling the artifact never runs, the installed copy is a patched
+      or unaffected build, or the flaw is specific to a platform this code
+      does not run on.
 
     Severity comes from ``contextual_cvss_breakdown`` when you provide one
     (computed exactly like a normal finding's ``cvss_breakdown``), otherwise
@@ -2209,26 +2210,24 @@ async def create_dependency_report(
             checkout directory prefix so the path is relative to the
             repository root. This binds the finding to its exact file so
             remediation can target the right repository.
-        reachability: Usage-evidence level from static analysis — one of
-            ``not_imported`` / ``imported`` / ``vulnerable_symbol_used`` /
-            ``reachable_call_path`` / ``unknown``. Claim only what the
-            evidence proves; when in doubt use ``unknown``.
+        reachability: **Required.** The verdict of the usage analysis for
+            this CVE — ``reachable`` / ``not_reachable`` / ``not_applicable``.
+            Claim only what the evidence proves; there is no ``unknown``,
+            finish the analysis before filing.
         reachability_evidence: **Required.** The concrete proof for the
-            claimed level, or, for ``unknown``, what you searched and why
-            the result is inconclusive: repo-relative
-            ``file:line`` of the import or symbol usage, the matched
-            advisory symbols, or the govulncheck call-path excerpt.
-            Whenever you found the vulnerable symbol in use, also give the
+            verdict: repo-relative ``file:line`` of the import and of the
+            call that reaches the affected symbol, the search scope and
+            negative result behind ``not_applicable``, or the condition that
+            keeps the vulnerable path from running behind ``not_reachable``.
+            Whenever the affected symbol is called, also give the
             **source-to-sink trace** here: start at the vulnerable package
             call site and walk backwards hop by hop to the entry point
-            that carries untrusted input (HTTP route, CLI argument, queue
+            that carries the input (HTTP route, CLI argument, queue
             message, webhook, config file), going one step deeper whenever
             a hop is a wrapper. Write it as ``entry point -> intermediate
             call -> package call`` with a ``file:line`` per hop, name what
             each hop enforces (auth, role check, validation, a flag that
-            is off in production), and say who controls the input. State
-            it plainly when no entry point reaches the sink — that is the
-            most useful result a reader can get.
+            is off in production), and say who controls the input.
         code_locations: Where application code imports or calls the package —
             the evidence behind your ``reachability`` claim. List of dicts,
             same shape as ``create_vulnerability_report``::
