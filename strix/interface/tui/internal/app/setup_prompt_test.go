@@ -361,3 +361,38 @@ func TestSkippingTheMountKeepsTheScanRunning(t *testing.T) {
 		t.Fatalf("the held prompt was not released: %q", model.pendingPrompt)
 	}
 }
+
+// Two targets submitted together must both reach the backend even when the
+// first addition is still unacknowledged (issue #1709): distinct
+// setup.add_target commands must not collide on one pending key, and the
+// launch must not silently drop the second target.
+func TestSetupPromptRetainsAllTargetsBeforeAcknowledgement(t *testing.T) {
+	connection := &recordingConn{}
+	model := New(newClient(connection))
+	model.snapshot = protocol.Snapshot{SetupMode: true}
+	_, command := model.submit("https://one.example https://two.example")
+
+	// Execute the commands in tea.Sequence order without injecting responses.
+	sequence := reflect.ValueOf(command())
+	for i := 0; i < sequence.Len(); i++ {
+		message := sequence.Index(i).Interface().(tea.Cmd)().(sentMsg)
+		t.Logf("%s: %v", message.command, message.err)
+	}
+
+	targets, started := 0, false
+	for connection.Len() > 0 {
+		size := int(binary.BigEndian.Uint32(connection.Next(4)))
+		var envelope protocol.Envelope
+		if err := json.Unmarshal(connection.Next(size), &envelope); err != nil {
+			t.Fatal(err)
+		}
+		if envelope.Type == "setup.add_target" {
+			targets++
+		}
+		started = started || envelope.Type == "setup.start"
+	}
+	t.Logf("transmitted targets=%d, setup.start sent=%v", targets, started)
+	if targets != 2 {
+		t.Fatalf("sent %d targets, want 2", targets)
+	}
+}
