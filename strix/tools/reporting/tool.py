@@ -1835,7 +1835,8 @@ _REACHABILITY_EVIDENCE_LABELS = {
         "the package is loaded, but this advisory's vulnerable code does not run here"
     ),
     "not_applicable": (
-        "the advisory does not apply here: the shipped code never loads the vulnerable package"
+        "the advisory does not apply here: the vulnerable package is not loaded, "
+        "or the installed copy is not affected"
     ),
 }
 
