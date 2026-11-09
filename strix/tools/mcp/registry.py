@@ -32,7 +32,7 @@ from strix.tools.mcp.session import McpConnectionUnavailableError, SupervisedMcp
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from agents.mcp import MCPServer
 
@@ -96,6 +96,9 @@ class McpConnectionEntry:
     tool_count: int = 0
     result_transform: ResultTransform | None = None
     provider: str | None = None
+    refresh_token: Callable[[], Awaitable[str | None]] | None = dataclasses.field(
+        default=None, repr=False
+    )
     state: McpConnectionState = "configured"
     _catalog: list[Any] | None = dataclasses.field(default=None, repr=False)
     _connect_task: asyncio.Task[SupervisedMcpSession] | None = dataclasses.field(
@@ -180,7 +183,7 @@ class McpConnectionEntry:
                 f"MCP connection {self.name!r} has no connection configuration."
             )
         self._set_state("connecting")
-        session = SupervisedMcpSession(config)
+        session = SupervisedMcpSession(config, refresh_token=self.refresh_token)
         try:
             started = await session.start()
         except BaseException:
@@ -298,12 +301,17 @@ class McpConnectionRequest:
     at the single dispatch point (strix-pro's sanitizer; empty for the
     command-line path). ``purpose`` is the human label ``list_mcps`` reports as the
     connection's description; when unset it falls back to ``config.notes``.
+    ``refresh_token`` optionally fetches a new bearer asynchronously after an HTTP
+    401; returning no token or the current token leaves the failure unchanged.
     """
 
     config: McpConnectionConfig
     provider: str | None = None
     result_transform: ResultTransform | None = None
     purpose: str | None = None
+    refresh_token: Callable[[], Awaitable[str | None]] | None = dataclasses.field(
+        default=None, repr=False
+    )
 
 
 class McpCallInfo(NamedTuple):
@@ -337,6 +345,7 @@ class McpRegistry:
             purpose=request.purpose or request.config.notes,
             result_transform=request.result_transform,
             provider=request.provider,
+            refresh_token=request.refresh_token,
         )
         entry.set_status_sink(self._status_sink)
         self._entries[entry.name] = entry

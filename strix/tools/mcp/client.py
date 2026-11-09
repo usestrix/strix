@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 
     import httpx
 
+    from strix.tools.mcp.auth import RefreshingBearerAuth
     from strix.tools.mcp.config import McpConnectionConfig
     from strix.tools.mcp.registry import McpConnectionRequest, McpRegistry
 
@@ -121,7 +122,9 @@ class _QuietMCPServerStdio(MCPServerStdio):
         return _quiet_stdio_streams(self.params)
 
 
-def _build_server(config: McpConnectionConfig) -> BuiltMcpServer:
+def _build_server(
+    config: McpConnectionConfig, bearer_auth: RefreshingBearerAuth | None = None
+) -> BuiltMcpServer:
     """Construct (but do not connect) the SDK server for one connection.
 
     The returned tuple carries the server and, for HTTP connections, a recorder
@@ -161,13 +164,13 @@ def _build_server(config: McpConnectionConfig) -> BuiltMcpServer:
         timeout: httpx.Timeout | None = None,
         auth: httpx.Auth | None = None,
     ) -> httpx.AsyncClient:
-        client = create_mcp_http_client(headers=headers, timeout=timeout, auth=auth)
+        client = create_mcp_http_client(headers=headers, timeout=timeout, auth=bearer_auth or auth)
         client.event_hooks.setdefault("response", []).append(recorder)
         return client
 
     http_params: MCPServerStreamableHttpParams = {
         "url": cast("str", config.url),
-        "headers": _auth_headers(config),
+        "headers": {} if bearer_auth is not None else _auth_headers(config),
         "timeout": config.http_timeout_seconds,
         "sse_read_timeout": config.sse_read_timeout_seconds,
         "httpx_client_factory": httpx_client_factory,
