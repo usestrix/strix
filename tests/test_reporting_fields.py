@@ -1855,6 +1855,37 @@ def test_update_rejects_a_rescoring_that_drops_its_severity_conditions(
     assert revised["severity_change_conditions"].startswith("A guard")
 
 
+def test_update_keeps_an_explicitly_supplied_equal_rationale(
+    report_state: ReportState,
+) -> None:
+    """A dependent field the update carries is kept even when its value is unchanged.
+
+    Lowering confidence while restating the existing rationale must succeed:
+    the merge counts the unchanged value as unchanged, but the field was
+    explicitly supplied, so it is not superseded reasoning.
+    """
+    _seed_weak_report(report_state)
+    report = report_state.vulnerability_reports[0]
+    report["counterevidence"] = "No write primitive found; the banner match is the only signal."
+    report["severity_change_conditions"] = "Confirming the write would raise this."
+    report["confidence"] = "medium"
+    report["confidence_rationale"] = "Static trace only; no runtime access."
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Reachability could not be confirmed.",
+        fields={
+            "confidence": "low",
+            "confidence_rationale": "Static trace only; no runtime access.",
+        },
+    )
+
+    assert result["success"] is True
+    revised = report_state.vulnerability_reports[0]
+    assert revised["confidence"] == "low"
+    assert revised["confidence_rationale"] == "Static trace only; no runtime access."
+
+
 def test_update_never_makes_a_report_less_filable_than_it_already_is(
     report_state: ReportState,
 ) -> None:
