@@ -18,6 +18,17 @@ if TYPE_CHECKING:
 
 
 _LLM_ENV_KEYS = [
+    "STRIX_ACTION_APPROVALS",
+    "STRIX_ACTION_APPROVAL_JUDGE",
+    "STRIX_ACTION_APPROVAL_MODE",
+    "STRIX_ACTION_APPROVAL_TOOLS",
+    "STRIX_ACTION_APPROVAL_MODEL",
+    "STRIX_ACTION_APPROVAL_THRESHOLD",
+    "STRIX_ACTION_APPROVAL_TIMEOUT_SECONDS",
+    "STRIX_ACTION_APPROVAL_ON_TIMEOUT",
+    "ACTION_APPROVAL_API_KEY",
+    "OPENROUTER_API_KEY",
+    "ACTION_APPROVAL_API_BASE",
     "STRIX_LLM",
     "LLM_API_KEY",
     "OPENAI_API_KEY",
@@ -471,3 +482,15 @@ def test_persist_current_sets_0600_mode(tmp_path: Path, monkeypatch: pytest.Monk
     loader.persist_current()
 
     assert target.stat().st_mode & 0o777 == 0o600
+
+
+def test_action_approval_judge_from_default_config_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "cli-config.json"
+    path.write_text(json.dumps({"env": {"STRIX_ACTION_APPROVAL_JUDGE": "llm"}}))
+    monkeypatch.setattr(loader, "_DEFAULT_PATH", path)
+    assert loader.load_settings().action_approvals.judge == "llm"
+    monkeypatch.setenv("STRIX_ACTION_APPROVAL_JUDGE", "decision")
+    monkeypatch.setattr(loader, "_cached", None)
+    assert loader.load_settings().action_approvals.judge == "decision"

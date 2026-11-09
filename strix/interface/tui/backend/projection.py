@@ -159,6 +159,8 @@ def bounded_state_projection(state: dict[str, Any]) -> dict[str, Any]:
     # fields cannot silently bypass the aggregate byte budget.
     return {
         "setup_mode": state["setup_mode"],
+        "pending_approvals": state.get("pending_approvals", [])[:4],
+        "pending_approval_count": state.get("pending_approval_count", 0),
         "scan_started": state["scan_started"],
         "scan_state": state["scan_state"],
         "targets": state["targets"][:4],

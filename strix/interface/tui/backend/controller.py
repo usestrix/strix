@@ -183,6 +183,7 @@ class TuiController:
         subscription = False
         with contextlib.suppress(Exception):
             subscription = is_subscription_run(self.report_state)
+        approvals = self._pending_approvals()
         state = {
             "setup_mode": self.setup_mode,
             "scan_started": self.scan_started,
@@ -193,6 +194,8 @@ class TuiController:
             "target_count": len(self.targets),
             "working_dir": str(Path.cwd()),
             "pending_mount": self.pending_workspace_mount or "",
+            "pending_approvals": approvals[:8],
+            "pending_approval_count": len(approvals),
             "instruction": terminal_projection(self.instruction, max_string=2 * 1024),
             "scan_mode": self.scan_mode,
             "max_budget_usd": self.max_budget_usd,
@@ -227,22 +230,45 @@ class TuiController:
         }
         return bounded_state_projection(state)
 
+    def _pending_approvals(self) -> list[dict[str, Any]]:
+        guard = getattr(self.coordinator, "action_approvals", None)
+        if guard is None:
+            return []
+        fields = (
+            "approval_id",
+            "agent_id",
+            "agent_name",
+            "tool",
+            "summary",
+            "risk",
+            "category",
+            "expires_at",
+        )
+        return [
+            {key: terminal_projection(item.get(key), max_string=512) for key in fields}
+            for item in guard.pending()
+        ]
+
     def collection(self, name: str) -> list[dict[str, Any]]:
         """Return one bounded terminal projection with stable item identities."""
         if name == "agents":
+            pending_agents = {item["agent_id"] for item in self._pending_approvals()}
             return [
                 {
-                    key: terminal_projection(agent.get(key), max_string=256, max_items=5)
-                    for key in (
-                        "id",
-                        "name",
-                        "parent_id",
-                        "status",
-                        "error_message",
-                        "created_at",
-                        "updated_at",
-                    )
-                    if key in agent
+                    **{
+                        key: terminal_projection(agent.get(key), max_string=256, max_items=5)
+                        for key in (
+                            "id",
+                            "name",
+                            "parent_id",
+                            "status",
+                            "error_message",
+                            "created_at",
+                            "updated_at",
+                        )
+                        if key in agent
+                    },
+                    "approval_pending": agent.get("id") in pending_agents,
                 }
                 for agent in self.live_view.agents.values()
             ]
@@ -289,6 +315,7 @@ class TuiController:
             "setup.start": self._start,
             "setup.confirm_mount": self._confirm_mount,
             "agent.send_message": self._send_message,
+            "approval.decide": self._decide_approval,
             "agent.stop": self._stop_agent,
             "viewer.open": self._open_viewer,
             "app.quit": self._quit,
@@ -387,6 +414,27 @@ class TuiController:
         self.workspace_mount = mount if approved else None
         await self._begin_scan()
         return {"approved": approved}
+
+    async def _decide_approval(self, payload: dict[str, Any]) -> dict[str, Any]:
+        approval_id = self._required_string(payload, "approval_id")
+        approved = payload.get("approved")
+        if not isinstance(approved, bool):
+            raise TypeError("approved must be a boolean")
+        if self.scan_loop is None or self.scan_loop.is_closed():
+            raise RuntimeError("Scan loop is not ready")
+
+        async def decide() -> bool:
+            guard = getattr(self.coordinator, "action_approvals", None)
+            return bool(guard and guard.resolve(approval_id, approved, decided_by="terminal"))
+
+        if self.scan_loop is asyncio.get_running_loop():
+            accepted = await decide()
+        else:
+            future = asyncio.run_coroutine_threadsafe(decide(), self.scan_loop)
+            accepted = await asyncio.wrap_future(future)
+        if not accepted:
+            raise ValueError("Approval is unknown or has expired")
+        return {"approval_id": approval_id, "approved": approved}
 
     async def _send_message(self, payload: dict[str, Any]) -> dict[str, Any]:
         agent_id = self._required_string(payload, "agent_id")

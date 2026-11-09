@@ -15,7 +15,8 @@ from typing import Any, cast
 
 import pytest
 
-from strix.config.settings import DEFAULT_MAX_TURNS
+from strix.config.settings import DEFAULT_MAX_TURNS, ActionApprovalSettings
+from strix.core.action_approvals import ActionApprovalGuard
 from strix.interface.tui import runtime as go_tui
 from strix.interface.tui import sidecar
 from strix.interface.tui.runtime import GoTuiRuntime
@@ -37,6 +38,43 @@ def args() -> argparse.Namespace:
         user_explicit_instruction=None,
         run_name="test-run",
     )
+
+
+@pytest.mark.parametrize(
+    "event_type,decision,expected",
+    [
+        ("requested", "pending", "Waiting for approval: test (deletes data, risk 99%)"),
+        ("resolved", "approved", "Approved by you"),
+        ("resolved", "denied", "Denied by you"),
+        ("resolved", "timed_out", "Blocked: no answer within 5 minutes"),
+        ("blocked", "blocked", "Blocked automatically (deletes data, risk 99%)"),
+        ("checked", "allowed", None),
+    ],
+)
+def test_approval_events_record_transcript_and_notify(
+    event_type: str, decision: str, expected: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = GoTuiRuntime(args())
+    runtime.coordinator.action_approvals = ActionApprovalGuard(ActionApprovalSettings())
+    notifications: list[bool] = []
+    monkeypatch.setattr(runtime.controller, "notify_changed", lambda: notifications.append(True))
+    runtime.capture_approval(
+        {
+            "type": event_type,
+            "decision": decision,
+            "agent_id": "acting",
+            "summary": "test",
+            "risk": 0.99,
+            "category": "deletes_data",
+            "decided_by": "terminal",
+        }
+    )
+    assert notifications == [True]
+    if expected is None:
+        assert not runtime.live_view.events
+    else:
+        assert runtime.live_view.events[0]["agent_id"] == "acting"
+        assert runtime.live_view.events[0]["data"]["content"] == expected
 
 
 def test_binary_command_prefers_packaged_sidecar(
@@ -253,6 +291,7 @@ async def test_runtime_prepares_state_before_launch_and_scans_only_after_ready(
                         "collection-deltas",
                         "structured-command-errors",
                         "agents-collection",
+                        "action-approvals",
                     ]
                 },
             },
