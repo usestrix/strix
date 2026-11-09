@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
 from pydantic import AliasChoices, Field, field_validator
@@ -140,6 +141,48 @@ class DedupeSettings(BaseSettings):
         return _lowercase(value)
 
 
+class ActionApprovalSettings(BaseSettings):
+    model_config = _BASE_CONFIG
+
+    enabled: bool = Field(default=False, alias="STRIX_ACTION_APPROVALS")
+    judge: Literal["decision", "llm"] = Field(
+        default="decision", alias="STRIX_ACTION_APPROVAL_JUDGE"
+    )
+    mode: Literal["auto", "ask"] = Field(default="ask", alias="STRIX_ACTION_APPROVAL_MODE")
+    tools: list[str] = Field(
+        default_factory=lambda: ["exec_command", "write_stdin", "repeat_request", "call_mcp"],
+        alias="STRIX_ACTION_APPROVAL_TOOLS",
+    )
+    model: str = Field(default="baseten/joey-1", alias="STRIX_ACTION_APPROVAL_MODEL")
+    threshold: float = Field(
+        default=0.5, ge=0, le=1, allow_inf_nan=False, alias="STRIX_ACTION_APPROVAL_THRESHOLD"
+    )
+    timeout_seconds: float = Field(
+        default=300, gt=0, allow_inf_nan=False, alias="STRIX_ACTION_APPROVAL_TIMEOUT_SECONDS"
+    )
+    on_timeout: Literal["block", "allow"] = Field(
+        default="block", alias="STRIX_ACTION_APPROVAL_ON_TIMEOUT"
+    )
+    api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ACTION_APPROVAL_API_KEY", "OPENROUTER_API_KEY"),
+        repr=False,
+    )
+    api_base: str = Field(default="https://openrouter.ai/api", alias="ACTION_APPROVAL_API_BASE")
+
+    @field_validator("judge", "mode", "on_timeout", mode="before")
+    @classmethod
+    def _normalize_case(cls, value: object) -> object:
+        return _lowercase(value)
+
+    @field_validator("tools", mode="before")
+    @classmethod
+    def _decode_tools(cls, value: object) -> object:
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
+
+
 class ContextSettings(BaseSettings):
     """Context-window management: per-tool-output caps and history compaction."""
 
@@ -231,6 +274,7 @@ class Settings(BaseSettings):
 
     llm: LlmSettings = Field(default_factory=LlmSettings)
     dedupe: DedupeSettings = Field(default_factory=DedupeSettings)
+    action_approvals: ActionApprovalSettings = Field(default_factory=ActionApprovalSettings)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     context: ContextSettings = Field(default_factory=ContextSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)

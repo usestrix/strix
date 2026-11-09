@@ -53,6 +53,7 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			m.closeModal()
 		}
 		m.syncMountPrompt()
+		approvalCmd := m.syncApprovalPrompt()
 		m.ensureAgentVisible()
 		m.ensureVulnerabilityVisible()
 		m.ready = true
@@ -61,8 +62,9 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 		m.resizeVulnerabilityViewport()
 		if title := windowTitle(m.snapshot.Targets); title != m.windowTitle {
 			m.windowTitle = title
-			return setTerminalTitle(title)
+			return tea.Batch(approvalCmd, setTerminalTitle(title))
 		}
+		return approvalCmd
 	case "collection_bootstrap":
 		return m.handleCollectionBootstrap(envelope.Payload)
 	case "collection_delta":
@@ -84,6 +86,9 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			return nil
 		}
 		if !result.OK {
+			if result.Command == "approval.decide" {
+				m.approvalSending = false
+			}
 			if result.Command == "collection.resync" {
 				if collection := m.resyncRequests[envelope.RequestID]; collection != "" {
 					m.resyncRequested[collection] = false

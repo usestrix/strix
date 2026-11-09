@@ -273,12 +273,12 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	case panelAgents:
 		m.focus = focusAgents
 		m.input.Blur()
-		entries := agentTreeEntries(m.snapshot.Agents, m.collapsedAgents)
+		entries := m.agentDisplayEntries()
 		start := windowStart(m.agentOffset, len(entries), m.agentPageSize())
 		if row := start + localY - 2; localY >= 2 && localY < rect.height-1 && row < len(entries) {
 			m.selectedAgent = entries[row].index
 			agentID := m.snapshot.Agents[m.selectedAgent].ID
-			if hasAgentChildren(agentID, m.snapshot.Agents) {
+			if !entries[row].approvalStatus && hasAgentChildren(agentID, m.snapshot.Agents) {
 				m.collapsedAgents[agentID] = !m.collapsedAgents[agentID]
 				m.ensureAgentVisible()
 			}
@@ -346,7 +346,7 @@ func (m Model) scrollbarAt(msg tea.MouseMsg, showSidebar bool, chatWidth, chatHe
 	}
 	switch rect.panel {
 	case panelAgents:
-		if len(agentTreeEntries(m.snapshot.Agents, m.collapsedAgents)) > m.agentPageSize() {
+		if len(m.agentDisplayEntries()) > m.agentPageSize() {
 			return scrollbarAgents
 		}
 	case panelFindings:
@@ -372,7 +372,7 @@ func (m *Model) scrollFromMouse(target scrollbarTarget, y, chatHeight int) {
 		m.followOutput = m.viewport.AtBottom()
 	case scrollbarAgents:
 		height := m.agentPageSize()
-		total := len(agentTreeEntries(m.snapshot.Agents, m.collapsedAgents))
+		total := len(m.agentDisplayEntries())
 		m.focus = focusAgents
 		m.input.Blur()
 		m.agentOffset = scrollbarOffset(y-m.panelTop(panelAgents)-2, height, total, height)
@@ -467,6 +467,16 @@ func (m Model) updateModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	view := m.modalView()
 	switch m.modal {
+	case modalApproval:
+		left, top, panel := m.mountPromptBounds()
+		if labelHitAt(panel, "Allow", left, top, msg.X, msg.Y) {
+			cmd := m.answerApproval(true)
+			return m, cmd
+		}
+		if labelHitAt(panel, "Block", left, top, msg.X, msg.Y) {
+			cmd := m.answerApproval(false)
+			return m, cmd
+		}
 	case modalQuit, modalStop:
 		if m.centeredLabelHit(view, "Yes", msg.X, msg.Y) {
 			m.modalChoice = 0
@@ -613,6 +623,10 @@ func (m Model) updateModal(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch key.String() {
 	case "esc":
+		if m.modal == modalApproval {
+			cmd := m.answerApproval(false)
+			return m, cmd
+		}
 		if m.modal == modalConfirmMount {
 			// The backend is waiting on an answer; escape declines it.
 			cmd := m.answerMountConfirmation(false)
@@ -625,6 +639,10 @@ func (m Model) updateModal(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		modal, choice := m.modal, m.modalChoice
+		if modal == modalApproval {
+			cmd := m.answerApproval(choice == 0)
+			return m, cmd
+		}
 		if modal == modalConfirmMount {
 			// The snapshot closes this prompt once the backend has the answer.
 			// Bound to a variable first: the call restores the held prompt into
