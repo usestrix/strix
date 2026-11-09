@@ -54,6 +54,7 @@ import time
 import weakref
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from strix.tools.mcp.auth import RefreshingBearerAuth
 from strix.tools.mcp.config import DEFAULT_MAX_CONCURRENT_CALLS
 from strix.tools.mcp.failures import FailureInfo, HttpStatusRecorder, classify
 
@@ -157,9 +158,19 @@ class SupervisedMcpSession:
     :attr:`name`, :attr:`server`, :attr:`config`, :attr:`is_dead`.
     """
 
-    def __init__(self, config: McpConnectionConfig) -> None:
+    def __init__(
+        self,
+        config: McpConnectionConfig,
+        *,
+        refresh_token: Callable[[], Awaitable[str | None]] | None = None,
+    ) -> None:
         self._name = config.name
         self._config: McpConnectionConfig | None = config
+        self._bearer_auth = (
+            RefreshingBearerAuth(config.auth.token if config.auth else None, refresh_token)
+            if refresh_token is not None and config.transport == "http"
+            else None
+        )
         self._server: MCPServer | None = None
         self._supervised = True
         self._task: asyncio.Task[None] | None = None
@@ -193,6 +204,7 @@ class SupervisedMcpSession:
         self = cls.__new__(cls)
         self._name = name
         self._config = config
+        self._bearer_auth = None
         self._server = server
         self._supervised = False
         self._task = None
@@ -701,7 +713,11 @@ class SupervisedMcpSession:
 
         if self._config is None:
             raise RuntimeError(f"MCP connection {self._name!r} has no config to connect")
-        built = _build_server(self._config)
+        built = (
+            _build_server(self._config, self._bearer_auth)
+            if self._bearer_auth is not None
+            else _build_server(self._config)
+        )
         server = built.server
         self._recorder = built.recorder
         try:
