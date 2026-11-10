@@ -4,19 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import dataclasses
 import json
 import logging
 import math
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import httpx
 from agents.models.interface import ModelTracing
-from agents.tool import invoke_function_tool
+from agents.tool import FunctionTool, invoke_function_tool
 from openai.types.responses import ResponseOutputMessage
 
 from strix.config import load_settings
@@ -26,8 +25,6 @@ from strix.core.inputs import make_model_settings
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable
-
-    from agents.tool import FunctionTool
 
     from strix.config.settings import ActionApprovalSettings
 
@@ -425,7 +422,9 @@ async def check_action(ctx: Any, tool_name: str, args: dict[str, Any]) -> str | 
 
 def separate_tool_timeout(tool: FunctionTool) -> Callable[[Any, str], Awaitable[Any]]:
     """Keep the SDK execution deadline inside, rather than around, approval waits."""
-    original = dataclasses.replace(tool)
+    original = FunctionTool(
+        **{field.name: getattr(tool, field.name) for field in fields(FunctionTool) if field.init}
+    )
     tool.timeout_seconds = None
 
     async def invoke(ctx: Any, raw_input: str) -> Any:

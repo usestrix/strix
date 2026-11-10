@@ -11,6 +11,7 @@ from uuid import UUID
 
 import httpx
 import pytest
+from agents.sandbox.capabilities.tools.shell_tool import ExecCommandTool, WriteStdinTool
 from agents.tool import FunctionTool, invoke_function_tool
 from agents.tool_context import ToolContext
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
@@ -555,6 +556,56 @@ async def test_approval_wait_does_not_consume_execution_timeout() -> None:
         assert not task.done()
         guard.resolve(request["approval_id"], approved=True)
         assert await task == "Tool 'exec_command' timed out after 0.01 seconds."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["exec_command", "write_stdin"])
+@pytest.mark.parametrize("decision", ["safe", "approve", "block"])
+async def test_real_sdk_shell_tools_keep_execution_timeouts_after_approval(
+    monkeypatch: pytest.MonkeyPatch, tool_name: str, decision: str
+) -> None:
+    async def execute(_args: Any) -> str:
+        await asyncio.sleep(0.05)
+        return "not reached"
+
+    session = Mock()
+    tool: FunctionTool
+    if tool_name == "exec_command":
+        tool = ExecCommandTool(session=session)
+        wrap = _wrap_exec_command
+        arguments = '{"cmd": "printf safe"}'
+    else:
+        tool = WriteStdinTool(session=session)
+        wrap = _wrap_write_stdin
+        arguments = '{"session_id": 1, "chars": "printf safe\\n"}'
+    run = AsyncMock(side_effect=execute)
+    monkeypatch.setattr(tool, "run", run)
+    tool.timeout_seconds = 0.01
+    wrapped = wrap(tool)
+    assert wrapped.timeout_seconds is None
+    risk = 0.0 if decision == "safe" else 1.0
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: _response(risk))
+    ) as client:
+        guard = ActionApprovalGuard(
+            _settings(mode="ask" if decision == "approve" else "auto"), client=client
+        )
+        task = asyncio.create_task(
+            invoke_function_tool(function_tool=wrapped, context=_ctx(guard), arguments=arguments)
+        )
+        if decision == "approve":
+            request = (await _pending(guard))[0]
+            await asyncio.sleep(0.02)
+            assert not task.done()
+            run.assert_not_awaited()
+            guard.resolve(request["approval_id"], approved=True)
+        result = await task
+        if decision == "block":
+            assert "Blocked by action approvals" in result
+            run.assert_not_awaited()
+        else:
+            assert result == f"Tool '{tool_name}' timed out after 0.01 seconds."
+            run.assert_awaited_once()
 
 
 @pytest.mark.asyncio
