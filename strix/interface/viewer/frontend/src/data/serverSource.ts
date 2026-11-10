@@ -44,6 +44,7 @@ export interface ApprovalHistoryEntry {
   agent_id: string;
   content: string;
   timestamp: string;
+  summary?: string;
 }
 
 export interface PendingApproval {

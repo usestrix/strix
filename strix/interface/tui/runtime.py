@@ -295,7 +295,10 @@ class GoTuiRuntime:
             if self.report_state is not None and event["type"] in {"resolved", "blocked"}:
                 try:
                     record_approval_history(
-                        self.report_state.get_run_dir(), str(event["agent_id"]), content
+                        self.report_state.get_run_dir(),
+                        str(event["agent_id"]),
+                        content,
+                        summary=str(event["summary"]) if "summary" in event else None,
                     )
                 except OSError:
                     logger.exception("Could not save approval history")

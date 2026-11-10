@@ -191,3 +191,49 @@ def test_approval_history_replays_terminal_copy_and_ignores_partial_records(tmp_
         "Approved by you",
         "Denied by you",
     ]
+
+
+@pytest.mark.parametrize("decision", ["approved", "denied", "timed_out", "blocked"])
+def test_settled_history_preserves_proposed_command(tmp_path: Path, decision: str) -> None:
+    run_dir = _make_run(tmp_path, "command-history", status="completed", end_time="2026-01-01")
+    runtime = GoTuiRuntime.__new__(GoTuiRuntime)
+    runtime.live_view = Mock()
+    runtime.controller = Mock()
+    runtime.coordinator = AgentCoordinator()
+    runtime.report_state = Mock(get_run_dir=lambda: run_dir)
+    command = "curl -X DELETE http://localhost:8080/items/3\nprintf done"
+    runtime.capture_approval(
+        {
+            "type": "resolved",
+            "agent_id": "root",
+            "decision": decision,
+            "decided_by": "terminal",
+            "summary": command,
+        }
+    )
+    history = build_run_state(run_dir)["approval_history"]
+    assert len(history) == 1
+    assert history[0]["summary"] == command
+    assert history[0]["content"]
+    assert "summary" not in history[0]["content"]
+
+
+def test_approval_history_accepts_empty_commands_and_ignores_invalid_command_types(
+    tmp_path: Path,
+) -> None:
+    run_dir = _make_run(
+        tmp_path, "empty-command-history", status="completed", end_time="2026-01-01"
+    )
+    record_approval_history(run_dir, "root", "Approved by you", summary="")
+    record_approval_history(run_dir, "child", "Denied by you")
+    with (run_dir / ".state" / "action_approvals.jsonl").open("a") as stream:
+        stream.write(
+            json.dumps(
+                {"agent_id": "root", "content": "Blocked", "timestamp": "now", "summary": []}
+            )
+            + "\n"
+        )
+    history = read_approval_history(run_dir)
+    assert history[0]["summary"] == ""
+    assert "summary" not in history[1]
+    assert "summary" not in history[2]
