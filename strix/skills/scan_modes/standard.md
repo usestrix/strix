@@ -50,8 +50,6 @@ Test each attack surface methodically. Spawn focused subagents for different are
 - Injection testing on all input fields (SQL, XSS, command, template)
 - File upload bypass attempts
 - Search and filter parameter manipulation
-- For every scalar search/filter/selector field, the delegated task must name it, preload `query_language_injection`, and require that skill's per-field matrix. Sibling-field probes or standalone metacharacters cannot justify `exact match`
-- For structured authorization/object identifiers, preload `idor` and require raw duplicate-member permutations plus safe-number boundaries, comparing the checked identity with the read/changed/exported identity
 - Redirect and URL parameter handling
 
 **Authentication & Session**

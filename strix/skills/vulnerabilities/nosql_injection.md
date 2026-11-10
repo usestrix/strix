@@ -14,7 +14,7 @@ NoSQL injection exploits the mismatch between how applications pass user input t
 - Form fields with bracket notation (`field[$ne]=`) coerced into operator objects by Express, PHP, and similar middleware
 - URL-encoded JSON in query strings, headers, and cookies
 - GraphQL variables passed directly into resolver-level NoSQL filters
-- Scalar strings compiled into expression languages are a separate construction class. Load `query_language_injection`
+- Scalar search, filter, selector, and authorization strings may be compiled into another expression language instead of a NoSQL operator object. Before testing or closing any such field, load `query_language_injection` and run its Required First Pass on every scalar sink
 
 **Code patterns that enable injection**
 - Raw filter dicts/objects from user input handed to `find`/`findOne`/`aggregate`
@@ -242,7 +242,7 @@ DoS surface (use only with explicit authorization scope):
 
 1. **Identify query-receiving endpoints** — login, search, filter, lookup
 2. **Determine input format** — JSON body vs form fields vs URL params
-3. **Send error-probing payloads** — test malformed operator objects and watch for MongoDB/driver errors. For scalar expression construction, load `query_language_injection`
+3. **Send error-probing payloads** — test malformed operator objects and watch for MongoDB/driver errors. For scalar expression construction, load `query_language_injection` and complete its Required First Pass before closing the field
 4. **Attempt operator injection** — `$ne`, `$gt`, `$regex` against login endpoint
 5. **Confirm boolean oracle** — response, status, redirect differs between true/false predicates
 6. **Extract data blindly** — character-by-character `$regex` on sensitive fields (token, reset code)

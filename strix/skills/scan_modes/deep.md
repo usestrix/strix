@@ -64,8 +64,6 @@ Test every input vector with every applicable technique.
 
 **Input Handling**
 - Multiple injection types: SQL, NoSQL, LDAP, XPath, command, template
-- For scalar search/filter/selector fields—including authorization fields—the delegated task must list each field and preload `query_language_injection`. One owner must run its matrix before `exact match` or `ruled out`
-- Where different components validate and consume structured input, preload `idor`. Test raw parser differentials (duplicate members, type/number boundaries) and compare the checked identity with the acted-on identity
 - Encoding bypasses: double encoding, unicode, null bytes
 - Boundary conditions and type confusion
 - Large payloads and buffer-related issues
