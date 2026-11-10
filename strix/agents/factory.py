@@ -364,7 +364,7 @@ def _wrap_apply_patch(tool: CustomTool | FunctionTool) -> None:
         blocked = await check_action(
             ctx,
             "apply_patch",
-            {"input": raw_input[:4000], "input_truncated": len(raw_input) > 4000},
+            {"input": raw_input},
         )
         if blocked is not None:
             return blocked

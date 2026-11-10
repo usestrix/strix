@@ -137,13 +137,12 @@ async def test_real_sdk_patch_approval_boundary(
         else:
             assert judge.call_args.args[0]["arguments"] == {
                 "input": payload,
-                "input_truncated": False,
             }
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("chat_completions", [False, True])
-async def test_real_sdk_patch_preview_is_bounded_but_execution_is_not(
+async def test_real_sdk_large_patch_reaches_judge_and_execution_unchanged(
     tmp_path: Path, chat_completions: bool
 ) -> None:
     payload = "*** Begin Patch\n*** Add File: large.txt\n+" + "x" * 6000 + "\n*** End Patch"
@@ -156,12 +155,9 @@ async def test_real_sdk_patch_preview_is_bounded_but_execution_is_not(
     assert "Created large.txt" in result
     assert (tmp_path / "large.txt").read_text() == "x" * 6000
     assert judge.call_args.args[0]["arguments"] == {
-        "input": payload[:4000],
-        "input_truncated": True,
+        "input": payload,
     }
-    assert action_approvals._summary("apply_patch", judge.call_args.args[0]["arguments"]).endswith(
-        "[Patch preview truncated]"
-    )
+    assert action_approvals._summary("apply_patch", judge.call_args.args[0]["arguments"]) == payload
 
 
 @pytest.mark.asyncio
