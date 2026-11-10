@@ -1,4 +1,4 @@
-"""Action approval decisions, independent waits, and tool execution boundaries."""
+"""Action approval judging, independent waits, and tool execution boundaries."""
 
 from __future__ import annotations
 
@@ -6,10 +6,9 @@ import asyncio
 import json
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID
 
-import httpx
 import pytest
 from agents.sandbox.capabilities.tools.shell_tool import ExecCommandTool, WriteStdinTool
 from agents.tool import FunctionTool, invoke_function_tool
@@ -20,7 +19,7 @@ from pydantic import ValidationError
 from strix.agents.factory import _wrap_exec_command, _wrap_write_stdin
 from strix.config.settings import ActionApprovalSettings, LlmSettings, Settings
 from strix.core import action_approvals, inputs, runner
-from strix.core.action_approvals import QUESTIONS, ActionApprovalGuard, LlmJudge
+from strix.core.action_approvals import ActionApprovalGuard, LlmJudge
 from strix.core.agents import AgentCoordinator
 from strix.tools.mcp.agent_tools import call_mcp
 from strix.tools.proxy import caido_api
@@ -29,19 +28,8 @@ from strix.tools.proxy.tools import repeat_request
 from tests.test_runner_root_prompt import _patch_engine_scaffold
 
 
-def _response(risk: float = 0.99) -> httpx.Response:
-    return httpx.Response(
-        200,
-        json={
-            "answers": {
-                "unsafe": {"noul": risk},
-                "category": {
-                    "choice": "deletes_data" if risk >= 0.5 else "safe",
-                    "probabilities": {"deletes_data": risk, "safe": 1 - risk},
-                },
-            },
-        },
-    )
+def _verdict(risk: float = 0.99) -> tuple[float, str, str | None]:
+    return risk, "deletes_data" if risk >= 0.5 else "safe", None
 
 
 def _ctx(guard: ActionApprovalGuard, agent_id: str = "agent") -> ToolContext[Any]:
@@ -68,7 +56,6 @@ def _settings(**overrides: Any) -> ActionApprovalSettings:
         **{
             "enabled": True,
             "mode": "auto",
-            "api_key": "test-key",
             **overrides,
         }
     )
@@ -88,24 +75,32 @@ def test_settings_defaults_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.tools == ["exec_command", "write_stdin", "repeat_request", "call_mcp"]
     assert settings.timeout_seconds == 300
     assert settings.on_timeout == "block"
-    assert settings.model == "baseten/joey-1"
-    assert settings.judge == "decision"
+    assert settings.model is None
+    assert settings.api_key is None
+    assert settings.api_base is None
     assert settings.threshold == 0.5
     assert not Settings().action_approvals.enabled
     monkeypatch.setenv("STRIX_ACTION_APPROVALS", "true")
     monkeypatch.setenv("STRIX_ACTION_APPROVAL_MODE", "AUTO")
-    monkeypatch.setenv("STRIX_ACTION_APPROVAL_JUDGE", "LLM")
     monkeypatch.setenv("STRIX_ACTION_APPROVAL_TOOLS", '["exec_command"]')
-    monkeypatch.setenv("OPENROUTER_API_KEY", "fallback-key")
-    monkeypatch.delenv("ACTION_APPROVAL_API_KEY", raising=False)
-    assert ActionApprovalSettings().api_key == "fallback-key"
+    monkeypatch.setenv("STRIX_ACTION_APPROVAL_MODEL", "deepseek/deepseek-chat")
+    monkeypatch.setenv("ACTION_APPROVAL_API_BASE", "https://judge.test/v1")
     monkeypatch.setenv("ACTION_APPROVAL_API_KEY", "primary-key")
     resolved = ActionApprovalSettings()
     assert resolved.api_key == "primary-key"
     assert resolved.enabled and resolved.mode == "auto"
-    assert resolved.judge == "llm"
+    assert resolved.model == "deepseek/deepseek-chat"
+    assert resolved.api_base == "https://judge.test/v1"
     assert resolved.tools == ["exec_command"]
     assert ActionApprovalSettings.model_validate({"tools": '["call_mcp"]'}).tools == ["call_mcp"]
+
+
+def test_removed_judge_setting_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIX_ACTION_APPROVAL_JUDGE", "retired")
+    settings = ActionApprovalSettings.model_validate({"STRIX_ACTION_APPROVAL_JUDGE": "retired"})
+    assert "judge" not in ActionApprovalSettings.model_fields
+    assert settings.model is None
+    assert isinstance(ActionApprovalGuard(settings).judge, LlmJudge)
 
 
 @pytest.mark.parametrize(
@@ -117,7 +112,6 @@ def test_settings_defaults_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
         {"timeout_seconds": 0},
         {"mode": "other"},
         {"on_timeout": "other"},
-        {"judge": "other"},
     ],
 )
 def test_settings_reject_invalid_values(overrides: dict[str, Any]) -> None:
@@ -133,21 +127,19 @@ def test_settings_reject_invalid_values(overrides: dict[str, Any]) -> None:
 async def test_disabled_and_unguarded_never_call_judge(
     overrides: dict[str, Any], tool: str
 ) -> None:
-    def transport(_request: httpx.Request) -> httpx.Response:
+    def evaluate(_state: dict[str, Any]) -> tuple[float, str, str | None]:
         raise AssertionError("Judge must not be called")
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
-        guard = ActionApprovalGuard(_settings(**overrides), client=client)
+    with patch.object(LlmJudge, "evaluate", side_effect=evaluate):
+        guard = ActionApprovalGuard(_settings(**overrides))
         assert await guard.check(_ctx(guard), tool, {}) is None
 
 
 @pytest.mark.asyncio
 async def test_auto_blocks_have_distinct_approval_ids() -> None:
     events: list[dict[str, Any]] = []
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda _request: _response(0.99))
-    ) as client:
-        guard = ActionApprovalGuard(_settings(), client=client, event_sink=events.append)
+    with patch.object(LlmJudge, "evaluate", return_value=_verdict(0.99)):
+        guard = ActionApprovalGuard(_settings(), event_sink=events.append)
         for _ in range(2):
             await guard.check(_ctx(guard), "exec_command", {"cmd": "test command"})
     blocked = [event for event in events if event["type"] == "blocked"]
@@ -163,28 +155,26 @@ async def test_auto_decision_and_request_payload(risk: float, blocked: bool) -> 
     requests = []
     events: list[dict[str, Any]] = []
 
-    def transport(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
-        return _response(risk)
+    def evaluate(state: dict[str, Any]) -> tuple[float, str, str | None]:
+        requests.append(state)
+        return _verdict(risk)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
-        guard = ActionApprovalGuard(_settings(), client=client, event_sink=events.append)
+    with patch.object(LlmJudge, "evaluate", side_effect=evaluate):
+        guard = ActionApprovalGuard(_settings(), event_sink=events.append)
         args = {"cmd": "test command"}
         result = await guard.check(_ctx(guard), "exec_command", args)
         assert (result is not None) is blocked
         if blocked:
             assert result is not None
             assert "this action did not run" in result
-        assert str(requests[0].url) == "https://openrouter.ai/api/alpha/decisions"
-        body = json.loads(requests[0].content)
-        assert body["questions"] == QUESTIONS
-        assert body["model"] == "baseten/joey-1"
-        assert body["state"] == {
-            "tool": "exec_command",
-            "arguments": args,
-            "agent_task": "Check the authorized application",
-            "authorized_targets": ["example.com"],
-        }
+        assert requests == [
+            {
+                "tool": "exec_command",
+                "arguments": args,
+                "agent_task": "Check the authorized application",
+                "authorized_targets": ["example.com"],
+            }
+        ]
         assert events[0]["decision"] == ("blocked" if blocked else "allowed")
         assert events[0]["risk"] == risk
         assert events[0]["reason"] is None
@@ -196,8 +186,8 @@ async def test_auto_decision_and_request_payload(risk: float, blocked: bool) -> 
 @pytest.mark.parametrize("approved", [True, False])
 async def test_ask_human_resolution(approved: bool) -> None:
     events: list[dict[str, Any]] = []
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: _response())) as client:
-        guard = ActionApprovalGuard(_settings(mode="ask"), client=client, event_sink=events.append)
+    with patch.object(LlmJudge, "evaluate", return_value=_verdict()):
+        guard = ActionApprovalGuard(_settings(mode="ask"), event_sink=events.append)
         task = asyncio.create_task(guard.check(_ctx(guard), "exec_command", {"cmd": "test"}))
         request = (await _pending(guard))[0]
         approval_id = request["approval_id"]
@@ -220,10 +210,9 @@ async def test_ask_human_resolution(approved: bool) -> None:
 @pytest.mark.parametrize("policy", ["block", "allow"])
 async def test_ask_timeout(policy: str) -> None:
     events: list[dict[str, Any]] = []
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: _response())) as client:
+    with patch.object(LlmJudge, "evaluate", return_value=_verdict()):
         guard = ActionApprovalGuard(
             _settings(mode="ask", timeout_seconds=0.01, on_timeout=policy),
-            client=client,
             event_sink=events.append,
         )
         result = await guard.check(_ctx(guard), "exec_command", {"cmd": "test"})
@@ -244,15 +233,17 @@ async def test_judge_failure_retries_then_succeeds(
 ) -> None:
     calls = 0
 
-    def transport(_request: httpx.Request) -> httpx.Response:
+    def evaluate(_state: dict[str, Any]) -> tuple[float, str, str | None]:
         nonlocal calls
         calls += 1
         if calls == 1:
-            return httpx.Response(200, json={"answers": {}}) if malformed else httpx.Response(503)
-        return _response(0.02)
+            if malformed:
+                raise ValueError("Invalid approval judge response")
+            raise RuntimeError("Model unavailable")
+        return _verdict(0.02)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
-        guard = ActionApprovalGuard(_settings(), client=client)
+    with patch.object(LlmJudge, "evaluate", side_effect=evaluate):
+        guard = ActionApprovalGuard(_settings())
         assert await guard.check(_ctx(guard), "exec_command", {}) is None
         assert calls == 2
         assert "Action approval judge failed" in caplog.text
@@ -262,13 +253,13 @@ async def test_judge_failure_retries_then_succeeds(
 async def test_concurrent_agents_have_independent_judge_calls_and_approvals() -> None:
     calls = []
 
-    async def transport(request: httpx.Request) -> httpx.Response:
-        cmd = json.loads(request.content)["state"]["arguments"].get("cmd")
+    async def evaluate(state: dict[str, Any]) -> tuple[float, str, str | None]:
+        cmd = state["arguments"].get("cmd")
         calls.append(cmd)
-        return _response(0.02 if cmd == "safe" else 0.99)
+        return _verdict(0.02 if cmd == "safe" else 0.99)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
-        guard = ActionApprovalGuard(_settings(mode="ask"), client=client)
+    with patch.object(LlmJudge, "evaluate", side_effect=evaluate):
+        guard = ActionApprovalGuard(_settings(mode="ask"))
         first = asyncio.create_task(guard.check(_ctx(guard, "a"), "exec_command", {"cmd": "a"}))
         await _pending(guard)
         assert await guard.check(_ctx(guard, "b"), "exec_command", {"cmd": "safe"}) is None
@@ -284,8 +275,8 @@ async def test_concurrent_agents_have_independent_judge_calls_and_approvals() ->
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stop_scan", [True, False])
 async def test_coordinator_stop_blocks_pending(stop_scan: bool) -> None:
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: _response())) as client:
-        guard = ActionApprovalGuard(_settings(mode="ask"), client=client)
+    with patch.object(LlmJudge, "evaluate", return_value=_verdict()):
+        guard = ActionApprovalGuard(_settings(mode="ask"))
         ctx = _ctx(guard)
         task = asyncio.create_task(guard.check(ctx, "exec_command", {}))
         await _pending(guard)
@@ -304,12 +295,12 @@ async def test_coordinator_stop_blocks_pending(stop_scan: bool) -> None:
 async def test_retry_is_cancellable_on_stop() -> None:
     called = asyncio.Event()
 
-    def transport(_request: httpx.Request) -> httpx.Response:
+    def evaluate(_state: dict[str, Any]) -> tuple[float, str, str | None]:
         called.set()
-        return httpx.Response(500)
+        raise RuntimeError("Model unavailable")
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
-        guard = ActionApprovalGuard(_settings(), client=client)
+    with patch.object(LlmJudge, "evaluate", side_effect=evaluate):
+        guard = ActionApprovalGuard(_settings())
         task = asyncio.create_task(guard.check(_ctx(guard), "exec_command", {}))
         await called.wait()
         guard.block_pending()
@@ -320,8 +311,8 @@ async def test_retry_is_cancellable_on_stop() -> None:
 
 @pytest.mark.asyncio
 async def test_cancelled_check_leaves_no_pending_approval() -> None:
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: _response())) as client:
-        guard = ActionApprovalGuard(_settings(mode="ask"), client=client)
+    with patch.object(LlmJudge, "evaluate", return_value=_verdict()):
+        guard = ActionApprovalGuard(_settings(mode="ask"))
         task = asyncio.create_task(guard.check(_ctx(guard), "exec_command", {}))
         await _pending(guard)
         task.cancel()
@@ -350,8 +341,8 @@ async def test_shell_wrappers_do_not_execute_blocked_actions(
 
     tool = FunctionTool(name=name, description="test", params_json_schema={}, on_invoke_tool=invoke)
     wrapped = _wrap_exec_command(tool) if name == "exec_command" else _wrap_write_stdin(tool)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: _response())) as client:
-        guard = ActionApprovalGuard(_settings(), client=client)
+    with patch.object(LlmJudge, "evaluate", return_value=_verdict()):
+        guard = ActionApprovalGuard(_settings())
         result = await wrapped.on_invoke_tool(
             _ctx(guard), json.dumps({"cmd": "test", "chars": chars})
         )
@@ -371,15 +362,15 @@ async def test_dispatch_guard_runs_before_connections_or_locks(
 ) -> None:
     requests = []
 
-    def transport(request: httpx.Request) -> httpx.Response:
-        requests.append(json.loads(request.content))
-        return _response()
+    def evaluate(state: dict[str, Any]) -> tuple[float, str, str | None]:
+        requests.append(state)
+        return _verdict()
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
-        guard = ActionApprovalGuard(_settings(), client=client)
+    with patch.object(LlmJudge, "evaluate", side_effect=evaluate):
+        guard = ActionApprovalGuard(_settings())
         result = await tool.on_invoke_tool(_ctx(guard), json.dumps(args))
         assert "Blocked by action approvals" in result
-        judged = requests[0]["state"]["arguments"]
+        judged = requests[0]["arguments"]
         assert judged == {"connection": "test", "tool": "change", "arguments": {"value": 1}}
 
 
@@ -423,13 +414,13 @@ async def test_replay_judges_effective_delete_without_header_values(
     requests: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
 
-    def transport(request: httpx.Request) -> httpx.Response:
+    def evaluate(state: dict[str, Any]) -> tuple[float, str, str | None]:
         assert not proxy_tools._CAIDO_CALL_LOCK.locked()
-        requests.append(json.loads(request.content))
-        return _response()
+        requests.append(state)
+        return _verdict()
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
-        guard = ActionApprovalGuard(_settings(), client=client, event_sink=events.append)
+    with patch.object(LlmJudge, "evaluate", side_effect=evaluate):
+        guard = ActionApprovalGuard(_settings(), event_sink=events.append)
         ctx, sent = _replay_context(monkeypatch, guard)
         args: dict[str, Any] = {"request_id": "123"}
         if body_length:
@@ -441,7 +432,7 @@ async def test_replay_judges_effective_delete_without_header_values(
         result = await repeat_request.on_invoke_tool(ctx, json.dumps(args))
         assert "Blocked by action approvals" in result
         assert not sent
-        judged = requests[0]["state"]["arguments"]
+        judged = requests[0]["arguments"]
         assert judged["method"] == "DELETE"
         url = "https://example.com/users/123" + ("?force=true" if body_length else "")
         assert judged["url"] == url
@@ -468,8 +459,8 @@ async def test_replay_approval_releases_lock_and_excludes_wait_from_timeout(
             get_running_loop=asyncio.get_running_loop,
         ),
     )
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: _response())) as client:
-        guard = ActionApprovalGuard(_settings(mode="ask"), client=client)
+    with patch.object(LlmJudge, "evaluate", return_value=_verdict()):
+        guard = ActionApprovalGuard(_settings(mode="ask"))
         ctx, sent = _replay_context(monkeypatch, guard)
         task = asyncio.create_task(
             invoke_function_tool(
@@ -504,11 +495,11 @@ async def test_replay_approval_releases_lock_and_excludes_wait_from_timeout(
 async def test_replay_preparation_failure_does_not_judge_or_send(
     monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
-    def transport(_request: httpx.Request) -> httpx.Response:
+    def evaluate(_state: dict[str, Any]) -> tuple[float, str, str | None]:
         raise AssertionError("Judge must not run without a prepared request")
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
-        guard = ActionApprovalGuard(_settings(), client=client)
+    with patch.object(LlmJudge, "evaluate", side_effect=evaluate):
+        guard = ActionApprovalGuard(_settings())
         ctx, sent = _replay_context(monkeypatch, guard)
 
         async def fetch(_client: Any, _request_id: str, *, part: str) -> None:
@@ -542,8 +533,8 @@ async def test_approval_wait_does_not_consume_execution_timeout() -> None:
             timeout_seconds=0.01,
         )
     )
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: _response())) as client:
-        guard = ActionApprovalGuard(_settings(mode="ask"), client=client)
+    with patch.object(LlmJudge, "evaluate", return_value=_verdict()):
+        guard = ActionApprovalGuard(_settings(mode="ask"))
         task = asyncio.create_task(
             invoke_function_tool(
                 function_tool=tool,
@@ -584,12 +575,8 @@ async def test_real_sdk_shell_tools_keep_execution_timeouts_after_approval(
     wrapped = wrap(tool)
     assert wrapped.timeout_seconds is None
     risk = 0.0 if decision == "safe" else 1.0
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda _: _response(risk))
-    ) as client:
-        guard = ActionApprovalGuard(
-            _settings(mode="ask" if decision == "approve" else "auto"), client=client
-        )
+    with patch.object(LlmJudge, "evaluate", return_value=_verdict(risk)):
+        guard = ActionApprovalGuard(_settings(mode="ask" if decision == "approve" else "auto"))
         task = asyncio.create_task(
             invoke_function_tool(function_tool=wrapped, context=_ctx(guard), arguments=arguments)
         )
@@ -707,9 +694,10 @@ def _fake_llm(monkeypatch: pytest.MonkeyPatch, *outputs: str) -> tuple[Mock, Asy
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("approval_model", [None, "", "  "])
 @pytest.mark.parametrize("mode,risk", [("auto", 0.0), ("auto", 0.99), ("ask", 0.99)])
 async def test_llm_judge_and_reason_events(
-    monkeypatch: pytest.MonkeyPatch, mode: str, risk: float
+    monkeypatch: pytest.MonkeyPatch, mode: str, risk: float, approval_model: str | None
 ) -> None:
     reason = "This deletes the users table in the target database."
     provider, model = _fake_llm(
@@ -719,7 +707,9 @@ async def test_llm_judge_and_reason_events(
         ),
     )
     events: list[dict[str, Any]] = []
-    guard = ActionApprovalGuard(_settings(judge="llm", mode=mode), event_sink=events.append)
+    guard = ActionApprovalGuard(
+        _settings(mode=mode, model=approval_model), event_sink=events.append
+    )
     task = asyncio.create_task(guard.check(_ctx(guard), "exec_command", {"cmd": "test command"}))
     if mode == "ask":
         pending = await _pending(guard)
@@ -751,9 +741,7 @@ async def test_llm_dedicated_provider_configuration(
         monkeypatch, '{"risk":0,"category":"safe","reason":"This only reads public data."}'
     )
     judge = LlmJudge(
-        _settings(
-            judge="llm", model=model_name, api_key="judge-key", api_base="https://judge.test/v1"
-        )
+        _settings(model=model_name, api_key="judge-key", api_base="https://judge.test/v1")
     )
     assert await judge.evaluate({}) == (0.0, "safe", "This only reads public data.")
     provider.assert_called_once_with(api_key="judge-key", base_url="https://judge.test/v1")
@@ -765,12 +753,35 @@ async def test_llm_dedicated_provider_configuration(
 
 
 @pytest.mark.asyncio
-async def test_llm_implicit_decision_endpoint_not_used(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_llm_optional_provider_override(monkeypatch: pytest.MonkeyPatch) -> None:
     provider, _ = _fake_llm(
         monkeypatch, '{"risk":0,"category":"safe","reason":"This only reads public data."}'
     )
-    await LlmJudge(_settings(judge="llm", model="openrouter/test")).evaluate({})
+    await LlmJudge(_settings(model="deepseek/deepseek-chat", api_key="test-key")).evaluate({})
     provider.assert_called_once_with(api_key="test-key", base_url=None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "overrides,expected",
+    [
+        ({"api_key": "judge-key"}, {"api_key": "judge-key", "base_url": None}),
+        (
+            {"api_base": "https://judge.test/v1"},
+            {"api_key": None, "base_url": "https://judge.test/v1"},
+        ),
+    ],
+)
+async def test_llm_provider_override_with_scan_model(
+    monkeypatch: pytest.MonkeyPatch, overrides: dict[str, str], expected: dict[str, str | None]
+) -> None:
+    provider, model = _fake_llm(
+        monkeypatch, '{"risk":0,"category":"safe","reason":"This only reads public data."}'
+    )
+    await LlmJudge(_settings(**overrides)).evaluate({})
+    provider.assert_called_once_with(**expected)
+    provider.return_value.get_model.assert_called_once_with("openai/gpt-5")
+    assert model.call_args.kwargs["model_settings"].extra_headers != {"X-Main": "private"}
 
 
 @pytest.mark.asyncio
@@ -797,7 +808,7 @@ async def test_llm_invalid_output_retried(monkeypatch: pytest.MonkeyPatch, outpu
     )
     sleep = AsyncMock()
     monkeypatch.setattr(asyncio, "sleep", sleep)
-    guard = ActionApprovalGuard(_settings(judge="llm"))
+    guard = ActionApprovalGuard(_settings())
     assert await guard.check(_ctx(guard), "exec_command", {"cmd": "test command"}) is None
     assert model.await_count == 2
     sleep.assert_awaited_once_with(1.0)
@@ -812,7 +823,7 @@ async def test_llm_requires_a_model(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda: Settings(llm=LlmSettings.model_validate({"model": None})),
     )
     with pytest.raises(ValueError, match="require an LLM model"):
-        await LlmJudge(_settings(judge="llm")).evaluate({})
+        await LlmJudge(_settings()).evaluate({})
 
 
 @pytest.mark.asyncio
@@ -828,6 +839,6 @@ async def test_llm_low_reasoning_only_when_supported(
         return supports_reasoning
 
     monkeypatch.setattr(inputs, "model_supports_reasoning", supports_model_reasoning)
-    await LlmJudge(_settings(judge="llm")).evaluate({})
+    await LlmJudge(_settings()).evaluate({})
     reasoning = model.call_args.kwargs["model_settings"].reasoning
     assert reasoning.effort == "low" if supports_reasoning else reasoning is None

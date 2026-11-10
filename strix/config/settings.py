@@ -145,15 +145,12 @@ class ActionApprovalSettings(BaseSettings):
     model_config = _BASE_CONFIG
 
     enabled: bool = Field(default=False, alias="STRIX_ACTION_APPROVALS")
-    judge: Literal["decision", "llm"] = Field(
-        default="decision", alias="STRIX_ACTION_APPROVAL_JUDGE"
-    )
     mode: Literal["auto", "ask"] = Field(default="ask", alias="STRIX_ACTION_APPROVAL_MODE")
     tools: list[str] = Field(
         default_factory=lambda: ["exec_command", "write_stdin", "repeat_request", "call_mcp"],
         alias="STRIX_ACTION_APPROVAL_TOOLS",
     )
-    model: str = Field(default="baseten/joey-1", alias="STRIX_ACTION_APPROVAL_MODEL")
+    model: str | None = Field(default=None, alias="STRIX_ACTION_APPROVAL_MODEL")
     threshold: float = Field(
         default=0.5, ge=0, le=1, allow_inf_nan=False, alias="STRIX_ACTION_APPROVAL_THRESHOLD"
     )
@@ -163,14 +160,10 @@ class ActionApprovalSettings(BaseSettings):
     on_timeout: Literal["block", "allow"] = Field(
         default="block", alias="STRIX_ACTION_APPROVAL_ON_TIMEOUT"
     )
-    api_key: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("ACTION_APPROVAL_API_KEY", "OPENROUTER_API_KEY"),
-        repr=False,
-    )
-    api_base: str = Field(default="https://openrouter.ai/api", alias="ACTION_APPROVAL_API_BASE")
+    api_key: str | None = Field(default=None, alias="ACTION_APPROVAL_API_KEY", repr=False)
+    api_base: str | None = Field(default=None, alias="ACTION_APPROVAL_API_BASE")
 
-    @field_validator("judge", "mode", "on_timeout", mode="before")
+    @field_validator("mode", "on_timeout", mode="before")
     @classmethod
     def _normalize_case(cls, value: object) -> object:
         return _lowercase(value)
