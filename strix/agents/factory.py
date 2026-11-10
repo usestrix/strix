@@ -355,10 +355,30 @@ def _bound_custom_tool(tool: CustomTool) -> CustomTool:
     return tool
 
 
+def _wrap_apply_patch(tool: CustomTool | FunctionTool) -> None:
+    invoke_tool = (
+        separate_tool_timeout(tool) if isinstance(tool, FunctionTool) else tool.on_invoke_tool
+    )
+
+    async def invoke(ctx: Any, raw_input: str) -> Any:
+        blocked = await check_action(
+            ctx,
+            "apply_patch",
+            {"input": raw_input[:4000], "input_truncated": len(raw_input) > 4000},
+        )
+        if blocked is not None:
+            return blocked
+        return await invoke_tool(ctx, raw_input)
+
+    tool.on_invoke_tool = invoke
+
+
 def _configure_filesystem_tools(
     toolset: Any, *, chat_completions: bool, strict_schemas: bool = True
 ) -> None:
     for name, tool in vars(toolset).items():
+        if isinstance(tool, CustomTool | FunctionTool) and tool.name == "apply_patch":
+            _wrap_apply_patch(tool)
         if chat_completions:
             if isinstance(tool, CustomTool):
                 setattr(toolset, name, _custom_tool_as_function_tool(tool))

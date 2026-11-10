@@ -5,17 +5,20 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID
 
 import pytest
+from agents.sandbox.capabilities.tools.apply_patch_tool import SandboxApplyPatchTool
 from agents.sandbox.capabilities.tools.shell_tool import ExecCommandTool, WriteStdinTool
+from agents.sandbox.workspace_paths import WorkspacePathPolicy
 from agents.tool import FunctionTool, invoke_function_tool
 from agents.tool_context import ToolContext
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 from pydantic import ValidationError
 
+from strix.agents import factory
 from strix.agents.factory import _wrap_exec_command, _wrap_write_stdin
 from strix.config.settings import ActionApprovalSettings, LlmSettings, Settings
 from strix.core import action_approvals, inputs, runner
@@ -26,6 +29,10 @@ from strix.tools.proxy import caido_api
 from strix.tools.proxy import tools as proxy_tools
 from strix.tools.proxy.tools import repeat_request
 from tests.test_runner_root_prompt import _patch_engine_scaffold
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _verdict(risk: float = 0.99) -> tuple[float, str, str | None]:
@@ -68,11 +75,152 @@ async def _pending(guard: ActionApprovalGuard, count: int = 1) -> list[dict[str,
     return guard.pending()
 
 
+def _patch_tool(tmp_path: Path, chat_completions: bool) -> Any:
+    session = Mock()
+    session._workspace_path_policy.return_value = WorkspacePathPolicy(root=tmp_path)
+    session.normalize_path.side_effect = lambda path: tmp_path / path
+    session.read = AsyncMock(side_effect=lambda path, **_kw: path.open("rb"))
+    session.mkdir = AsyncMock(
+        side_effect=lambda path, **_kw: path.mkdir(exist_ok=True, parents=True)
+    )
+    session.write = AsyncMock(side_effect=lambda path, data, **_kw: path.write_bytes(data.read()))
+    session.rm = AsyncMock(side_effect=lambda path, **_kw: path.unlink())
+    toolset = SimpleNamespace(apply_patch=SandboxApplyPatchTool(session=session))
+    factory._configure_filesystem_tools(toolset, chat_completions=chat_completions)
+    return toolset.apply_patch
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("chat_completions", [False, True])
+@pytest.mark.parametrize("decision", ["safe", "block", "excluded", "disabled", "approve"])
+@pytest.mark.parametrize("operation_json", [False, True])
+async def test_real_sdk_patch_approval_boundary(
+    tmp_path: Path, chat_completions: bool, decision: str, operation_json: bool
+) -> None:
+    target = tmp_path / "evidence.txt"
+    target.write_text("keep this evidence\n")
+    payload = (
+        json.dumps({"type": "delete_file", "path": "evidence.txt"})
+        if operation_json
+        else "*** Begin Patch\n*** Delete File: evidence.txt\n*** End Patch"
+    )
+    tool = _patch_tool(tmp_path, chat_completions)
+    guard = ActionApprovalGuard(
+        _settings(
+            mode="ask" if decision == "approve" else "auto",
+            enabled=decision != "disabled",
+            tools=[] if decision == "excluded" else ["apply_patch"],
+        )
+    )
+    with patch.object(
+        LlmJudge, "evaluate", return_value=_verdict(1 if decision in {"block", "approve"} else 0)
+    ) as judge:
+        task = asyncio.create_task(
+            tool.on_invoke_tool(
+                _ctx(guard), json.dumps({"patch": payload}) if chat_completions else payload
+            )
+        )
+        if decision == "approve":
+            request = (await _pending(guard))[0]
+            assert request["summary"] == payload
+            assert target.read_text() == "keep this evidence\n"
+            guard.resolve(request["approval_id"], approved=True)
+        result = await task
+        if decision == "block":
+            assert "Blocked by action approvals" in result
+            assert target.read_text() == "keep this evidence\n"
+        else:
+            assert "Deleted evidence.txt" in result
+            assert not target.exists()
+        if decision in {"excluded", "disabled"}:
+            judge.assert_not_awaited()
+        else:
+            assert judge.call_args.args[0]["arguments"] == {
+                "input": payload,
+                "input_truncated": False,
+            }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("chat_completions", [False, True])
+async def test_real_sdk_patch_preview_is_bounded_but_execution_is_not(
+    tmp_path: Path, chat_completions: bool
+) -> None:
+    payload = "*** Begin Patch\n*** Add File: large.txt\n+" + "x" * 6000 + "\n*** End Patch"
+    tool = _patch_tool(tmp_path, chat_completions)
+    guard = ActionApprovalGuard(_settings())
+    with patch.object(LlmJudge, "evaluate", return_value=_verdict(0)) as judge:
+        result = await tool.on_invoke_tool(
+            _ctx(guard), json.dumps({"patch": payload}) if chat_completions else payload
+        )
+    assert "Created large.txt" in result
+    assert (tmp_path / "large.txt").read_text() == "x" * 6000
+    assert judge.call_args.args[0]["arguments"] == {
+        "input": payload[:4000],
+        "input_truncated": True,
+    }
+    assert action_approvals._summary("apply_patch", judge.call_args.args[0]["arguments"]).endswith(
+        "[Patch preview truncated]"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("chat_completions", [False, True])
+@pytest.mark.parametrize("payload", ["", "not a patch"])
+async def test_real_sdk_patch_invalid_input_never_writes(
+    tmp_path: Path, chat_completions: bool, payload: str
+) -> None:
+    tool = _patch_tool(tmp_path, chat_completions)
+    guard = ActionApprovalGuard(_settings())
+    with patch.object(LlmJudge, "evaluate", return_value=_verdict(0)):
+        if chat_completions:
+            result = await tool.on_invoke_tool(_ctx(guard), json.dumps({"patch": payload}))
+            assert "must" in result
+        else:
+            with pytest.raises(ValueError):
+                await tool.on_invoke_tool(_ctx(guard), payload)
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_function_patch_approval_wait_preserves_execution_timeout() -> None:
+    async def invoke(_ctx: Any, _raw_input: str) -> str:
+        await asyncio.sleep(0.05)
+        return "not reached"
+
+    tool = FunctionTool(
+        name="apply_patch",
+        description="test",
+        params_json_schema={},
+        on_invoke_tool=invoke,
+        timeout_seconds=0.01,
+    )
+    factory._wrap_apply_patch(tool)
+    guard = ActionApprovalGuard(_settings(mode="ask"))
+    with patch.object(LlmJudge, "evaluate", return_value=_verdict()):
+        task = asyncio.create_task(
+            invoke_function_tool(
+                function_tool=tool, context=_ctx(guard), arguments='{"input":"patch"}'
+            )
+        )
+        request = (await _pending(guard))[0]
+        await asyncio.sleep(0.02)
+        assert not task.done()
+        guard.resolve(request["approval_id"], approved=True)
+        assert await task == "Tool 'apply_patch' timed out after 0.01 seconds."
+
+
 def test_settings_defaults_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = ActionApprovalSettings()
     assert not settings.enabled
     assert settings.mode == "ask"
-    assert settings.tools == ["exec_command", "write_stdin", "repeat_request", "call_mcp"]
+    assert settings.tools == [
+        "exec_command",
+        "write_stdin",
+        "repeat_request",
+        "call_mcp",
+        "apply_patch",
+    ]
     assert settings.timeout_seconds == 300
     assert settings.on_timeout == "block"
     assert settings.model is None
