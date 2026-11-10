@@ -7,6 +7,7 @@ import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
+from uuid import UUID
 
 import httpx
 import pytest
@@ -137,6 +138,22 @@ async def test_disabled_and_unguarded_never_call_judge(
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
         guard = ActionApprovalGuard(_settings(**overrides), client=client)
         assert await guard.check(_ctx(guard), tool, {}) is None
+
+
+@pytest.mark.asyncio
+async def test_auto_blocks_have_distinct_approval_ids() -> None:
+    events: list[dict[str, Any]] = []
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _request: _response(0.99))
+    ) as client:
+        guard = ActionApprovalGuard(_settings(), client=client, event_sink=events.append)
+        for _ in range(2):
+            await guard.check(_ctx(guard), "exec_command", {"cmd": "test command"})
+    blocked = [event for event in events if event["type"] == "blocked"]
+    checked = [event for event in events if event["type"] == "checked"]
+    ids = [str(UUID(event["approval_id"])) for event in blocked]
+    assert len(set(ids)) == 2
+    assert [event["approval_id"] for event in checked] == ids
 
 
 @pytest.mark.asyncio
