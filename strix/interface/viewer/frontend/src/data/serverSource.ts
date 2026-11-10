@@ -37,6 +37,36 @@ export interface TranscriptEvent {
 export interface Transcript {
   agents: TranscriptAgent[];
   events: TranscriptEvent[];
+  approval_history?: ApprovalHistoryEntry[];
+}
+
+export interface ApprovalHistoryEntry {
+  agent_id: string;
+  content: string;
+  timestamp: string;
+}
+
+export interface PendingApproval {
+  approval_id: string;
+  agent_id: string;
+  agent_name: string;
+  reason: string | null;
+  summary: string;
+  expires_at: string;
+}
+
+export interface ApprovalState {
+  pending: PendingApproval[];
+  can_decide: boolean;
+  on_timeout?: string;
+}
+
+export async function fetchApprovals(runName?: string | null): Promise<ApprovalState> {
+  return await getJson("/api/approvals" + runQuery(runName)) as ApprovalState;
+}
+
+export async function decideApproval(approvalId: string, approved: boolean, runName?: string | null) {
+  return postJson("/api/approvals/decide", { approval_id: approvalId, approved, run: runName });
 }
 
 /**
@@ -123,6 +153,7 @@ export async function fetchTranscript(runName?: string | null): Promise<Transcri
   return {
     agents: Array.isArray(obj?.agents) ? obj.agents : [],
     events: Array.isArray(obj?.events) ? obj.events : [],
+    approval_history: Array.isArray(obj?.approval_history) ? obj.approval_history : [],
   };
 }
 

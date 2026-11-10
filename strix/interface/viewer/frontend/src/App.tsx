@@ -20,6 +20,7 @@ import { IssueSeveritySummary } from "@/components/IssueSeveritySummary";
 import AgentGraph from "@/components/live/AgentGraph";
 import { buildGraphAgents } from "@/components/live/AgentTranscript";
 import AgentDetailModal from "@/components/live/AgentDetailModal";
+import { ActionApprovals } from "@/components/live/ActionApprovals";
 import { ScanPromptComposer } from "@/components/live/ScanPromptComposer";
 import { severityCounts, type ParsedRunSummary } from "@/lib/local-run-parser";
 import {
@@ -376,6 +377,7 @@ export default function App() {
           ) : run && counts ? (
             <>
               <SummaryHeader summary={run.summary} />
+              <ActionApprovals key={activeRun ?? "current"} runName={activeRun} enabled={!run.finished} />
 
               {/* Tab strip: shown on small screens where the sidebar is hidden. */}
               <div className="flex gap-5 border-b border-[#2a2a2a] lg:hidden">
@@ -840,6 +842,7 @@ function AgentsTab({ run, canSteer }: { run: LoadedRun; canSteer: boolean }) {
         open={selectedAgent !== null}
         agent={selectedAgent}
         events={events}
+        approvalHistory={run.transcript.approval_history}
         steerable={steerable}
         onClose={() => setSelectedId(null)}
       />

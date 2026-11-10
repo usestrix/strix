@@ -7,6 +7,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from strix.core.paths import run_record_path
+from strix.interface.tui.approval_history import read_approval_history
 from strix.interface.tui.live_view import TuiLiveView
 
 
@@ -47,7 +48,11 @@ def build_run_state(run_dir: Path) -> dict[str, Any]:
     """
     view = TuiLiveView()
     view.hydrate_from_run_dir(run_dir)
-    return {"agents": list(view.agents.values()), "events": view.events}
+    return {
+        "agents": list(view.agents.values()),
+        "events": view.events,
+        "approval_history": read_approval_history(run_dir),
+    }
 
 
 def read_run_summary(run_dir: Path) -> dict[str, Any]:

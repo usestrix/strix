@@ -120,6 +120,8 @@ class _ViewerState:
         run_dir: Path,
         assets_dir: Path,
         steer_handler: Callable[[str, str], bool] | None = None,
+        approval_state: Callable[[], dict[str, Any]] | None = None,
+        approval_decide: Callable[[str, bool], bool] | None = None,
     ) -> None:
         self.run_dir = run_dir
         self.assets_dir = assets_dir
@@ -130,6 +132,8 @@ class _ViewerState:
         # launcher), which can deliver a message to a running agent. Absent for
         # standalone ``strix view`` / finished runs, so steering is unavailable.
         self.steer_handler = steer_handler
+        self.approval_state = approval_state
+        self.approval_decide = approval_decide
         # Unguessable per-process capability. It is minted here, printed/opened
         # for the operator who started the server (see ``authorized_url``), and
         # exchanged for a session cookie only when presented on the initial page
@@ -185,6 +189,8 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                     self._handle_feedback()
                 elif path == "/api/agents/steer":
                     self._handle_steer()
+                elif path == "/api/approvals/decide":
+                    self._handle_approval_decision()
                 else:
                     self._send_json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
             except BrokenPipeError:
@@ -283,6 +289,19 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 self._send_json(HTTPStatus.OK, {"markdown": read_report_markdown(run_dir)})
             elif path == "/api/transcript":
                 self._send_json(HTTPStatus.OK, build_run_state(run_dir))
+            elif path == "/api/approvals":
+                live = (
+                    run_dir.resolve() == state.run_dir.resolve()
+                    and state.approval_state is not None
+                    and state.approval_decide is not None
+                    and read_run_summary(run_dir).get("status")
+                    not in {"completed", "stopped", "failed", "interrupted"}
+                )
+                payload = state.approval_state() if live and state.approval_state else {}
+                self._send_json(
+                    HTTPStatus.OK,
+                    {"pending": [], "can_decide": False, **payload},
+                )
             else:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
 
@@ -427,6 +446,34 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
         # Cap on a steering message so a runaway client cannot flood the agent.
         _STEER_MESSAGE_MAX = 4000
 
+        def _handle_approval_decision(self) -> None:
+            if not self._has_session():
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
+                return
+            if state.approval_decide is None:
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "approvals_unavailable"})
+                return
+            body = self._read_body()
+            approval_id, approved = body.get("approval_id"), body.get("approved")
+            if (
+                not isinstance(approval_id, str)
+                or not approval_id.strip()
+                or not isinstance(approved, bool)
+            ):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_decision"})
+                return
+            if body.get("run") not in (None, state.run_dir.name) or read_run_summary(
+                state.run_dir
+            ).get("status") in {"completed", "stopped", "failed", "interrupted"}:
+                self._send_json(HTTPStatus.CONFLICT, {"error": "approvals_unavailable"})
+                return
+            if not state.approval_decide(approval_id, approved):
+                self._send_json(
+                    HTTPStatus.CONFLICT, {"error": "approval_already_settled_or_unknown"}
+                )
+                return
+            self._send_json(HTTPStatus.OK, {"ok": True})
+
         def _handle_steer(self) -> None:
             if not self._has_session():
                 self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
@@ -566,6 +613,8 @@ def serve(
     port: int = 0,
     open_browser: bool = True,
     steer_handler: Callable[[str, str], bool] | None = None,
+    approval_state: Callable[[], dict[str, Any]] | None = None,
+    approval_decide: Callable[[str, bool], bool] | None = None,
 ) -> tuple[ThreadingHTTPServer, str, str]:
     """Start the viewer server on a background thread; return (server, url, token).
 
@@ -581,7 +630,13 @@ def serve(
     ``None`` (standalone ``strix view``), steering is reported unavailable.
     """
     assets_dir = bundle_dir()
-    state = _ViewerState(run_dir=run_dir, assets_dir=assets_dir, steer_handler=steer_handler)
+    state = _ViewerState(
+        run_dir=run_dir,
+        assets_dir=assets_dir,
+        steer_handler=steer_handler,
+        approval_state=approval_state,
+        approval_decide=approval_decide,
+    )
     handler = _make_handler(state)
 
     try:
