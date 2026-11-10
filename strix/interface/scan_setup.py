@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from strix.config import Settings, codex, load_settings
 from strix.core.paths import run_dir_for
+from strix.interface import herdr
 from strix.interface.utils import (
     assign_workspace_subdirs,
     clone_repository,
@@ -272,6 +273,12 @@ def prepare_run(args: argparse.Namespace) -> None:
 
     attach_workspace_mount(args)
     _persist_run_record(args)
+    if args.run_name:
+        herdr.report_state(
+            "working",
+            session_id=str(args.run_name),
+            resume_argv=["strix", "--resume", str(args.run_name)],
+        )
 
 
 def attach_workspace_mount(args: argparse.Namespace) -> None:

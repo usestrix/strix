@@ -493,13 +493,7 @@ def main() -> None:
 
     if args.non_interactive or not args.needs_setup:
         _bootstrap_scan(args)
-    if args.run_name:
-        herdr.report_state(
-            "working",
-            session_id=args.run_name,
-            resume_argv=["strix", "--resume", args.run_name],
-        )
-    else:
+    if not args.run_name:
         herdr.report_state("working")
 
     from strix.report.state import get_global_report_state
