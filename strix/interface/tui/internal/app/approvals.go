@@ -75,7 +75,7 @@ func (m Model) approvalView() string {
 		lines = append(lines[:3], "[summary truncated]")
 	}
 	body := truncate(ansi.Strip(a.AgentName), width-4) + "\n" + strings.Join(lines, "\n") + "\n" +
-		fmt.Sprintf("%s · Risk %.0f%% · blocks in %d:%02d", category, a.Risk*100, seconds/60, seconds%60) + "\n" +
+		fmt.Sprintf("%s · blocks in %d:%02d", category, seconds/60, seconds%60) + "\n" +
 		"←/→ choose · enter confirm · esc block"
 	return m.cornerPrompt(render.Bold(amber).Render(title), body, width, "Allow", "Block")
 }

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any, Literal
 
 from pydantic import AliasChoices, Field, field_validator
@@ -146,20 +145,7 @@ class ActionApprovalSettings(BaseSettings):
 
     enabled: bool = Field(default=False, alias="STRIX_ACTION_APPROVALS")
     mode: Literal["auto", "ask"] = Field(default="ask", alias="STRIX_ACTION_APPROVAL_MODE")
-    tools: list[str] = Field(
-        default_factory=lambda: [
-            "exec_command",
-            "write_stdin",
-            "repeat_request",
-            "call_mcp",
-            "apply_patch",
-        ],
-        alias="STRIX_ACTION_APPROVAL_TOOLS",
-    )
     model: str | None = Field(default=None, alias="STRIX_ACTION_APPROVAL_MODEL")
-    threshold: float = Field(
-        default=0.5, ge=0, le=1, allow_inf_nan=False, alias="STRIX_ACTION_APPROVAL_THRESHOLD"
-    )
     timeout_seconds: float = Field(
         default=300, gt=0, allow_inf_nan=False, alias="STRIX_ACTION_APPROVAL_TIMEOUT_SECONDS"
     )
@@ -173,13 +159,6 @@ class ActionApprovalSettings(BaseSettings):
     @classmethod
     def _normalize_case(cls, value: object) -> object:
         return _lowercase(value)
-
-    @field_validator("tools", mode="before")
-    @classmethod
-    def _decode_tools(cls, value: object) -> object:
-        if isinstance(value, str):
-            return json.loads(value)
-        return value
 
 
 class ContextSettings(BaseSettings):

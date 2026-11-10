@@ -35,7 +35,7 @@ def test_approval_projection_is_bounded_sanitized_and_excludes_arguments() -> No
             "agent_name": "agent\x1b[31m",
             "tool": "exec_command",
             "summary": "\x1b[31m" + "x" * 2000,
-            "risk": 0.99,
+            "risky": True,
             "category": "deletes_data",
             "expires_at": "2030-01-01T00:00:00Z",
             "arguments": {"secret": "not for projection"},

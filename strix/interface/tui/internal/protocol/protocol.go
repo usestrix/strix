@@ -59,14 +59,14 @@ type Hello struct {
 }
 
 type Approval struct {
-	ID        string  `json:"approval_id"`
-	AgentID   string  `json:"agent_id"`
-	AgentName string  `json:"agent_name"`
-	Tool      string  `json:"tool"`
-	Summary   string  `json:"summary"`
-	Risk      float64 `json:"risk"`
-	Category  string  `json:"category"`
-	ExpiresAt string  `json:"expires_at"`
+	ID        string `json:"approval_id"`
+	AgentID   string `json:"agent_id"`
+	AgentName string `json:"agent_name"`
+	Tool      string `json:"tool"`
+	Summary   string `json:"summary"`
+	Risky     bool   `json:"risky"`
+	Category  string `json:"category"`
+	ExpiresAt string `json:"expires_at"`
 }
 
 type Snapshot struct {

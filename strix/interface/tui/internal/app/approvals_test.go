@@ -30,7 +30,7 @@ func approvalModel(t *testing.T) Model {
 		ScanState: "running", Targets: []string{"shop.example.com pentest"},
 		PendingApprovals: []protocol.Approval{{
 			ID: "approval-1", AgentID: "validator", AgentName: "SQLi validation agent", Tool: "exec_command",
-			Summary: `psql "$DATABASE_URL" -c 'DROP TABLE users;'`, Risk: 0.99, Category: "deletes_data",
+			Summary: `psql "$DATABASE_URL" -c 'DROP TABLE users;'`, Risky: true, Category: "deletes_data",
 			ExpiresAt: now.Add(252 * time.Second).Format(time.RFC3339),
 		}},
 	}))
@@ -46,7 +46,7 @@ func TestApprovalPromptRenderAndDefaultBlock(t *testing.T) {
 	out := ansi.Strip(m.View())
 	for _, want := range []string{
 		"△ Run this command?", "SQLi validation agent", "DROP TABLE users;", "Deletes data",
-		"Risk 99%", "blocks in 4:12", "Allow", "Block", "1 of 2", "←/→ choose · enter confirm · esc block",
+		"blocks in 4:12", "Allow", "Block", "1 of 2", "←/→ choose · enter confirm · esc block",
 		"waiting for approval",
 	} {
 		if !strings.Contains(out, want) {

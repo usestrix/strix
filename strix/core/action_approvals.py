@@ -6,7 +6,6 @@ import asyncio
 import copy
 import json
 import logging
-import math
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, fields
@@ -29,6 +28,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 ApprovalEventSink = Callable[[dict[str, Any]], None]
+ACTION_APPROVAL_TOOLS = frozenset(
+    {"exec_command", "write_stdin", "repeat_request", "call_mcp", "apply_patch"}
+)
 
 
 CATEGORIES = frozenset(
@@ -48,9 +50,10 @@ LLM_SYSTEM_PROMPT = (
     "disrupts_service: Could degrade or stop a service. "
     "outside_scope: Acts outside the authorized target scope. "
     "safe: None of the listed risks apply. "
-    'Return only strict JSON: {"risk": 0.0, "category": "safe", '
+    'Return only strict JSON: {"risky": false, "category": "safe", '
     '"reason": "One plain sentence."}. '
-    "Risk is a number from 0 to 1. Choose exactly one category listed above. "
+    "Risky must be a boolean: true for a risky action, false for a safe action. "
+    "Choose exactly one category listed above. "
     "Explain the specific action in one plain sentence. No prose outside JSON or code fences."
 )
 
@@ -61,7 +64,7 @@ class LlmJudge:
     def __init__(self, settings: ActionApprovalSettings) -> None:
         self.settings = settings
 
-    async def evaluate(self, state: dict[str, Any]) -> tuple[float, str, str | None]:
+    async def evaluate(self, state: dict[str, Any]) -> tuple[bool, str, str | None]:
         settings = load_settings()
         approval_model = (self.settings.model or "").strip()
         model_name = approval_model or (settings.llm.model or "").strip()
@@ -107,21 +110,16 @@ class LlmJudge:
         if not isinstance(raw_result, dict):
             raise TypeError("Invalid approval JSON object")
         result = cast("dict[str, Any]", raw_result)
-        if set(result) != {"risk", "category", "reason"}:
+        if set(result) != {"risky", "category", "reason"}:
             raise ValueError("Invalid approval JSON object")
-        risk, category, reason = result["risk"], result["category"], result["reason"]
-        if (
-            isinstance(risk, bool)
-            or not isinstance(risk, (int, float))
-            or not math.isfinite(risk)
-            or not 0 <= risk <= 1
-        ):
-            raise ValueError("Invalid unsafe probability")
+        risky, category, reason = result["risky"], result["category"], result["reason"]
+        if not isinstance(risky, bool):
+            raise TypeError("Invalid risky decision")
         if not isinstance(category, str) or category not in CATEGORIES:
             raise ValueError("Invalid risk category")
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError("Invalid approval reason")
-        return float(risk), category, reason.strip()
+        return risky, category, reason.strip()
 
 
 @dataclass
@@ -220,7 +218,7 @@ class ActionApprovalGuard:
 
     async def check(self, ctx: Any, tool_name: str, args: dict[str, Any]) -> str | None:
         """Return None to execute, or a short tool result explaining why not."""
-        if not self.settings.enabled or tool_name not in self.settings.tools:
+        if not self.settings.enabled or tool_name not in ACTION_APPROVAL_TOOLS:
             return None
         context = _context(ctx)
         agent_id = str(context.get("agent_id", ""))
@@ -237,7 +235,7 @@ class ActionApprovalGuard:
         finally:
             self._checks.pop(task, None)
 
-    async def _evaluate(self, state: dict[str, Any]) -> tuple[float, str, str | None]:
+    async def _evaluate(self, state: dict[str, Any]) -> tuple[bool, str, str | None]:
         delay = 1.0
         while True:
             try:
@@ -255,7 +253,7 @@ class ActionApprovalGuard:
         agent_id = str(context.get("agent_id", ""))
         coordinator = context.get("coordinator")
         metadata = getattr(coordinator, "metadata", {}).get(agent_id, {})
-        risk, category, explanation = await self._evaluate(
+        risky, category, explanation = await self._evaluate(
             {
                 "tool": tool,
                 "arguments": args,
@@ -271,7 +269,7 @@ class ActionApprovalGuard:
             "tool": tool,
             "summary": _summary(tool, args),
             "arguments": args,
-            "risk": risk,
+            "risky": risky,
             "category": category,
             "reason": explanation,
             "mode": self.settings.mode,
@@ -280,10 +278,10 @@ class ActionApprovalGuard:
             "decided_by": None,
             "created_at": datetime.now(UTC).isoformat(),
         }
-        if risk < self.settings.threshold:
+        if not risky:
             self._emit(event, "checked")
             return None
-        reason = explanation or f"{category.replace('_', ' ')}, risk {risk:.0%}"
+        reason = explanation or category.replace("_", " ")
         if self.settings.mode == "auto":
             event["approval_id"] = str(uuid.uuid4())
             self._emit(event, "checked", decision="blocked", decided_by="strix")

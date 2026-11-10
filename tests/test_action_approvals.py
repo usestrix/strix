@@ -35,8 +35,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def _verdict(risk: float = 0.99) -> tuple[float, str, str | None]:
-    return risk, "deletes_data" if risk >= 0.5 else "safe", None
+def _verdict(risky: bool = True) -> tuple[bool, str, str | None]:
+    return risky, "deletes_data" if risky else "safe", None
 
 
 def _ctx(guard: ActionApprovalGuard, agent_id: str = "agent") -> ToolContext[Any]:
@@ -92,7 +92,7 @@ def _patch_tool(tmp_path: Path, chat_completions: bool) -> Any:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("chat_completions", [False, True])
-@pytest.mark.parametrize("decision", ["safe", "block", "excluded", "disabled", "approve"])
+@pytest.mark.parametrize("decision", ["safe", "block", "disabled", "approve"])
 @pytest.mark.parametrize("operation_json", [False, True])
 async def test_real_sdk_patch_approval_boundary(
     tmp_path: Path, chat_completions: bool, decision: str, operation_json: bool
@@ -109,11 +109,10 @@ async def test_real_sdk_patch_approval_boundary(
         _settings(
             mode="ask" if decision == "approve" else "auto",
             enabled=decision != "disabled",
-            tools=[] if decision == "excluded" else ["apply_patch"],
         )
     )
     with patch.object(
-        LlmJudge, "evaluate", return_value=_verdict(1 if decision in {"block", "approve"} else 0)
+        LlmJudge, "evaluate", return_value=_verdict(decision in {"block", "approve"})
     ) as judge:
         task = asyncio.create_task(
             tool.on_invoke_tool(
@@ -132,7 +131,7 @@ async def test_real_sdk_patch_approval_boundary(
         else:
             assert "Deleted evidence.txt" in result
             assert not target.exists()
-        if decision in {"excluded", "disabled"}:
+        if decision == "disabled":
             judge.assert_not_awaited()
         else:
             assert judge.call_args.args[0]["arguments"] == {
@@ -148,7 +147,7 @@ async def test_real_sdk_large_patch_reaches_judge_and_execution_unchanged(
     payload = "*** Begin Patch\n*** Add File: large.txt\n+" + "x" * 6000 + "\n*** End Patch"
     tool = _patch_tool(tmp_path, chat_completions)
     guard = ActionApprovalGuard(_settings())
-    with patch.object(LlmJudge, "evaluate", return_value=_verdict(0)) as judge:
+    with patch.object(LlmJudge, "evaluate", return_value=_verdict(risky=False)) as judge:
         result = await tool.on_invoke_tool(
             _ctx(guard), json.dumps({"patch": payload}) if chat_completions else payload
         )
@@ -168,7 +167,7 @@ async def test_real_sdk_patch_invalid_input_never_writes(
 ) -> None:
     tool = _patch_tool(tmp_path, chat_completions)
     guard = ActionApprovalGuard(_settings())
-    with patch.object(LlmJudge, "evaluate", return_value=_verdict(0)):
+    with patch.object(LlmJudge, "evaluate", return_value=_verdict(risky=False)):
         if chat_completions:
             result = await tool.on_invoke_tool(_ctx(guard), json.dumps({"patch": payload}))
             assert "must" in result
@@ -210,19 +209,20 @@ def test_settings_defaults_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = ActionApprovalSettings()
     assert not settings.enabled
     assert settings.mode == "ask"
-    assert settings.tools == [
+    assert {
         "exec_command",
         "write_stdin",
         "repeat_request",
         "call_mcp",
         "apply_patch",
-    ]
+    } == action_approvals.ACTION_APPROVAL_TOOLS
     assert settings.timeout_seconds == 300
     assert settings.on_timeout == "block"
     assert settings.model is None
     assert settings.api_key is None
     assert settings.api_base is None
-    assert settings.threshold == 0.5
+    assert "threshold" not in ActionApprovalSettings.model_fields
+    assert "tools" not in ActionApprovalSettings.model_fields
     assert not Settings().action_approvals.enabled
     monkeypatch.setenv("STRIX_ACTION_APPROVALS", "true")
     monkeypatch.setenv("STRIX_ACTION_APPROVAL_MODE", "AUTO")
@@ -235,8 +235,7 @@ def test_settings_defaults_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert resolved.enabled and resolved.mode == "auto"
     assert resolved.model == "deepseek/deepseek-chat"
     assert resolved.api_base == "https://judge.test/v1"
-    assert resolved.tools == ["exec_command"]
-    assert ActionApprovalSettings.model_validate({"tools": '["call_mcp"]'}).tools == ["call_mcp"]
+    assert "tools" not in resolved.model_dump()
 
 
 def test_removed_judge_setting_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -247,12 +246,25 @@ def test_removed_judge_setting_is_ignored(monkeypatch: pytest.MonkeyPatch) -> No
     assert isinstance(ActionApprovalGuard(settings).judge, LlmJudge)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", sorted(action_approvals.ACTION_APPROVAL_TOOLS))
+async def test_legacy_controls_cannot_disable_checks(
+    monkeypatch: pytest.MonkeyPatch, tool: str
+) -> None:
+    monkeypatch.setenv("STRIX_ACTION_APPROVAL_TOOLS", "not JSON")
+    monkeypatch.setenv("STRIX_ACTION_APPROVAL_THRESHOLD", "not a number")
+    settings = _settings(tools=[], threshold=1)
+    assert "tools" not in settings.model_dump()
+    assert "threshold" not in settings.model_dump()
+    with patch.object(LlmJudge, "evaluate", return_value=_verdict(risky=True)) as judge:
+        guard = ActionApprovalGuard(settings)
+        assert await guard.check(_ctx(guard), tool, {}) is not None
+        judge.assert_awaited_once()
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"threshold": -0.1},
-        {"threshold": 1.1},
-        {"threshold": float("nan")},
         {"timeout_seconds": 0},
         {"mode": "other"},
         {"on_timeout": "other"},
@@ -266,12 +278,12 @@ def test_settings_reject_invalid_values(overrides: dict[str, Any]) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "overrides,tool",
-    [({"enabled": False}, "exec_command"), ({"tools": []}, "exec_command"), ({}, "other_tool")],
+    [({"enabled": False}, "exec_command"), ({}, "other_tool")],
 )
 async def test_disabled_and_unguarded_never_call_judge(
     overrides: dict[str, Any], tool: str
 ) -> None:
-    def evaluate(_state: dict[str, Any]) -> tuple[float, str, str | None]:
+    def evaluate(_state: dict[str, Any]) -> tuple[bool, str, str | None]:
         raise AssertionError("Judge must not be called")
 
     with patch.object(LlmJudge, "evaluate", side_effect=evaluate):
@@ -282,7 +294,7 @@ async def test_disabled_and_unguarded_never_call_judge(
 @pytest.mark.asyncio
 async def test_auto_blocks_have_distinct_approval_ids() -> None:
     events: list[dict[str, Any]] = []
-    with patch.object(LlmJudge, "evaluate", return_value=_verdict(0.99)):
+    with patch.object(LlmJudge, "evaluate", return_value=_verdict(risky=True)):
         guard = ActionApprovalGuard(_settings(), event_sink=events.append)
         for _ in range(2):
             await guard.check(_ctx(guard), "exec_command", {"cmd": "test command"})
@@ -294,14 +306,14 @@ async def test_auto_blocks_have_distinct_approval_ids() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("risk,blocked", [(0.02, False), (0.99, True), (0.5, True)])
-async def test_auto_decision_and_request_payload(risk: float, blocked: bool) -> None:
+@pytest.mark.parametrize("risky,blocked", [(False, False), (True, True)])
+async def test_auto_decision_and_request_payload(risky: bool, blocked: bool) -> None:
     requests = []
     events: list[dict[str, Any]] = []
 
-    def evaluate(state: dict[str, Any]) -> tuple[float, str, str | None]:
+    def evaluate(state: dict[str, Any]) -> tuple[bool, str, str | None]:
         requests.append(state)
-        return _verdict(risk)
+        return _verdict(risky)
 
     with patch.object(LlmJudge, "evaluate", side_effect=evaluate):
         guard = ActionApprovalGuard(_settings(), event_sink=events.append)
@@ -320,7 +332,7 @@ async def test_auto_decision_and_request_payload(risk: float, blocked: bool) -> 
             }
         ]
         assert events[0]["decision"] == ("blocked" if blocked else "allowed")
-        assert events[0]["risk"] == risk
+        assert events[0]["risky"] == risky
         assert events[0]["reason"] is None
         assert events[0]["summary"] == "test command"
         assert events[0]["agent_name"] == "Validation agent"
@@ -377,14 +389,14 @@ async def test_judge_failure_retries_then_succeeds(
 ) -> None:
     calls = 0
 
-    def evaluate(_state: dict[str, Any]) -> tuple[float, str, str | None]:
+    def evaluate(_state: dict[str, Any]) -> tuple[bool, str, str | None]:
         nonlocal calls
         calls += 1
         if calls == 1:
             if malformed:
                 raise ValueError("Invalid approval judge response")
             raise RuntimeError("Model unavailable")
-        return _verdict(0.02)
+        return _verdict(risky=False)
 
     with patch.object(LlmJudge, "evaluate", side_effect=evaluate):
         guard = ActionApprovalGuard(_settings())
@@ -397,10 +409,10 @@ async def test_judge_failure_retries_then_succeeds(
 async def test_concurrent_agents_have_independent_judge_calls_and_approvals() -> None:
     calls = []
 
-    async def evaluate(state: dict[str, Any]) -> tuple[float, str, str | None]:
+    async def evaluate(state: dict[str, Any]) -> tuple[bool, str, str | None]:
         cmd = state["arguments"].get("cmd")
         calls.append(cmd)
-        return _verdict(0.02 if cmd == "safe" else 0.99)
+        return _verdict(cmd != "safe")
 
     with patch.object(LlmJudge, "evaluate", side_effect=evaluate):
         guard = ActionApprovalGuard(_settings(mode="ask"))
@@ -439,7 +451,7 @@ async def test_coordinator_stop_blocks_pending(stop_scan: bool) -> None:
 async def test_retry_is_cancellable_on_stop() -> None:
     called = asyncio.Event()
 
-    def evaluate(_state: dict[str, Any]) -> tuple[float, str, str | None]:
+    def evaluate(_state: dict[str, Any]) -> tuple[bool, str, str | None]:
         called.set()
         raise RuntimeError("Model unavailable")
 
@@ -506,7 +518,7 @@ async def test_dispatch_guard_runs_before_connections_or_locks(
 ) -> None:
     requests = []
 
-    def evaluate(state: dict[str, Any]) -> tuple[float, str, str | None]:
+    def evaluate(state: dict[str, Any]) -> tuple[bool, str, str | None]:
         requests.append(state)
         return _verdict()
 
@@ -558,7 +570,7 @@ async def test_replay_judges_effective_delete_without_header_values(
     requests: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
 
-    def evaluate(state: dict[str, Any]) -> tuple[float, str, str | None]:
+    def evaluate(state: dict[str, Any]) -> tuple[bool, str, str | None]:
         assert not proxy_tools._CAIDO_CALL_LOCK.locked()
         requests.append(state)
         return _verdict()
@@ -639,7 +651,7 @@ async def test_replay_approval_releases_lock_and_excludes_wait_from_timeout(
 async def test_replay_preparation_failure_does_not_judge_or_send(
     monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
-    def evaluate(_state: dict[str, Any]) -> tuple[float, str, str | None]:
+    def evaluate(_state: dict[str, Any]) -> tuple[bool, str, str | None]:
         raise AssertionError("Judge must not run without a prepared request")
 
     with patch.object(LlmJudge, "evaluate", side_effect=evaluate):
@@ -718,8 +730,8 @@ async def test_real_sdk_shell_tools_keep_execution_timeouts_after_approval(
     tool.timeout_seconds = 0.01
     wrapped = wrap(tool)
     assert wrapped.timeout_seconds is None
-    risk = 0.0 if decision == "safe" else 1.0
-    with patch.object(LlmJudge, "evaluate", return_value=_verdict(risk)):
+    risky = decision != "safe"
+    with patch.object(LlmJudge, "evaluate", return_value=_verdict(risky)):
         guard = ActionApprovalGuard(_settings(mode="ask" if decision == "approve" else "auto"))
         task = asyncio.create_task(
             invoke_function_tool(function_tool=wrapped, context=_ctx(guard), arguments=arguments)
@@ -746,7 +758,7 @@ async def test_runner_attaches_scan_override_and_sink_then_closes_guard(
 ) -> None:
     _patch_engine_scaffold(monkeypatch, tmp_path, {})
     coordinator = AgentCoordinator()
-    override = _settings(enabled=enabled, tools=[])
+    override = _settings(enabled=enabled)
     events: list[dict[str, Any]] = []
     sink = events.append
     await runner.run_strix_scan(
@@ -839,15 +851,15 @@ def _fake_llm(monkeypatch: pytest.MonkeyPatch, *outputs: str) -> tuple[Mock, Asy
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("approval_model", [None, "", "  "])
-@pytest.mark.parametrize("mode,risk", [("auto", 0.0), ("auto", 0.99), ("ask", 0.99)])
+@pytest.mark.parametrize("mode,risky", [("auto", False), ("auto", True), ("ask", True)])
 async def test_llm_judge_and_reason_events(
-    monkeypatch: pytest.MonkeyPatch, mode: str, risk: float, approval_model: str | None
+    monkeypatch: pytest.MonkeyPatch, mode: str, risky: bool, approval_model: str | None
 ) -> None:
     reason = "This deletes the users table in the target database."
     provider, model = _fake_llm(
         monkeypatch,
         json.dumps(
-            {"risk": risk, "category": "deletes_data" if risk else "safe", "reason": reason}
+            {"risky": risky, "category": "deletes_data" if risky else "safe", "reason": reason}
         ),
     )
     events: list[dict[str, Any]] = []
@@ -860,7 +872,7 @@ async def test_llm_judge_and_reason_events(
         assert pending[0]["reason"] == reason
         assert guard.resolve(pending[0]["approval_id"], approved=False)
     result = await task
-    if risk:
+    if risky:
         assert result is not None and reason in result
     else:
         assert result is None
@@ -882,7 +894,7 @@ async def test_llm_dedicated_provider_configuration(
     monkeypatch: pytest.MonkeyPatch, model_name: str
 ) -> None:
     provider, model = _fake_llm(
-        monkeypatch, '{"risk":0,"category":"safe","reason":"This only reads public data."}'
+        monkeypatch, '{"risky":false,"category":"safe","reason":"This only reads public data."}'
     )
     judge = LlmJudge(
         _settings(model=model_name, api_key="judge-key", api_base="https://judge.test/v1")
@@ -899,7 +911,7 @@ async def test_llm_dedicated_provider_configuration(
 @pytest.mark.asyncio
 async def test_llm_optional_provider_override(monkeypatch: pytest.MonkeyPatch) -> None:
     provider, _ = _fake_llm(
-        monkeypatch, '{"risk":0,"category":"safe","reason":"This only reads public data."}'
+        monkeypatch, '{"risky":false,"category":"safe","reason":"This only reads public data."}'
     )
     await LlmJudge(_settings(model="deepseek/deepseek-chat", api_key="test-key")).evaluate({})
     provider.assert_called_once_with(api_key="test-key", base_url=None)
@@ -920,7 +932,7 @@ async def test_llm_provider_override_with_scan_model(
     monkeypatch: pytest.MonkeyPatch, overrides: dict[str, str], expected: dict[str, str | None]
 ) -> None:
     provider, model = _fake_llm(
-        monkeypatch, '{"risk":0,"category":"safe","reason":"This only reads public data."}'
+        monkeypatch, '{"risky":false,"category":"safe","reason":"This only reads public data."}'
     )
     await LlmJudge(_settings(**overrides)).evaluate({})
     provider.assert_called_once_with(**expected)
@@ -936,19 +948,22 @@ async def test_llm_provider_override_with_scan_model(
         "not JSON",
         "[]",
         "{}",
-        '{"risk":true,"category":"safe","reason":"Read only."}',
-        '{"risk":2,"category":"safe","reason":"Read only."}',
-        '{"risk":NaN,"category":"safe","reason":"Read only."}',
-        '{"risk":0,"category":"unknown","reason":"Read only."}',
-        '{"risk":0,"category":"safe","reason":""}',
-        '{"risk":0,"category":"safe","reason":null}',
+        '{"risky":0,"category":"safe","reason":"Read only."}',
+        '{"risky":2,"category":"safe","reason":"Read only."}',
+        '{"risky":NaN,"category":"safe","reason":"Read only."}',
+        '{"risky":"false","category":"safe","reason":"Read only."}',
+        '{"risky":null,"category":"safe","reason":"Read only."}',
+        '{"risk":0,"category":"safe","reason":"Read only."}',
+        '{"risky":false,"category":"unknown","reason":"Read only."}',
+        '{"risky":false,"category":"safe","reason":""}',
+        '{"risky":false,"category":"safe","reason":null}',
     ],
 )
 async def test_llm_invalid_output_retried(monkeypatch: pytest.MonkeyPatch, output: str) -> None:
     _, model = _fake_llm(
         monkeypatch,
         output,
-        '{"risk":0,"category":"safe","reason":"This only reads public data."}',
+        '{"risky":false,"category":"safe","reason":"This only reads public data."}',
     )
     sleep = AsyncMock()
     monkeypatch.setattr(asyncio, "sleep", sleep)
@@ -976,7 +991,7 @@ async def test_llm_low_reasoning_only_when_supported(
     monkeypatch: pytest.MonkeyPatch, supports_reasoning: bool
 ) -> None:
     _, model = _fake_llm(
-        monkeypatch, '{"risk":0,"category":"safe","reason":"This only reads public data."}'
+        monkeypatch, '{"risky":false,"category":"safe","reason":"This only reads public data."}'
     )
 
     def supports_model_reasoning(_model_name: str) -> bool:
