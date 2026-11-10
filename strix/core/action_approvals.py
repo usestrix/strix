@@ -136,6 +136,9 @@ def _context(ctx: Any) -> dict[str, Any]:
 
 
 def _summary(tool: str, args: dict[str, Any]) -> str:
+    if tool == "apply_patch":
+        preview = str(args.get("input", ""))
+        return preview + ("\n[Patch preview truncated]" if args.get("input_truncated") else "")
     if tool == "exec_command":
         return str(args.get("cmd", ""))
     if tool == "write_stdin":

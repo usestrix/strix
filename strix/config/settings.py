@@ -147,7 +147,13 @@ class ActionApprovalSettings(BaseSettings):
     enabled: bool = Field(default=False, alias="STRIX_ACTION_APPROVALS")
     mode: Literal["auto", "ask"] = Field(default="ask", alias="STRIX_ACTION_APPROVAL_MODE")
     tools: list[str] = Field(
-        default_factory=lambda: ["exec_command", "write_stdin", "repeat_request", "call_mcp"],
+        default_factory=lambda: [
+            "exec_command",
+            "write_stdin",
+            "repeat_request",
+            "call_mcp",
+            "apply_patch",
+        ],
         alias="STRIX_ACTION_APPROVAL_TOOLS",
     )
     model: str | None = Field(default=None, alias="STRIX_ACTION_APPROVAL_MODEL")
