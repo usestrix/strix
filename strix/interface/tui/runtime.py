@@ -271,12 +271,11 @@ class GoTuiRuntime:
 
     def capture_approval(self, event: dict[str, Any]) -> None:
         category = str(event.get("category", "")).replace("_", " ")
-        risk = float(event.get("risk") or 0)
         content = ""
         if event["type"] == "requested":
-            content = f"Waiting for approval: {event['summary']} ({category}, risk {risk:.0%})"
+            content = f"Waiting for approval: {event['summary']} ({category})"
         elif event["type"] == "blocked":
-            content = f"Blocked automatically ({category}, risk {risk:.0%})"
+            content = f"Blocked automatically ({category})"
         elif event["type"] == "resolved":
             decision = event.get("decision")
             if decision in ("approved", "denied"):

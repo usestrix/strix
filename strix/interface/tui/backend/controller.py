@@ -240,7 +240,7 @@ class TuiController:
             "agent_name",
             "tool",
             "summary",
-            "risk",
+            "risky",
             "category",
             "reason",
             "expires_at",

@@ -43,11 +43,11 @@ def args() -> argparse.Namespace:
 @pytest.mark.parametrize(
     "event_type,decision,expected",
     [
-        ("requested", "pending", "Waiting for approval: test (deletes data, risk 99%)"),
+        ("requested", "pending", "Waiting for approval: test (deletes data)"),
         ("resolved", "approved", "Approved by you"),
         ("resolved", "denied", "Denied by you"),
         ("resolved", "timed_out", "Blocked: no answer within 5 minutes"),
-        ("blocked", "blocked", "Blocked automatically (deletes data, risk 99%)"),
+        ("blocked", "blocked", "Blocked automatically (deletes data)"),
         ("checked", "allowed", None),
     ],
 )
@@ -64,7 +64,7 @@ def test_approval_events_record_transcript_and_notify(
             "decision": decision,
             "agent_id": "acting",
             "summary": "test",
-            "risk": 0.99,
+            "risky": True,
             "category": "deletes_data",
             "decided_by": "terminal",
         }
