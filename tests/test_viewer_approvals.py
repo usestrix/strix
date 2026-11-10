@@ -19,7 +19,7 @@ from strix.interface.tui.runtime import GoTuiRuntime
 from strix.interface.viewer.server import serve
 from strix.interface.viewer.transcript import build_run_state
 from tests.test_tui_backend_controller import args
-from tests.test_viewer import _bundle, _get_status, _make_run, _post, _session_cookie
+from tests.test_viewer import _bundle, _get, _get_status, _make_run, _post, _session_cookie
 
 
 if TYPE_CHECKING:
@@ -114,8 +114,17 @@ def test_standalone_and_finished_approvals_are_read_only(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("approved", [True, False])
+@pytest.mark.parametrize(
+    "tool,summary",
+    [
+        ("exec_command", "echo " + "x" * 6000 + "; echo tail"),
+        ("apply_patch", "*** Begin Patch\n*** Add File: a.txt\n+" + "x" * 6000 + "\n*** End Patch"),
+        ("exec_command", ""),
+    ],
+    ids=["long-command", "long-patch", "empty"],
+)
 async def test_viewer_uses_terminal_controller_decision_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, approved: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, approved: bool, tool: str, summary: str
 ) -> None:
     run_dir = _make_run(tmp_path, "live", status="running", end_time=None)
     _bundle(tmp_path, monkeypatch)
@@ -133,23 +142,38 @@ async def test_viewer_uses_terminal_controller_decision_path(
         if event["type"] == "requested":
             requested.set()
 
-    async def evaluate(_state: dict[str, Any]) -> tuple[float, str, str]:
-        return 0.99, "deletes_data", "Deletes target data."
+    async def evaluate(_state: dict[str, Any]) -> tuple[bool, str, str]:
+        return True, "deletes_data", "Deletes target data."
 
     guard.event_sink = capture
     monkeypatch.setattr(guard.judge, "evaluate", evaluate)
     controller = TuiController(args(), coordinator=coordinator)
-    controller.report_state = Mock(get_run_dir=lambda: run_dir, run_record={"status": "running"})
+    controller.report_state = Mock(
+        get_run_dir=lambda: run_dir,
+        get_total_llm_usage=dict,
+        run_record={"status": "running"},
+    )
     controller.scan_loop = asyncio.get_running_loop()
     context = RunContextWrapper(context={"agent_id": "root", "coordinator": coordinator})
-    check = asyncio.create_task(guard.check(context, "exec_command", {"cmd": "test"}))
+    check = asyncio.create_task(
+        guard.check(context, tool, {"input" if tool == "apply_patch" else "cmd": summary})
+    )
     try:
         await asyncio.wait_for(requested.wait(), 1)
+        terminal_summary = controller.snapshot()["pending_approvals"][0]["summary"]
+        if len(summary) > 512:
+            assert terminal_summary != summary
+            assert len(terminal_summary) < 650
         result = await controller.handle("viewer.open", {})
         assert result["status"] == "running"
         parts = urlsplit(result["url"])
         url = f"{parts.scheme}://{parts.netloc}"
         cookie = await asyncio.to_thread(_session_cookie, url, parse_qs(parts.query)["token"][0])
+        status, _, raw = await asyncio.to_thread(_get, url + "/api/approvals", cookie=cookie)
+        assert status == 200
+        pending = json.loads(raw)["pending"]
+        assert pending[0]["summary"] == summary
+        assert "arguments" not in pending[0]
         approval_id = guard.pending()[0]["approval_id"]
         body = {"approval_id": approval_id, "approved": approved}
         status, _ = await asyncio.to_thread(

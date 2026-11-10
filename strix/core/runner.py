@@ -332,6 +332,7 @@ async def run_strix_scan(
     coordinator.action_approvals = ActionApprovalGuard(
         action_approvals if action_approvals is not None else settings.action_approvals,
         event_sink=approval_event_sink,
+        default_model=resolved_model,
     )
     approval_settings = coordinator.action_approvals.settings
     if approval_settings.enabled and approval_settings.mode == "ask" and not interactive:

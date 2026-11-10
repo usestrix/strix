@@ -27,7 +27,10 @@ class _SendingCoordinator:
         return self.delivered
 
 
-def test_approval_projection_is_bounded_sanitized_and_excludes_arguments() -> None:
+@pytest.mark.parametrize("on_timeout", ["block", "allow"])
+def test_approval_projection_is_bounded_sanitized_and_excludes_arguments(
+    on_timeout: str,
+) -> None:
     pending = [
         {
             "approval_id": str(index),
@@ -45,17 +48,21 @@ def test_approval_projection_is_bounded_sanitized_and_excludes_arguments() -> No
     controller = TuiController(
         args(),
         coordinator=SimpleNamespace(
-            action_approvals=SimpleNamespace(pending=lambda: pending),
+            action_approvals=SimpleNamespace(
+                pending=lambda: pending, settings=SimpleNamespace(on_timeout=on_timeout)
+            ),
         ),
     )
     projected = controller.snapshot()["pending_approvals"]
     assert len(projected) == 8
     assert controller.snapshot()["pending_approval_count"] == 20
+    assert controller.snapshot()["approval_on_timeout"] == on_timeout
     assert projected[0]["approval_id"] == "0"
     assert "arguments" not in projected[0]
     assert "\x1b" not in projected[0]["summary"]
     assert len(projected[0]["summary"]) < 650
     assert TuiController(args()).snapshot()["pending_approvals"] == []
+    assert TuiController(args()).snapshot()["approval_on_timeout"] == "block"
     controller.live_view.upsert_agent("agent", name="agent")
     assert controller.collection("agents")[0]["approval_pending"] is True
 
@@ -79,8 +86,8 @@ async def test_approval_decision_resolves_on_scan_loop(
         if event["type"] == "requested":
             requested.set()
 
-    async def evaluate(_state: dict[str, Any]) -> tuple[float, str, str]:
-        return 0.99, "deletes_data", "Deletes target data."
+    async def evaluate(_state: dict[str, Any]) -> tuple[bool, str, str]:
+        return True, "deletes_data", "Deletes target data."
 
     guard.event_sink = capture
     monkeypatch.setattr(guard.judge, "evaluate", evaluate)

@@ -70,6 +70,7 @@ type Approval struct {
 }
 
 type Snapshot struct {
+	ApprovalOnTimeout    string           `json:"approval_on_timeout"`
 	PendingApprovalCount int              `json:"pending_approval_count"`
 	PendingApprovals     []Approval       `json:"pending_approvals"`
 	SetupMode            bool             `json:"setup_mode"`

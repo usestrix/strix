@@ -40,6 +40,23 @@ func approvalModel(t *testing.T) Model {
 	return m
 }
 
+func TestApprovalPromptTimeoutPolicy(t *testing.T) {
+	for _, policy := range []string{"", "block", "allow"} {
+		t.Run(policy, func(t *testing.T) {
+			m := approvalModel(t)
+			m.snapshot.ApprovalOnTimeout = policy
+			out := ansi.Strip(m.View())
+			want, unwanted := "blocks in 4:12", "runs in 4:12"
+			if policy == "allow" {
+				want, unwanted = unwanted, want
+			}
+			if !strings.Contains(out, want) || strings.Contains(out, unwanted) {
+				t.Fatalf("wrong timeout policy %q:\n%s", policy, out)
+			}
+		})
+	}
+}
+
 func TestApprovalPromptRenderAndDefaultBlock(t *testing.T) {
 	m := approvalModel(t)
 	m.snapshot.PendingApprovals = append(m.snapshot.PendingApprovals, protocol.Approval{ID: "second"})
