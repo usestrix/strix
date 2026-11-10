@@ -477,7 +477,10 @@ class AgentCoordinator:
             stream = runtime.stream
             interrupt_on_message = runtime.interrupt_on_message
         if stream is not None and interrupt and interrupt_on_message:
-            stream.cancel(mode="immediate")
+            pending_approval = self.action_approvals is not None and any(
+                item["agent_id"] == target_agent_id for item in self.action_approvals.pending()
+            )
+            stream.cancel(mode="after_turn" if pending_approval else "immediate")
         await self._maybe_snapshot()
         return True
 
