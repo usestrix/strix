@@ -153,7 +153,7 @@ export function AgentDetailModal({
           {contentReady && approvalHistory.some(entry => entry.agent_id === shownAgent.id) && (
             <section aria-label="Action approval history" className="mt-4 space-y-2 border-t border-white/10 pt-4 text-sm">
               <h3 className="font-semibold">Action approvals</h3>
-              <ol className="space-y-2">{approvalHistory.filter(entry => entry.agent_id === shownAgent.id).map((entry, index) => <li key={`${entry.timestamp}-${index}`} className="text-white/70">{entry.content}</li>)}</ol>
+              <ol className="space-y-3">{approvalHistory.filter(entry => entry.agent_id === shownAgent.id).map((entry, index) => <li key={`${entry.timestamp}-${index}`} className="space-y-1 text-white/70"><p>{entry.content}</p>{entry.summary && <pre className="whitespace-pre-wrap break-words font-mono text-xs [overflow-wrap:anywhere]"><code translate="no">{entry.summary}</code></pre>}</li>)}</ol>
             </section>
           )}
         </div>

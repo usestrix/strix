@@ -13,10 +13,14 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def record_approval_history(run_dir: Path, agent_id: str, content: str) -> None:
+def record_approval_history(
+    run_dir: Path, agent_id: str, content: str, summary: str | None = None
+) -> None:
     path = runtime_state_dir(run_dir) / "action_approvals.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     record = {"agent_id": agent_id, "content": content, "timestamp": datetime.now(UTC).isoformat()}
+    if summary is not None:
+        record["summary"] = summary
     with path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(record) + "\n")
 
@@ -40,5 +44,8 @@ def read_approval_history(run_dir: Path) -> list[dict[str, str]]:
             record.get(key) for key in ("agent_id", "content", "timestamp")
         )
         if isinstance(agent_id, str) and isinstance(content, str) and isinstance(timestamp, str):
-            records.append({"agent_id": agent_id, "content": content, "timestamp": timestamp})
+            entry = {"agent_id": agent_id, "content": content, "timestamp": timestamp}
+            if isinstance(record.get("summary"), str):
+                entry["summary"] = str(record["summary"])
+            records.append(entry)
     return records

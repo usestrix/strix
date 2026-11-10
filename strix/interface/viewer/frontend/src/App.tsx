@@ -20,7 +20,7 @@ import { IssueSeveritySummary } from "@/components/IssueSeveritySummary";
 import AgentGraph from "@/components/live/AgentGraph";
 import { buildGraphAgents } from "@/components/live/AgentTranscript";
 import AgentDetailModal from "@/components/live/AgentDetailModal";
-import { ActionApprovals } from "@/components/live/ActionApprovals";
+import { ActionApprovalsProvider, ActionApprovalBanner } from "@/components/live/ActionApprovals";
 import { ScanPromptComposer } from "@/components/live/ScanPromptComposer";
 import { severityCounts, type ParsedRunSummary } from "@/lib/local-run-parser";
 import {
@@ -262,6 +262,7 @@ export default function App() {
   }, [refreshAuth, refreshRuns]);
 
   return (
+    <ActionApprovalsProvider key={activeRun ?? "current"} runName={activeRun} enabled={!!run && !run.finished} transcript={run?.transcript}>
     <div className="min-h-screen bg-black text-white flex">
       <Sidebar
         view={view}
@@ -377,7 +378,7 @@ export default function App() {
           ) : run && counts ? (
             <>
               <SummaryHeader summary={run.summary} />
-              <ActionApprovals key={activeRun ?? "current"} runName={activeRun} enabled={!run.finished} />
+              <ActionApprovalBanner />
 
               {/* Tab strip: shown on small screens where the sidebar is hidden. */}
               <div className="flex gap-5 border-b border-[#2a2a2a] lg:hidden">
@@ -430,6 +431,7 @@ export default function App() {
       </div>
       <TrustToast message={TRUST_BANNER} />
     </div>
+    </ActionApprovalsProvider>
   );
 }
 
