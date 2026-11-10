@@ -79,8 +79,8 @@ async def test_approval_decision_resolves_on_scan_loop(
         if event["type"] == "requested":
             requested.set()
 
-    async def evaluate(_state: dict[str, Any]) -> tuple[float, str]:
-        return 0.99, "deletes_data"
+    async def evaluate(_state: dict[str, Any]) -> tuple[float, str, str]:
+        return 0.99, "deletes_data", "Deletes target data."
 
     guard.event_sink = capture
     monkeypatch.setattr(guard.judge, "evaluate", evaluate)
