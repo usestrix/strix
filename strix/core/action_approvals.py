@@ -365,6 +365,7 @@ class ActionApprovalGuard:
             return None
         reason = explanation or f"{category.replace('_', ' ')}, risk {risk:.0%}"
         if self.settings.mode == "auto":
+            event["approval_id"] = str(uuid.uuid4())
             self._emit(event, "checked", decision="blocked", decided_by="strix")
             self._emit(event, "blocked", decision="blocked", decided_by="strix")
             return self._blocked(reason)
