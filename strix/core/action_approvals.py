@@ -13,7 +13,6 @@ from dataclasses import dataclass, fields
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
-import httpx
 from agents.models.interface import ModelTracing
 from agents.tool import FunctionTool, invoke_function_tool
 from openai.types.responses import ResponseOutputMessage
@@ -85,45 +84,6 @@ LLM_SYSTEM_PROMPT = (
 )
 
 
-class DecisionsJudge:
-    """Small adapter for the alpha Decisions endpoint; the guard owns retries."""
-
-    def __init__(
-        self, settings: ActionApprovalSettings, *, client: httpx.AsyncClient | None = None
-    ) -> None:
-        self.settings = settings
-        self.client = client
-
-    async def evaluate(self, state: dict[str, Any]) -> tuple[float, str, str | None]:
-        if not self.settings.api_key:
-            raise ValueError("Action approvals require an API key")
-        if self.client is not None:
-            return await self._request(self.client, state)
-        async with httpx.AsyncClient(timeout=30) as client:
-            return await self._request(client, state)
-
-    async def _request(
-        self, client: httpx.AsyncClient, state: dict[str, Any]
-    ) -> tuple[float, str, str | None]:
-        response = await client.post(
-            f"{self.settings.api_base.rstrip('/')}/alpha/decisions",
-            headers={"Authorization": f"Bearer {self.settings.api_key}"},
-            json={"model": self.settings.model, "state": state, "questions": QUESTIONS},
-        )
-        response.raise_for_status()
-        answers = response.json()["answers"]
-        raw_risk = answers["unsafe"]["noul"]
-        if isinstance(raw_risk, bool) or not isinstance(raw_risk, (int, float)):
-            raise TypeError("Invalid unsafe probability")
-        risk = float(raw_risk)
-        category = answers["category"]["choice"]
-        if not math.isfinite(risk) or not 0 <= risk <= 1:
-            raise ValueError("Invalid unsafe probability")
-        if not isinstance(category, str) or category not in QUESTIONS["category"]["criteria"]:
-            raise ValueError("Invalid risk category")
-        return risk, category, None
-
-
 class LlmJudge:
     """SDK-native approval judge using the same provider routing as deduplication."""
 
@@ -132,19 +92,14 @@ class LlmJudge:
 
     async def evaluate(self, state: dict[str, Any]) -> tuple[float, str, str | None]:
         settings = load_settings()
-        dedicated = "model" in self.settings.model_fields_set and bool(self.settings.model.strip())
-        model_name = (
-            self.settings.model.strip() if dedicated else (settings.llm.model or "").strip()
-        )
+        approval_model = (self.settings.model or "").strip()
+        model_name = approval_model or (settings.llm.model or "").strip()
         if not model_name:
             raise ValueError("Action approvals require an LLM model")
         configure_sdk_model_defaults(settings)
-        api_key = (self.settings.api_key or "").strip() if dedicated else ""
-        api_base = (
-            self.settings.api_base.strip()
-            if dedicated and "api_base" in self.settings.model_fields_set
-            else ""
-        )
+        api_key = (self.settings.api_key or "").strip()
+        api_base = (self.settings.api_base or "").strip()
+        dedicated = bool(approval_model or api_key or api_base)
         provider = (
             StrixProvider(api_key=api_key or None, base_url=api_base or None)
             if api_key or api_base
@@ -227,14 +182,9 @@ class ActionApprovalGuard:
         settings: ActionApprovalSettings,
         *,
         event_sink: ApprovalEventSink | None = None,
-        client: httpx.AsyncClient | None = None,
     ) -> None:
         self.settings = settings
-        self.judge = (
-            LlmJudge(settings)
-            if settings.judge == "llm"
-            else DecisionsJudge(settings, client=client)
-        )
+        self.judge = LlmJudge(settings)
         self.event_sink = event_sink
         self._pending: dict[str, _Approval] = {}
         self._checks: dict[asyncio.Task[str | None], str] = {}

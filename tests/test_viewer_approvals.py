@@ -32,14 +32,14 @@ def test_approval_endpoint_authorization_and_exact_once(
 ) -> None:
     run_dir = _make_run(tmp_path, "approval", status="running", end_time=None)
     _bundle(tmp_path, monkeypatch)
-    decisions: list[tuple[str, bool]] = []
+    choices: list[tuple[str, bool]] = []
     pending = {"request"}
 
     def decide(approval_id: str, decision: bool) -> bool:
         if approval_id not in pending:
             return False
         pending.remove(approval_id)
-        decisions.append((approval_id, decision))
+        choices.append((approval_id, decision))
         return True
 
     httpd, url, token = serve(
@@ -52,7 +52,7 @@ def test_approval_endpoint_authorization_and_exact_once(
         body = {"approval_id": "request", "approved": approved}
         assert _post(url, "/api/approvals/decide", body)[0] == 403
         assert _get_status(url + "/api/approvals") == 403
-        assert not decisions
+        assert not choices
         cookie = _session_cookie(url, token)
         assert _get_status(url + "/api/approvals", cookie=cookie) == 200
         assert (
@@ -62,9 +62,9 @@ def test_approval_endpoint_authorization_and_exact_once(
             _post(url, "/api/approvals/decide", {**body, "approved": "true"}, cookie=cookie)[0]
             == 400
         )
-        assert not decisions
+        assert not choices
         assert _post(url, "/api/approvals/decide", body, cookie=cookie)[0] == 200
-        assert decisions == [("request", approved)]
+        assert choices == [("request", approved)]
         assert _post(url, "/api/approvals/decide", body, cookie=cookie)[0] == 409
         assert (
             _post(url, "/api/approvals/decide", {**body, "approval_id": "unknown"}, cookie=cookie)[
@@ -72,7 +72,7 @@ def test_approval_endpoint_authorization_and_exact_once(
             ]
             == 409
         )
-        assert decisions == [("request", approved)]
+        assert choices == [("request", approved)]
     finally:
         httpd.shutdown()
         httpd.server_close()
