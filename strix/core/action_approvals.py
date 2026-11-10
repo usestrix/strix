@@ -61,13 +61,16 @@ LLM_SYSTEM_PROMPT = (
 class LlmJudge:
     """SDK-native approval judge using the same provider routing as deduplication."""
 
-    def __init__(self, settings: ActionApprovalSettings) -> None:
+    def __init__(
+        self, settings: ActionApprovalSettings, *, default_model: str | None = None
+    ) -> None:
         self.settings = settings
+        self.default_model = default_model
 
     async def evaluate(self, state: dict[str, Any]) -> tuple[bool, str, str | None]:
         settings = load_settings()
         approval_model = (self.settings.model or "").strip()
-        model_name = approval_model or (settings.llm.model or "").strip()
+        model_name = approval_model or (self.default_model or settings.llm.model or "").strip()
         if not model_name:
             raise ValueError("Action approvals require an LLM model")
         configure_sdk_model_defaults(settings)
@@ -153,9 +156,10 @@ class ActionApprovalGuard:
         settings: ActionApprovalSettings,
         *,
         event_sink: ApprovalEventSink | None = None,
+        default_model: str | None = None,
     ) -> None:
         self.settings = settings
-        self.judge = LlmJudge(settings)
+        self.judge = LlmJudge(settings, default_model=default_model)
         self.event_sink = event_sink
         self._pending: dict[str, _Approval] = {}
         self._checks: dict[asyncio.Task[str | None], str] = {}

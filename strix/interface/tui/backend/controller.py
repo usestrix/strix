@@ -184,6 +184,7 @@ class TuiController:
         with contextlib.suppress(Exception):
             subscription = is_subscription_run(self.report_state)
         approvals = self._pending_approvals()
+        guard = getattr(self.coordinator, "action_approvals", None)
         state = {
             "setup_mode": self.setup_mode,
             "scan_started": self.scan_started,
@@ -196,6 +197,7 @@ class TuiController:
             "pending_mount": self.pending_workspace_mount or "",
             "pending_approvals": approvals[:8],
             "pending_approval_count": len(approvals),
+            "approval_on_timeout": guard.settings.on_timeout if guard else "block",
             "instruction": terminal_projection(self.instruction, max_string=2 * 1024),
             "scan_mode": self.scan_mode,
             "max_budget_usd": self.max_budget_usd,
@@ -230,7 +232,7 @@ class TuiController:
         }
         return bounded_state_projection(state)
 
-    def _pending_approvals(self) -> list[dict[str, Any]]:
+    def _pending_approvals(self, *, full_summary: bool = False) -> list[dict[str, Any]]:
         guard = getattr(self.coordinator, "action_approvals", None)
         if guard is None:
             return []
@@ -246,7 +248,12 @@ class TuiController:
             "expires_at",
         )
         return [
-            {key: terminal_projection(item.get(key), max_string=512) for key in fields}
+            {
+                key: item.get(key)
+                if full_summary and key == "summary"
+                else terminal_projection(item.get(key), max_string=512)
+                for key in fields
+            }
             for item in guard.pending()
         ]
 
@@ -522,7 +529,7 @@ class TuiController:
                 async def snapshot() -> dict[str, Any]:
                     guard = getattr(self.coordinator, "action_approvals", None)
                     return {
-                        "pending": self._pending_approvals(),
+                        "pending": self._pending_approvals(full_summary=True),
                         "can_decide": guard is not None,
                         "on_timeout": guard.settings.on_timeout if guard else "block",
                     }

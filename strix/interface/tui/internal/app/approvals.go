@@ -66,6 +66,10 @@ func (m Model) approvalView() string {
 		seconds = max(0, int(math.Ceil(expires.Sub(m.approvalNow).Seconds())))
 	}
 	category := strings.ReplaceAll(a.Category, "_", " ")
+	timeoutAction := "blocks"
+	if m.snapshot.ApprovalOnTimeout == "allow" {
+		timeoutAction = "runs"
+	}
 	if len(category) > 0 {
 		category = strings.ToUpper(category[:1]) + category[1:]
 	}
@@ -75,7 +79,7 @@ func (m Model) approvalView() string {
 		lines = append(lines[:3], "[summary truncated]")
 	}
 	body := truncate(ansi.Strip(a.AgentName), width-4) + "\n" + strings.Join(lines, "\n") + "\n" +
-		fmt.Sprintf("%s · blocks in %d:%02d", category, seconds/60, seconds%60) + "\n" +
+		fmt.Sprintf("%s · %s in %d:%02d", category, timeoutAction, seconds/60, seconds%60) + "\n" +
 		"←/→ choose · enter confirm · esc block"
 	return m.cornerPrompt(render.Bold(amber).Render(title), body, width, "Allow", "Block")
 }

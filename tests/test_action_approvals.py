@@ -778,6 +778,34 @@ async def test_runner_attaches_scan_override_and_sink_then_closes_guard(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("approval_model", [None, "openai/approval-model"])
+async def test_runner_model_override_is_checker_default_without_environment_model(
+    approval_model: str | None, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    _patch_engine_scaffold(monkeypatch, tmp_path, {})
+    settings = Settings(llm=LlmSettings.model_validate({"model": None}))
+    monkeypatch.setattr(runner, "load_settings", lambda: settings)
+    monkeypatch.setattr(runner, "configure_sdk_api_route", Mock())
+    provider, _ = _fake_llm(monkeypatch, '{"risky":false,"category":"safe","reason":"Read only."}')
+    monkeypatch.setattr(action_approvals, "load_settings", lambda: settings)
+    coordinator = AgentCoordinator()
+    await runner.run_strix_scan(
+        scan_config={"targets": [], "scan_mode": "deep"},
+        scan_id="approval-model-override",
+        image="test",
+        model="openai/scan-override",
+        coordinator=coordinator,
+        action_approvals=_settings(model=approval_model),
+    )
+    guard = coordinator.action_approvals
+    assert guard is not None
+    assert await guard.judge.evaluate({}) == (False, "safe", "Read only.")
+    provider.return_value.get_model.assert_called_once_with(
+        approval_model or "openai/scan-override"
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "enabled,mode,interactive,warning",
     [
