@@ -242,6 +242,7 @@ class TuiController:
             "summary",
             "risk",
             "category",
+            "reason",
             "expires_at",
         )
         return [
@@ -517,10 +518,40 @@ class TuiController:
                     wait_for_delivery=True,
                 )
 
+            def approval_state() -> dict[str, Any]:
+                async def snapshot() -> dict[str, Any]:
+                    guard = getattr(self.coordinator, "action_approvals", None)
+                    return {
+                        "pending": self._pending_approvals(),
+                        "can_decide": guard is not None,
+                        "on_timeout": guard.settings.on_timeout if guard else "block",
+                    }
+
+                if self.scan_loop is None or self.scan_loop.is_closed():
+                    return {"pending": [], "can_decide": False}
+                return asyncio.run_coroutine_threadsafe(snapshot(), self.scan_loop).result(
+                    timeout=5
+                )
+
+            def approval_decide(approval_id: str, approved: bool) -> bool:
+                if self.scan_loop is None or self.scan_loop.is_closed():
+                    return False
+                future = asyncio.run_coroutine_threadsafe(
+                    self._decide_approval({"approval_id": approval_id, "approved": approved}),
+                    self.scan_loop,
+                )
+                try:
+                    future.result(timeout=5)
+                except ValueError:
+                    return False
+                return True
+
             httpd, url, token = serve(
                 self.report_state.get_run_dir(),
                 open_browser=True,
                 steer_handler=steer,
+                approval_state=approval_state,
+                approval_decide=approval_decide,
             )
             self._viewer_httpd = httpd
             self.viewer_url = authorized_url(url, token)

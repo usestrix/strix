@@ -23,6 +23,7 @@ from strix.interface.scan_setup import (
     prepare_run,
     telemetry_start,
 )
+from strix.interface.tui.approval_history import record_approval_history
 from strix.interface.tui.backend import TuiBackendServer, TuiController
 from strix.interface.tui.backend.live_view import TuiLiveView
 from strix.interface.tui.sidecar import (
@@ -291,6 +292,13 @@ class GoTuiRuntime:
                 content = "Blocked: agent or scan stopped"
         if content:
             self.live_view.record_approval(str(event["agent_id"]), content)
+            if self.report_state is not None and event["type"] in {"resolved", "blocked"}:
+                try:
+                    record_approval_history(
+                        self.report_state.get_run_dir(), str(event["agent_id"]), content
+                    )
+                except OSError:
+                    logger.exception("Could not save approval history")
         self.controller.notify_changed()
 
     def capture_mcp_status(self, roster: list[dict[str, Any]]) -> None:
