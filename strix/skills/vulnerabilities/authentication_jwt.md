@@ -66,7 +66,7 @@ JWT/OIDC failures often enable token forgery, token confusion, cross-service acc
 
 ### OAuth Redirect Workflow Handoff
 
-When `/authorize`, `redirect_uri`, an OAuth callback, or code exchange appears, load `protocols/oauth`. Pair `open_redirect` and `semantic_confusion` for parser drift and `browser_security` for navigation or fragments. One OAuth owner must span the authorized IdP, client, and linked receiver rather than testing them as disconnected surfaces. Preserve the representation chain and test code placement, PKCE/client authentication, redemption, and victim authority end to end; obvious foreign-host rejections do not close the surface.
+When `/authorize`, `redirect_uri`, an OAuth callback, or code exchange appears, load `protocols/oauth`. If decoding, reparsing, or URL normalization can differ across components, also load `vulnerabilities/url_parser_differentials`. One owner must span the authorized IdP, client, browser, and receiver through code placement, redemption, and synthetic victim authority.
 
 ### Refresh and Session
 

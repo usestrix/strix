@@ -7,6 +7,10 @@ description: OAuth 2.0 and OIDC flow security testing covering redirect manipula
 
 OAuth and OIDC failures often enable account takeover, token theft, and cross-client token confusion. Treat every redirect, client identifier, and token exchange as an authorization boundary — not a convenience layer.
 
+## Redirect Parser Differentials
+
+When validation and redirect construction can consume different URL representations, load `vulnerabilities/url_parser_differentials` before custom payload lists. Complete its bounded matrix and closure record, then follow accepted rows through browser delivery, code redemption, and synthetic victim authority. Atomic delimiter tests or obvious foreign-host rejections do not close this surface.
+
 ## Attack Surface
 
 **Flows**
@@ -62,44 +66,6 @@ com.app://callback  (mobile custom scheme)
 - Path normalization differentials between IdP validator and consuming app
 - `redirect_uri` parameter pollution (first vs last wins)
 - Wildcard subdomain acceptance: `*.app.com` → register `attacker.app.com` or find dangling subdomain
-
-#### Redirect URI Representation Differentials
-
-For every in-scope authorization endpoint, treat the validator, redirect builder, and browser as separate consumers. Before `ruled_out`, its OAuth owner must copy and execute `redirect_differential_matrix()` unchanged, substituting only the discovered receiver origin and full registered URI, and preserve this ledger:
-
-```text
-wire T -> query value F -> validator components -> raw Location
-       -> browser origin/component -> code destination -> redemption
-```
-
-Derive adjacent delimiter families from the observed URL grammar: a late structural boundary and an authority/userinfo boundary. Vary their encoding depths independently, starting at `E0..E2`, with clean-allowed and obvious-foreign controls. Do not assume a winning tuple. For web redirects, compose `receiver_origin + delimiters + registered_authority/path`. Depth is defined in `F`; serialize `F` once into `T`:
-
-```python
-from itertools import product
-from urllib.parse import quote, unquote
-
-def E(value, depth):
-    for _ in range(depth):
-        value = quote(value, safe="")
-    return value
-
-def redirect_differential_matrix(receiver_origin, registered_uri, depths=range(3)):
-    assert "://" in receiver_origin and "://" in registered_uri
-    registered_authority_path = registered_uri.split("://", 1)[1]
-    lefts, rights, depths = ("#", "?", "/", "\\"), ("@",), tuple(depths)
-    rows = []
-    axes = product(lefts, rights, depths, depths)
-    for left, right, ld, rd in axes:
-        F = receiver_origin + E(left, ld) + E(right, rd) + registered_authority_path
-        T = quote(F, safe="")
-        assert unquote(T) == F
-        rows.append((left, right, ld, rd, F, T))
-    expected = len(lefts) * len(rights) * len(depths) ** 2
-    assert len(rows) == expected == len({row[:4] for row in rows})
-    return rows
-```
-
-Call `redirect_differential_matrix(receiver_origin, registered_uri)` before any custom payload list; a rewritten generator cannot support `ruled_out`. When manually building the query, send `T`; when a client serializes parameters, pass `F`. Inspect the prepared request: never mark `%` safe or serialize `T` again. Record the tuple, intended and captured `F/T`, status, raw `Location`, browser destination/code placement, and redemption result. Use only an authorized or local distinct-origin receiver. A partial matrix, failed assertion, missing capture, or unavailable browser/receiver is `needs_follow_up`, not `ruled_out`. An accepted encoding without a security-relevant destination change is not a finding.
 
 ### Authorization Code Issues
 

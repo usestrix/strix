@@ -62,17 +62,9 @@ Open redirects enable phishing, OAuth/OIDC code and token theft, and allowlist b
 - IP variants: decimal 2130706433, octal 0177.0.0.1, hex 0x7f.1, IPv6 `[::ffff:127.0.0.1]`
 - User-controlled path bases: `/out?url=/\evil.com`
 
-### Multi-Decode Component Drift
+### Parser and Decode Differentials
 
-Treat validation, redirect construction, and browser navigation as separate consumers. Preserve raw parameter bytes, framework value, validator components, raw `Location`, and browser-final origin.
-
-- Vary `#`, `?`, slash, backslash, and `@` at independent encoding depths; whole-string encoding misses asymmetric parser drift.
-- Test mutations after the trusted callback and `<controlled-receiver><encoded-boundary><encoded-authority-delimiter><trusted-authority/path>`.
-- Define the post-query-parser value, serialize it once, and assert the captured wire token decodes back to it before interpreting a rejection.
-- Pair candidates with clean allowed, obvious foreign, literal, and shallower-encoded controls.
-- Capture the raw 30x `Location` before controlled-browser navigation; acceptance alone is not a finding.
-
-After a later decode is observed, synthesize backward from the dangerous final origin. Do not close the family until the relevant compound matrix has verified transport round trips and no cross-origin delivery. Use only authorized receivers and synthetic data. OAuth-specific execution belongs to `protocols/oauth`.
+When validation, redirect construction, and navigation may consume different URL representations, load `vulnerabilities/url_parser_differentials` before custom fuzzing. Use its bounded matrix and closure record; one safe atomic delimiter or parser result cannot rule out compound origin drift. OAuth flows also load `protocols/oauth`.
 
 ## Key Vulnerabilities
 

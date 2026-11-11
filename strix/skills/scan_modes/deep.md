@@ -72,7 +72,7 @@ Test every input vector with every applicable technique.
 - Exhaustive brute force protection testing
 - Session fixation, hijacking, prediction
 - JWT/token manipulation
-- OAuth flow abuse scenarios: after mapping the flow, assign one owner across every in-scope authorization server, client, and receiver; preload `protocols/oauth`. The delegated task must say to copy and execute `redirect_differential_matrix()` unchanged against each in-scope `/authorize` validator before custom tests, passing only the discovered receiver origin and full registered URI. Do not add a competing mutation checklist: require expected/observed/unique counts, verified `F -> T`, raw `Location`, browser destination/code placement, and redemption. A rewrite, missing scope/proof, or partial run is `needs_follow_up`, never `ruled_out`.
+- OAuth flow abuse scenarios
 - Password reset vulnerabilities: token leakage, reuse, timing
 - MFA bypass techniques
 - Account enumeration through all channels

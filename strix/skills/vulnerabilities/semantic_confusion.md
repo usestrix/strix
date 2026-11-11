@@ -59,26 +59,7 @@ The highest-signal condition is `security_check(value_A)` followed by `sink(tran
 - Test malformed Unicode and replacement behavior; a rejected code point may become an allowed delimiter or wildcard later.
 - Test path, query, and fragment separately. Browsers and routers commonly transform each source differently.
 
-For security-sensitive URLs, record a component ledger rather than only the displayed string:
-
-| Stage | Required observation |
-|---|---|
-| transport | exact raw parameter bytes and encoding depth |
-| framework | value after automatic query/form decoding |
-| security decision | parser-reported scheme, host, port, path, query, and fragment |
-| response construction | exact value written to `Location`, HTML, or script navigation |
-| final consumer | browser-parsed origin and the component containing sensitive data |
-
-Vary adjacent delimiters independently at raw, once-, and twice-encoded depth; uniform whole-value encoding misses asymmetric combinations. Name the intended post-parser value `F` and wire token `T`, require `query_decode(T) == F`, and inspect the prepared or captured request. A failed round trip is a harness failure, not evidence about the candidate.
-
-When early and late consumers disagree, synthesize backward:
-
-1. choose the final origin and component boundary the late consumer must see;
-2. place the controlled origin before that boundary and the allowlisted authority/path after it;
-3. encode each delimiter only enough to keep the early parser on the allowlisted authority;
-4. replay the actual transformation chain and verify both component interpretations.
-
-For URL authorization boundaries, cover fragment/query/slash/backslash plus userinfo across independent depths. The finding requires a security-relevant change in origin or data destination, not merely an encoded character.
+For security-sensitive URL validator-to-consumer drift, load `vulnerabilities/url_parser_differentials`. It owns the transport ledger, compound delimiter matrix, and browser/destination closure evidence; keep this skill focused on the broader transformation graph.
 
 ### Email and Account Identity Drift
 

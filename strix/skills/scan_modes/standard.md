@@ -58,7 +58,6 @@ Test each attack surface methodically. Spawn focused subagents for different are
 - Password reset flow analysis
 - Logout session invalidation
 - Authentication bypass techniques
-- When OAuth/OIDC is discovered, assign one flow owner across the IdP and client with `protocols/oauth`; pair `open_redirect`, `semantic_confusion`, and `browser_security`. Execute the skill's bounded reference matrix before ad hoc payloads and require complete unique tuples, verified post-query value/wire-token round trips, raw `Location`, final browser origin, and code/token redemption. Use a local controlled receiver when a linked receiver is outside scope; do not probe the unapproved asset. A partial matrix, missing receiver, or missing transport/browser proof is `needs_follow_up`, not a negative result.
 
 **Access Control**
 - Horizontal: user A accessing user B's resources

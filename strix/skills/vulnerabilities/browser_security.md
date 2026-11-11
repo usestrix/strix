@@ -98,17 +98,9 @@ Prove the strongest reliable capability first. If escalation requires a user ges
 
 #### OAuth and Sensitive Redirects
 
-For OAuth/OIDC/SAML callbacks, separate server acceptance from navigation:
+For OAuth/OIDC/SAML callbacks, capture the raw `Location`, predict its components, then navigate a controlled browser and record the actual origin and code/token placement. Prove receiver-side fragment capture with synthetic data and continue, when authorized, through exact-redirect redemption and victim identity. Load `vulnerabilities/url_parser_differentials` when validation and navigation may see different URL representations.
 
-1. capture the raw `Location` without following it and predict its origin, path, query, and fragment;
-2. navigate a controlled browser profile and record the actual final origin;
-3. identify whether the code, token, or RelayState is sent in the request URL or remains in `location.hash`;
-4. prove any receiver-side fragment capture with synthetic data;
-5. continue, when authorized, through exact-`redirect_uri` code redemption and synthetic victim identity.
-
-Fragments are not included in HTTP requests, so receiver logs cannot disprove fragment leakage and a parsed `Location` alone does not prove JavaScript collection. Prefer a distinct authorized hostname; if only same-host/different-port works, separate origin-drift evidence from cookie-disclosure claims. Record browser/environment blockers and report the first unproven step.
-
-If an application-linked receiver is outside scope, do not browse or probe it. Start a minimal receiver inside the controlled browser/test environment instead and use that distinct origin only as instrumentation. If the browser cannot reach a controlled receiver, the delivery step remains `needs_follow_up`; it is not counterevidence.
+Fragments are not sent in HTTP requests, so receiver logs cannot disprove leakage and a parsed `Location` cannot prove JavaScript collection. Use an authorized distinct-origin receiver; an unavailable browser or receiver leaves `needs_follow_up`.
 
 ### CSP and Browser Parsing
 
