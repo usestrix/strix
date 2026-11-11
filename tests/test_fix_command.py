@@ -6,6 +6,8 @@ import json
 import sys
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 from strix.core import runner
 from strix.core.agents import AgentCoordinator
 from strix.fix import FixOutcome, FixRequest
@@ -25,8 +27,6 @@ from tests.test_runner_root_prompt import _patch_engine_scaffold
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
     from strix.report.state import ReportState
 
@@ -232,6 +232,65 @@ async def test_fix_run_starts_no_scan_agent_and_keeps_the_scan_finished(
     assert built["closed"] is True
     assert request.outcomes["vuln-0002"].approved
     assert coordinator.statuses["root"] == "completed"
+
+
+@pytest.mark.parametrize(
+    ("target", "expected_roots"),
+    [
+        (
+            {
+                "type": "repository",
+                "details": {
+                    "target_repo": "https://github.com/acme/shop",
+                    "cloned_repo_path": "/home/me/clones/shop",
+                    "workspace_subdir": "shop",
+                },
+            },
+            ["/workspace/shop"],
+        ),
+        (
+            {"type": "web_application", "details": {"target_url": "https://shop.example"}},
+            None,
+        ),
+    ],
+    ids=["cloned repository", "no source code"],
+)
+async def test_fix_agents_start_for_a_cloned_repository_and_not_without_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    target: dict[str, Any],
+    expected_roots: list[str] | None,
+) -> None:
+    _patch_engine_scaffold(monkeypatch, tmp_path, {"authorized_targets": []})
+    finished = AgentCoordinator()
+    await finished.register("root", "Root Agent", parent_id=None)
+    await finished.set_status("root", "completed")
+    (tmp_path / "agents.json").write_text(json.dumps(await finished.snapshot()))
+    (tmp_path / "agents.db").touch()
+
+    built: dict[str, Any] = {}
+
+    class _Controller:
+        def __init__(self, **kwargs: Any) -> None:
+            built.update(kwargs)
+
+        async def fix_saved(self, _report_ids: list[str]) -> dict[str, FixOutcome]:
+            return {}
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(runner, "FixController", _Controller)
+
+    await runner.run_strix_scan(
+        scan_config={"targets": [target]},
+        scan_id="shop-1a2b",
+        image="img",
+        coordinator=AgentCoordinator(),
+        fix_request=FixRequest(),
+    )
+
+    assert built.get("repo_roots") == expected_roots
 
 
 async def test_fix_run_needs_an_earlier_scan(

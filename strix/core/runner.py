@@ -214,6 +214,18 @@ def _compose_root_instructions_override(
     )
 
 
+def _has_source_checkout(targets: list[dict[str, Any]]) -> bool:
+    """True when the workspace holds source code: a local folder or a cloned repository."""
+    return any(
+        target.get("type") == "local_code"
+        or (
+            target.get("type") == "repository"
+            and bool((target.get("details") or {}).get("cloned_repo_path"))
+        )
+        for target in targets
+    )
+
+
 async def run_strix_scan(
     *,
     scan_config: dict[str, Any],
@@ -611,7 +623,9 @@ async def run_strix_scan(
             SUBAGENT_TURN_LIMITS_KEY: dict(subagent_turn_limits or {}),
         }
 
-        if is_whitebox and (fix_only or (not is_diff_scoped and scan_config.get("auto_fix", True))):
+        if _has_source_checkout(targets) and (
+            fix_only or (not is_diff_scoped and scan_config.get("auto_fix", True))
+        ):
             fix_controller = context["fix_controller"] = FixController(
                 sandbox_session=bundle["session"],
                 coordinator=coordinator,
