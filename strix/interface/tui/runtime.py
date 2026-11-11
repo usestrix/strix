@@ -94,6 +94,7 @@ class GoTuiRuntime:
             "run_name": self.args.run_name,
             "diff_scope": self.args.diff_scope,
             "scan_mode": self.args.scan_mode,
+            "auto_fix": bool(getattr(self.args, "auto_fix", True)),
             "non_interactive": False,
             "local_sources": self.args.local_sources or [],
             "workspace_files": getattr(self.args, "workspace_files", None) or [],

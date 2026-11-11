@@ -351,6 +351,19 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
         lines.append(str(report["fix_verification"]))
         lines.append("")
 
+    fix = report.get("fix")
+    if isinstance(fix, dict) and fix.get("patch_file"):
+        lines.append("## Reviewed Patch\n")
+        lines.append(
+            "A fix agent tested this patch and a second agent reviewed it. "
+            f"Apply it from the repository root: `git apply {fix['patch_file']}` "
+            "(path relative to this run folder)."
+        )
+        if fix.get("branch"):
+            lines.append(f"The patch is also on the local branch `{fix['branch']}`.")
+        lines.extend(f"- `{name}`" for name in fix.get("files") or [])
+        lines.append("")
+
     if report.get("assumptions"):
         lines.append("## Assumptions\n")
         lines.append(str(report["assumptions"]))

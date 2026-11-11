@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import io
 import json
 import logging
@@ -16,7 +17,7 @@ from agents import RunConfig
 from agents.sandbox import SandboxRunConfig
 from openai import RateLimitError
 
-from strix.agents.factory import build_strix_agent, make_child_factory
+from strix.agents.factory import build_fix_agent, build_strix_agent, make_child_factory
 from strix.agents.prompt import render_scope_prompt, render_system_prompt
 from strix.config import codex, load_settings
 from strix.config.models import (
@@ -50,6 +51,7 @@ from strix.core.inputs import (
 )
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.sessions import open_agent_session
+from strix.fix import FixController, FixRequest
 from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
 from strix.telemetry import set_scan_phase
@@ -237,6 +239,7 @@ async def run_strix_scan(
     report_tool: Tool = create_vulnerability_report,
     coverage_tools: bool = True,
     subagent_turn_limits: Mapping[str, int] | None = None,
+    fix_request: FixRequest | None = None,
 ) -> RunResultBase | None:
     """Run or resume one Strix scan against a sandbox.
 
@@ -279,6 +282,11 @@ async def run_strix_scan(
         scan_id = f"scan-{uuid.uuid4().hex[:8]}"
 
     run_dir = run_dir_for(scan_id)
+    # ``strix fix`` reopens an earlier scan only to patch its findings. The
+    # root agent does not run, so its recorded status must stay as it is.
+    fix_only = fix_request is not None
+    if fix_only and not (runtime_state_dir(run_dir) / "agents.json").exists():
+        raise RuntimeError(f"Cannot fix findings of {scan_id}: the run has no saved scan state.")
     run_dir.mkdir(parents=True, exist_ok=True)
     state_dir = runtime_state_dir(run_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -338,6 +346,7 @@ async def run_strix_scan(
     hydrate_threat_models_from_disk(state_dir)
 
     root_id: str | None = None
+    fix_controller: FixController | None = None
     if is_resume:
         try:
             snap = json.loads(agents_path.read_text(encoding="utf-8"))
@@ -602,6 +611,39 @@ async def run_strix_scan(
             SUBAGENT_TURN_LIMITS_KEY: dict(subagent_turn_limits or {}),
         }
 
+        if is_whitebox and (fix_only or (not is_diff_scoped and scan_config.get("auto_fix", True))):
+            fix_controller = context["fix_controller"] = FixController(
+                sandbox_session=bundle["session"],
+                coordinator=coordinator,
+                run_config=run_config,
+                agents_db_path=agents_db,
+                sessions_to_close=sessions_to_close,
+                root_id=root_id,
+                repo_roots=context["scan_targets"],
+                build_agent=functools.partial(
+                    build_fix_agent,
+                    chat_completions_tools=chat_completions_tools,
+                    strict_tool_schemas=strict_tool_schemas,
+                    supports_images=supports_images,
+                ),
+                base_context={
+                    "coordinator": coordinator,
+                    "sandbox_session": bundle["session"],
+                    "max_context_images": settings.runtime.max_context_images,
+                    "supports_images": supports_images,
+                },
+                event_sink=event_sink,
+                hooks=hooks,
+                tell_root=not fix_only,
+            )
+
+        if fix_request is not None:
+            # A run that scanned no source code has no controller and nothing to fix.
+            if fix_controller is not None:
+                set_scan_phase("agent_loop")
+                fix_request.outcomes.update(await fix_controller.fix_saved(fix_request.findings))
+            return None
+
         root_session = open_agent_session(root_id, agents_db)
         sessions_to_close.append(root_session)
         await coordinator.attach_runtime(root_id, session=root_session)
@@ -680,7 +722,7 @@ async def run_strix_scan(
     except BudgetExceededError as exc:
         logger.info("Scan %s stopped: %s", scan_id, exc)
         _note_exit_reason("budget_exceeded")
-        if root_id is not None:
+        if root_id is not None and not fix_only:
             with contextlib.suppress(Exception):
                 await coordinator.set_status(root_id, "stopped")
         return None
@@ -693,19 +735,19 @@ async def run_strix_scan(
             scan_id,
         )
         _note_exit_reason("rate_limited")
-        if root_id is not None:
+        if root_id is not None and not fix_only:
             with contextlib.suppress(Exception):
                 await coordinator.set_status(root_id, "stopped")
         return None
     except (asyncio.CancelledError, KeyboardInterrupt):
         logger.info("Scan %s interrupted by the user", scan_id)
-        if root_id is not None:
+        if root_id is not None and not fix_only:
             with contextlib.suppress(Exception):
                 await coordinator.set_status(root_id, "running")
         raise
     except BaseException:
         logger.exception("Strix scan %s failed", scan_id)
-        if root_id is not None:
+        if root_id is not None and not fix_only:
             with contextlib.suppress(Exception):
                 await coordinator.set_status(root_id, "failed")
         raise
@@ -716,6 +758,9 @@ async def run_strix_scan(
         if root_id is not None:
             with contextlib.suppress(Exception):
                 await coordinator.cancel_descendants(root_id)
+        if fix_controller is not None:
+            with contextlib.suppress(Exception):
+                await fix_controller.close()
         for s in sessions_to_close:
             with contextlib.suppress(Exception):
                 s.close()

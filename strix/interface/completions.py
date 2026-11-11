@@ -10,7 +10,7 @@ from strix.interface.cloud.spec import DEFAULT_VERBS, SPEC, Cmd
 from strix.interface.terminal_text import has_terminal_control, sanitize_terminal_text
 
 
-_ROOT_COMMANDS = ("cloud", "auth", "view", "completions", "completion")
+_ROOT_COMMANDS = ("cloud", "auth", "view", "fix", "completions", "completion")
 _SESSION_COMMANDS = ("login", "logout", "whoami", "session", "credits")
 _COMMON_FLAGS = (
     "--json",

@@ -692,8 +692,10 @@ async def agent_finish(
     filed_reports = _filed_reports_by(me)
     filed_report_ids = [str(r.get("id")) for r in filed_reports]
 
-    parent_notified = False
-    if report_to_parent and await coordinator.claim_parent_notice(me):
+    # A fix agent answers to the fix controller, which reads the outcome from
+    # this tool's result and tells the root agent once per finding.
+    parent_notified = bool(inner.get("fix_agent"))
+    if not parent_notified and report_to_parent and await coordinator.claim_parent_notice(me):
         async with coordinator._lock:
             agent_name = coordinator.names.get(me, me)
         report = _render_completion_report(
@@ -740,7 +742,9 @@ async def agent_finish(
             "agent_completed": True,
             "parent_notified": parent_notified,
             "agent_id": me,
+            "task_succeeded": success,
             "summary": result_summary,
+            "open_items": list(open_items or []),
             "filed_report_ids": filed_report_ids,
             "findings_count": len(findings or []),
             "open_items_count": len(open_items or []),
