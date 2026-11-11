@@ -157,11 +157,11 @@ Server-Side Request Forgery enables the server to reach networks and services th
 
 ## False Positives
 
-- Client-side fetches only (no server request)
+- Client-side fetches only (no server request) — but when a server-side/BFF proxy forwards the browser-controlled path that built that client fetch to an internal target, it is CSPT-to-SSRF; see `client_side_path_traversal`
 - Strict allowlists with DNS pinning and no redirect following
 - SSRF simulators/mocks returning canned responses without real egress
 - Blocked egress confirmed by uniform errors across all targets and protocols
-- OAST callbacks where the source IP matches the tester's machine, not the server — the browser or a client-side fetch made the request, not the backend
+- OAST callbacks where the source IP matches the tester's machine, not the server — the browser or a client-side fetch made the request, not the backend (unless a server-side/BFF proxy then forwards the client-shaped path to an internal target: CSPT-to-SSRF; see `client_side_path_traversal`)
 
 ## Impact
 

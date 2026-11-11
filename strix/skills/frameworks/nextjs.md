@@ -200,6 +200,15 @@ Look for `_metadata`, `_internal`, `__typename` (GraphQL), nested sensitive obje
 
 Server vs client render differences can enable gadget-based XSS.
 
+**Client-Side Path Traversal**
+
+`params`/`searchParams` (or a client-supplied path forwarded by a Route
+Handler / BFF) used to build a `fetch` or `router.push`/navigation URL is
+a client-side path traversal surface — decoded `../`/`%2f` can repoint
+the request to another endpoint. Treat it as a finding only when the
+repointed request has a security-relevant effect (CSRF-like / XSS / SSRF
+/ authz / cross-tenant); load `client_side_path_traversal`.
+
 ### Draft/Preview Mode
 
 - Secret URLs/cookies enabling preview
