@@ -110,6 +110,9 @@ check_existing_installation() {
             if [[ ! -e "$path" ]] || [[ "$path" == "$INSTALL_DIR/strix"* ]]; then
                 continue
             fi
+            if [[ -L "$path" && "$(readlink "$path" 2>/dev/null || true)" == "$INSTALL_DIR/strix"* ]]; then
+                continue
+            fi
 
             if [[ -n "$path" ]]; then
                 echo -e "${MUTED}Found existing strix at: ${NC}$path"
@@ -237,50 +240,59 @@ setup_path() {
             config_files="$HOME/.bashrc $HOME/.bash_profile $HOME/.profile $XDG_CONFIG_HOME/bash/.bashrc $XDG_CONFIG_HOME/bash/.bash_profile"
             ;;
         ash)
-            config_files="$HOME/.ashrc $HOME/.profile /etc/profile"
+            config_files="$HOME/.ashrc $HOME/.profile"
             ;;
         sh)
-            config_files="$HOME/.ashrc $HOME/.profile /etc/profile"
+            config_files="$HOME/.ashrc $HOME/.profile"
             ;;
         *)
             config_files="$HOME/.bashrc $HOME/.bash_profile $XDG_CONFIG_HOME/bash/.bashrc $XDG_CONFIG_HOME/bash/.bash_profile"
             ;;
     esac
 
-    config_file=""
+    local found_config=false
     for file in $config_files; do
         if [[ -f $file ]]; then
-            config_file=$file
-            break
+            found_config=true
+            case $current_shell in
+                fish)
+                    add_to_path "$file" "fish_add_path $INSTALL_DIR"
+                    ;;
+                zsh|bash|ash|sh)
+                    add_to_path "$file" "export PATH=$INSTALL_DIR:\$PATH"
+                    ;;
+                *)
+                    export PATH=$INSTALL_DIR:$PATH
+                    print_message warning "Manually add the directory to $file (or similar):"
+                    print_message info "  export PATH=$INSTALL_DIR:\$PATH"
+                    ;;
+            esac
         fi
     done
 
-    if [[ -z $config_file ]]; then
+    if [[ "$found_config" == false ]] && [[ "$current_shell" == "ash" || "$current_shell" == "sh" ]] && [[ -f /etc/profile ]]; then
+        found_config=true
+        add_to_path "/etc/profile" "export PATH=$INSTALL_DIR:\$PATH"
+    fi
+
+    if [[ "$found_config" == false ]]; then
         print_message warning "No config file found for $current_shell. You may need to manually add to PATH:"
         print_message info "  export PATH=$INSTALL_DIR:\$PATH"
-    elif [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-        case $current_shell in
-            fish)
-                add_to_path "$config_file" "fish_add_path $INSTALL_DIR"
-                ;;
-            zsh)
-                add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
-                ;;
-            bash)
-                add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
-                ;;
-            ash)
-                add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
-                ;;
-            sh)
-                add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
-                ;;
-            *)
-                export PATH=$INSTALL_DIR:$PATH
-                print_message warning "Manually add the directory to $config_file (or similar):"
-                print_message info "  export PATH=$INSTALL_DIR:\$PATH"
-                ;;
-        esac
+    fi
+
+    if [ "$os" != "windows" ] && [[ -x "$INSTALL_DIR/strix" ]]; then
+        local local_bin="$HOME/.local/bin"
+        if [[ -d "$local_bin" || ":$PATH:" == *":$local_bin:"* ]]; then
+            if mkdir -p "$local_bin" 2>/dev/null && [[ -w "$local_bin" ]]; then
+                if [[ ! -e "$local_bin/strix" || -L "$local_bin/strix" ]]; then
+                    if ! ln -sf "$INSTALL_DIR/strix" "$local_bin/strix" 2>/dev/null; then
+                        print_message warning "Could not create symlink in $local_bin/strix; continuing."
+                    fi
+                fi
+            else
+                print_message warning "Skipping symlink in $local_bin (directory is not writable)."
+            fi
+        fi
     fi
 
     if [ -n "${GITHUB_ACTIONS-}" ] && [ "${GITHUB_ACTIONS}" == "true" ]; then
@@ -294,7 +306,7 @@ verify_installation() {
 
     local which_strix=$(which strix 2>/dev/null || echo "")
 
-    if [[ "$which_strix" != "$INSTALL_DIR/strix" && "$which_strix" != "$INSTALL_DIR/strix.exe" ]]; then
+    if [[ "$which_strix" != "$INSTALL_DIR/strix" && "$which_strix" != "$INSTALL_DIR/strix.exe" && "$(readlink "$which_strix" 2>/dev/null || true)" != "$INSTALL_DIR/strix"* ]]; then
         if [[ -n "$which_strix" ]]; then
             echo -e "${YELLOW}⚠ Found conflicting strix at: ${NC}$which_strix"
             echo -e "${MUTED}Attempting to remove...${NC}"
