@@ -14,9 +14,18 @@ Then run focused adversarial checks that exercise the stated security invariant
 and plausible bypasses, including alternate paths and boundary values. Confirm
 legitimate callers and public behavior remain compatible.
 
+Compare the patch with each remediation step in the finding. Reject a patch that
+leaves a step undone without the repair summary naming it, or that leaves out a
+step the reported attack still depends on.
+
 Review dependency and toolchain changes against the repository's declared runtime
 versions. Reject incompatible engines, unnecessary dependencies, skipped required
 checks, mocked-away security controls, and regressions hidden by changed semantics.
+Reject a patch whose tests run against a stand-in for a package the repository depends
+on, or that adds a dependency only so that an import resolves: the fix was never tested
+against the real code.
+Reject a patch that edits an existing database migration file instead of adding a new
+migration.
 Reject a patch that adds a new CI pipeline file, or that edits an existing one when
 the vulnerability is not in that file.
 
