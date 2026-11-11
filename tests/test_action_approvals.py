@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID
 
+import httpx
 import pytest
 from agents.sandbox.capabilities.tools.apply_patch_tool import SandboxApplyPatchTool
 from agents.sandbox.capabilities.tools.shell_tool import ExecCommandTool, WriteStdinTool
@@ -24,7 +25,12 @@ from strix.agents.factory import _wrap_exec_command, _wrap_write_stdin
 from strix.config.settings import ActionApprovalSettings, LlmSettings, Settings
 from strix.core import action_approvals, inputs, runner
 from strix.core.action_approval_files import script_paths
-from strix.core.action_approvals import ActionApprovalGuard, LlmJudge, build_execution_facts
+from strix.core.action_approvals import (
+    ActionApprovalGuard,
+    DecisionsJudge,
+    LlmJudge,
+    build_execution_facts,
+)
 from strix.core.agents import AgentCoordinator
 from strix.tools.mcp.agent_tools import call_mcp
 from strix.tools.proxy import caido_api
@@ -369,12 +375,147 @@ def test_settings_defaults_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "tools" not in resolved.model_dump()
 
 
-def test_removed_judge_setting_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("STRIX_ACTION_APPROVAL_JUDGE", "retired")
-    settings = ActionApprovalSettings.model_validate({"STRIX_ACTION_APPROVAL_JUDGE": "retired"})
-    assert "judge" not in ActionApprovalSettings.model_fields
+def test_judge_setting_selects_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert ActionApprovalSettings().judge == "llm"
+    monkeypatch.setenv("STRIX_ACTION_APPROVAL_JUDGE", "DECISION")
+    settings = ActionApprovalSettings()
+    assert settings.judge == "decision"
     assert settings.model is None
-    assert isinstance(ActionApprovalGuard(settings).judge, LlmJudge)
+    assert isinstance(ActionApprovalGuard(settings).judge, DecisionsJudge)
+    monkeypatch.setenv("STRIX_ACTION_APPROVAL_JUDGE", "LLM")
+    assert isinstance(ActionApprovalGuard(ActionApprovalSettings()).judge, LlmJudge)
+    monkeypatch.setenv("STRIX_ACTION_APPROVAL_JUDGE", "retired")
+    with pytest.raises(ValidationError):
+        ActionApprovalSettings()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("probability", [0, 0.499, 0.5, 1])
+@pytest.mark.parametrize("state", [{}, {"tool": "apply_patch", "arguments": {"input": "test"}}])
+async def test_decision_judge_contract(probability: float, state: dict[str, Any]) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://decision.test/api/alpha/decisions"
+        assert request.headers["Authorization"] == "Bearer test-key"
+        assert json.loads(request.content) == {
+            "model": "chosen-model",
+            "state": state,
+            "questions": action_approvals.QUESTIONS,
+        }
+        return httpx.Response(
+            200,
+            json={
+                "answers": {
+                    "unsafe": {"noul": probability},
+                    "category": {"choice": "changes_target"},
+                }
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        judge = DecisionsJudge(
+            _settings(
+                model="chosen-model", api_key="test-key", api_base="https://decision.test/api/"
+            ),
+            client=client,
+        )
+        assert await judge.evaluate(state) == (probability >= 0.5, "changes_target", None)
+    assert (
+        action_approvals.QUESTIONS["unsafe"]["instructions"]
+        == (action_approvals.LLM_SYSTEM_PROMPT.split("Categories:", maxsplit=1)[0])
+    )
+    assert set(action_approvals.QUESTIONS["category"]["criteria"]) == action_approvals.CATEGORIES
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["model", "api_key", "api_base"])
+@pytest.mark.parametrize("value", [None, "", "  "])
+async def test_decision_requires_explicit_connection(missing: str, value: str | None) -> None:
+    options: dict[str, str | None] = {
+        "model": "chosen-model",
+        "api_key": "test-key",
+        "api_base": "https://decision.test",
+    }
+    options[missing] = value
+    with pytest.raises(ValueError, match=f"require {missing}"):
+        await DecisionsJudge(_settings(**options)).evaluate({})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {},
+        {"answers": {}},
+        {"answers": {"unsafe": {"noul": True}, "category": {"choice": "safe"}}},
+        *[
+            {"answers": {"unsafe": {"noul": p}, "category": {"choice": "safe"}}}
+            for p in [None, "0.5", -0.1, 1.1, float("nan"), float("inf")]
+        ],
+        {"answers": {"unsafe": {"noul": 0.5}, "category": {"choice": "unknown"}}},
+        {"answers": {"unsafe": {"noul": 0.5}, "category": {"choice": None}}},
+    ],
+)
+async def test_decision_invalid_answers(answer: dict[str, Any]) -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, text=json.dumps(answer)))
+    ) as client:
+        judge = DecisionsJudge(
+            _settings(model="chosen-model", api_key="test-key", api_base="https://decision.test"),
+            client=client,
+        )
+        with pytest.raises((ValueError, TypeError, KeyError)):
+            await judge.evaluate({})
+
+
+@pytest.mark.asyncio
+async def test_decision_guard_retries_http_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    responses = iter(
+        [
+            httpx.Response(503),
+            httpx.Response(
+                200,
+                json={
+                    "answers": {"unsafe": {"noul": 0.5}, "category": {"choice": "changes_target"}}
+                },
+            ),
+        ]
+    )
+    sleep = AsyncMock()
+    monkeypatch.setattr(asyncio, "sleep", sleep)
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: next(responses))
+    ) as client:
+        guard = ActionApprovalGuard(
+            _settings(
+                judge="decision",
+                model="chosen-model",
+                api_key="test-key",
+                api_base="https://decision.test",
+            )
+        )
+        assert isinstance(guard.judge, DecisionsJudge)
+        guard.judge.client = client
+        assert await guard.check(_ctx(guard), "exec_command", {"cmd": "test"}) is not None
+        sleep.assert_awaited_once_with(1.0)
+
+
+@pytest.mark.asyncio
+async def test_decision_owns_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = AsyncMock()
+    client.post.return_value = httpx.Response(
+        200,
+        request=httpx.Request("POST", "https://decision.test/alpha/decisions"),
+        json={"answers": {"unsafe": {"noul": 0}, "category": {"choice": "safe"}}},
+    )
+    manager = AsyncMock()
+    manager.__aenter__.return_value = client
+    constructor = Mock(return_value=manager)
+    monkeypatch.setattr(httpx, "AsyncClient", constructor)
+    assert await DecisionsJudge(
+        _settings(model="chosen-model", api_key="test-key", api_base="https://decision.test")
+    ).evaluate({}) == (False, "safe", None)
+    constructor.assert_called_once_with(timeout=30)
+    manager.__aexit__.assert_awaited_once()
 
 
 @pytest.mark.asyncio
