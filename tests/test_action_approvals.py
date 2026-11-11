@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -22,6 +23,7 @@ from strix.agents import factory
 from strix.agents.factory import _wrap_exec_command, _wrap_write_stdin
 from strix.config.settings import ActionApprovalSettings, LlmSettings, Settings
 from strix.core import action_approvals, inputs, runner
+from strix.core.action_approval_files import script_paths
 from strix.core.action_approvals import ActionApprovalGuard, LlmJudge
 from strix.core.agents import AgentCoordinator
 from strix.tools.mcp.agent_tools import call_mcp
@@ -66,6 +68,77 @@ def _settings(**overrides: Any) -> ActionApprovalSettings:
             **overrides,
         }
     )
+
+
+@pytest.mark.parametrize(
+    ("command", "workdir", "expected"),
+    [
+        ("python3 probe.py --help", "/workspace", ["/workspace/probe.py"]),
+        ("python3 probe.py -c value", "/workspace", ["/workspace/probe.py"]),
+        ("python3 - <<'PY'\nprint('/not-a-script')\nPY\npython3 b.py", ".", ["b.py"]),
+        ("cd /scratch\npython3 a.py\npython3 b.py", ".", ["/scratch/a.py", "/scratch/b.py"]),
+        ("cd /scratch && python3 a.py; bash b.sh", ".", ["/scratch/a.py", "/scratch/b.sh"]),
+        ("sh -c 'cd /scratch && node test.js'", ".", ["/scratch/test.js"]),
+        ("./probe", "/scratch", ["/scratch/probe"]),
+        ("python -X dev 'a b.py'", ".", ["a b.py"]),
+        ("python -c 'print(1)'", ".", []),
+        ("python -m json.tool", ".", []),
+        ("printf hello", ".", []),
+        ("python3 $SCRIPT", ".", []),
+        ("python3 'unterminated", ".", []),
+    ],
+)
+def test_script_paths(command: str, workdir: str, expected: list[str]) -> None:
+    assert script_paths(command, workdir) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "data",
+    [b"print('hello')\n", b"", b"x" * 100_000, b"\x00binary", b"\xff"],
+)
+@patch.object(LlmJudge, "evaluate", new_callable=AsyncMock)
+async def test_script_file_context(judge: AsyncMock, data: bytes) -> None:
+    judge.return_value = _verdict(risky=False)
+    guard = ActionApprovalGuard(_settings())
+    ctx = _ctx(guard)
+    ctx.context["sandbox_session"] = SimpleNamespace(read=AsyncMock(return_value=io.BytesIO(data)))
+    args = {"cmd": "python3 probe.py", "workdir": "/scratch"}
+    assert await guard.check(ctx, "exec_command", args) is None
+    state = judge.call_args.args[0]
+    assert state["arguments"] == args
+    assert state["agent_task"] == "Check the authorized application"
+    assert state["authorized_targets"] == ["example.com"]
+    if b"\x00" in data or data == b"\xff":
+        assert "files" not in state
+    else:
+        assert state["files"] == {"/scratch/probe.py": data.decode()}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [FileNotFoundError, PermissionError, OSError, RuntimeError])
+@patch.object(LlmJudge, "evaluate", new_callable=AsyncMock)
+async def test_script_read_failure_still_judges(judge: AsyncMock, error: type[Exception]) -> None:
+    guard = ActionApprovalGuard(_settings())
+    judge.return_value = _verdict(risky=True)
+    ctx = _ctx(guard)
+    reader = AsyncMock(side_effect=error)
+    ctx.context["sandbox_session"] = SimpleNamespace(read=reader)
+    result = await guard.check(ctx, "exec_command", {"cmd": "python3 missing.py"})
+    assert result and "this action did not run" in result
+    assert "files" not in judge.call_args.args[0]
+
+
+@pytest.mark.asyncio
+@patch.object(LlmJudge, "evaluate", new_callable=AsyncMock)
+async def test_command_without_script_does_not_read_files(judge: AsyncMock) -> None:
+    guard = ActionApprovalGuard(_settings())
+    judge.return_value = _verdict(risky=False)
+    ctx = _ctx(guard)
+    reader = AsyncMock()
+    ctx.context["sandbox_session"] = SimpleNamespace(read=reader)
+    assert await guard.check(ctx, "exec_command", {"cmd": "printf hello"}) is None
+    reader.assert_not_called()
 
 
 async def _pending(guard: ActionApprovalGuard, count: int = 1) -> list[dict[str, Any]]:
