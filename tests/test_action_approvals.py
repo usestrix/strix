@@ -24,7 +24,7 @@ from strix.agents.factory import _wrap_exec_command, _wrap_write_stdin
 from strix.config.settings import ActionApprovalSettings, LlmSettings, Settings
 from strix.core import action_approvals, inputs, runner
 from strix.core.action_approval_files import script_paths
-from strix.core.action_approvals import ActionApprovalGuard, LlmJudge
+from strix.core.action_approvals import ActionApprovalGuard, LlmJudge, build_execution_facts
 from strix.core.agents import AgentCoordinator
 from strix.tools.mcp.agent_tools import call_mcp
 from strix.tools.proxy import caido_api
@@ -139,6 +139,64 @@ async def test_command_without_script_does_not_read_files(judge: AsyncMock) -> N
     ctx.context["sandbox_session"] = SimpleNamespace(read=reader)
     assert await guard.check(ctx, "exec_command", {"cmd": "printf hello"}) is None
     reader.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "targets,sources,checkouts,mounts",
+    [
+        ([], [], [], []),
+        (
+            [
+                {"type": "repository", "workspace_path": "/workspace/app"},
+                {"type": "web_application", "workspace_path": ""},
+                {"type": "local_code", "workspace_path": "/workspace/code"},
+            ],
+            [{"source_path": "/home/user/work", "workspace_subdir": "work"}],
+            ["/workspace/app", "/workspace/code"],
+            ["/workspace/work"],
+        ),
+        (
+            [{"type": "repository"}, {"type": "api_spec", "workspace_path": "/workspace/spec"}],
+            [{"source_path": "/home/user/work"}, {"workspace_subdir": "missing"}],
+            [],
+            [],
+        ),
+    ],
+)
+def test_execution_facts(
+    targets: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+    checkouts: list[str],
+    mounts: list[str],
+) -> None:
+    assert build_execution_facts({"authorized_targets": targets}, sources) == {
+        "shell_and_file_edits": "separate_sandbox",
+        "target_checkout_paths": checkouts,
+        "mounted_workspace_paths": mounts,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["exec_command", "apply_patch", "call_mcp"])
+@patch.object(LlmJudge, "evaluate", new_callable=AsyncMock)
+async def test_execution_facts_do_not_bypass_judging(judge: AsyncMock, tool: str) -> None:
+    judge.return_value = _verdict(risky=True)
+    guard = ActionApprovalGuard(_settings())
+    ctx = _ctx(guard)
+    facts = build_execution_facts({}, [])
+    ctx.context["approval_execution_facts"] = facts
+    result = await guard.check(ctx, tool, {"cmd": "rm /tmp/evidence"})
+    assert result and "this action did not run" in result
+    assert judge.call_args.args[0]["execution_facts"] == facts
+
+
+@pytest.mark.asyncio
+@patch.object(LlmJudge, "evaluate", new_callable=AsyncMock)
+async def test_unavailable_execution_facts_are_omitted(judge: AsyncMock) -> None:
+    judge.return_value = _verdict(risky=False)
+    guard = ActionApprovalGuard(_settings())
+    assert await guard.check(_ctx(guard), "exec_command", {"cmd": "pwd"}) is None
+    assert "execution_facts" not in judge.call_args.args[0]
 
 
 async def _pending(guard: ActionApprovalGuard, count: int = 1) -> list[dict[str, Any]]:
@@ -822,6 +880,41 @@ async def test_real_sdk_shell_tools_keep_execution_timeouts_after_approval(
         else:
             assert result == f"Tool '{tool_name}' timed out after 0.01 seconds."
             run.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_runner_supplies_execution_facts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    config = {
+        "targets": [
+            {
+                "type": "repository",
+                "details": {"target_repo": "https://example.com/repo", "workspace_subdir": "repo"},
+            }
+        ]
+    }
+    sources = [{"source_path": "/home/user/work", "workspace_subdir": "work"}]
+    _patch_engine_scaffold(monkeypatch, tmp_path, inputs.build_scope_context(config))
+    loop = vars(runner)["run_agent_loop"]
+    captured = {}
+
+    async def capture_context(*args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs["context"])
+        return await loop(*args, **kwargs)
+
+    monkeypatch.setattr(runner, "run_agent_loop", capture_context)
+    await runner.run_strix_scan(
+        scan_config=config,
+        scan_id="execution-facts",
+        image="test",
+        local_sources=sources,
+    )
+    assert captured["approval_execution_facts"] == {
+        "shell_and_file_edits": "separate_sandbox",
+        "target_checkout_paths": ["/workspace/repo"],
+        "mounted_workspace_paths": ["/workspace/work"],
+    }
 
 
 @pytest.mark.asyncio

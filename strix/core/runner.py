@@ -28,7 +28,11 @@ from strix.config.models import (
     uses_chat_completions_tool_schema,
 )
 from strix.config.settings import DEFAULT_MAX_TURNS, ActionApprovalSettings
-from strix.core.action_approvals import ActionApprovalGuard, ApprovalEventSink
+from strix.core.action_approvals import (
+    ActionApprovalGuard,
+    ApprovalEventSink,
+    build_execution_facts,
+)
 from strix.core.agents import AgentCoordinator, BudgetPolicy
 from strix.core.execution import (
     respawn_subagents,
@@ -614,6 +618,7 @@ async def run_strix_scan(
             "interactive": interactive,
             "spawn_child_agent": spawn_child_agent,
             "scan_targets": build_scan_targets(scan_config),
+            "approval_execution_facts": build_execution_facts(scope_context, local_sources or []),
             "max_context_images": settings.runtime.max_context_images,
             "supports_images": supports_images,
             "coverage_tools": coverage_tools,
