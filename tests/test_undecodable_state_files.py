@@ -62,9 +62,15 @@ def test_an_undecodable_mcp_config_reads_as_no_connections(tmp_path: Path) -> No
 def test_a_decodable_config_is_still_read(tmp_path: Path) -> None:
     """The guard must not swallow the healthy path."""
     path = tmp_path / "mcp.json"
-    path.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+    path.write_text(
+        json.dumps([{"name": "example", "url": "https://example.com/mcp"}]),
+        encoding="utf-8",
+    )
 
-    assert mcp_loader.load_user_mcp_configs(path) == []
+    configs = mcp_loader.load_user_mcp_configs(path)
+    assert len(configs) == 1
+    assert configs[0].name == "example"
+    assert configs[0].url == "https://example.com/mcp"
 
 
 def test_an_undecodable_subscription_store_reads_as_empty(
