@@ -6,12 +6,14 @@ import asyncio
 import copy
 import json
 import logging
+import math
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
+import httpx
 from agents.models.interface import ModelTracing
 from agents.tool import FunctionTool, invoke_function_tool
 from openai.types.responses import ResponseOutputMessage
@@ -81,6 +83,78 @@ def build_execution_facts(
             if source.get("source_path") and source.get("workspace_subdir")
         ],
     }
+
+
+class _Question(TypedDict):
+    type: str
+    instructions: str
+    criteria: dict[str, str]
+
+
+QUESTIONS: dict[str, _Question] = {
+    "unsafe": {
+        "type": "noul",
+        "instructions": LLM_SYSTEM_PROMPT.split("Categories:", maxsplit=1)[0],
+        "criteria": {
+            "true": "The current invocation is risky under these principles.",
+            "false": "The current invocation is safe under these principles.",
+        },
+    },
+    "category": {
+        "type": "choice",
+        "instructions": "What is the main risk category?",
+        "criteria": {
+            "deletes_data": "Deletes or overwrites data.",
+            "changes_target": "Changes target state or configuration.",
+            "disrupts_service": "Could degrade or stop a service.",
+            "outside_scope": "Acts outside the authorized target scope.",
+            "safe": "None of the listed risks apply.",
+        },
+    },
+}
+
+
+class DecisionsJudge:
+    """Decision-protocol adapter; the guard owns retries and approval handling."""
+
+    def __init__(
+        self, settings: ActionApprovalSettings, *, client: httpx.AsyncClient | None = None
+    ) -> None:
+        self.settings = settings
+        self.client = client
+
+    async def evaluate(self, state: dict[str, Any]) -> tuple[bool, str, str | None]:
+        for name in ("model", "api_base", "api_key"):
+            if not (getattr(self.settings, name) or "").strip():
+                raise ValueError(f"Decision approvals require {name}")
+        if self.client is not None:
+            return await self._request(self.client, state)
+        async with httpx.AsyncClient(timeout=30) as client:
+            return await self._request(client, state)
+
+    async def _request(
+        self, client: httpx.AsyncClient, state: dict[str, Any]
+    ) -> tuple[bool, str, str | None]:
+        response = await client.post(
+            f"{(self.settings.api_base or '').strip().rstrip('/')}/alpha/decisions",
+            headers={"Authorization": f"Bearer {(self.settings.api_key or '').strip()}"},
+            json={
+                "model": (self.settings.model or "").strip(),
+                "state": state,
+                "questions": QUESTIONS,
+            },
+        )
+        response.raise_for_status()
+        answers = response.json()["answers"]
+        probability = answers["unsafe"]["noul"]
+        if isinstance(probability, bool) or not isinstance(probability, (int, float)):
+            raise TypeError("Invalid unsafe probability")
+        if not math.isfinite(probability) or not 0 <= probability <= 1:
+            raise ValueError("Invalid unsafe probability")
+        category = answers["category"]["choice"]
+        if not isinstance(category, str) or category not in CATEGORIES:
+            raise ValueError("Invalid risk category")
+        return probability >= 0.5, category, None
 
 
 class LlmJudge:
@@ -184,7 +258,11 @@ class ActionApprovalGuard:
         default_model: str | None = None,
     ) -> None:
         self.settings = settings
-        self.judge = LlmJudge(settings, default_model=default_model)
+        self.judge = (
+            DecisionsJudge(settings)
+            if settings.judge == "decision"
+            else LlmJudge(settings, default_model=default_model)
+        )
         self.event_sink = event_sink
         self._pending: dict[str, _Approval] = {}
         self._checks: dict[asyncio.Task[str | None], str] = {}

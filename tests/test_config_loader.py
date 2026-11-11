@@ -483,13 +483,15 @@ def test_persist_current_sets_0600_mode(tmp_path: Path, monkeypatch: pytest.Monk
     assert target.stat().st_mode & 0o777 == 0o600
 
 
-def test_removed_action_approval_judge_in_default_config_is_ignored(
+def test_action_approval_judge_in_default_config_and_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "cli-config.json"
-    path.write_text(json.dumps({"env": {"STRIX_ACTION_APPROVAL_JUDGE": "retired"}}))
+    path.write_text(json.dumps({"env": {"STRIX_ACTION_APPROVAL_JUDGE": "decision"}}))
     monkeypatch.setattr(loader, "_DEFAULT_PATH", path)
     assert loader.load_settings().action_approvals.model is None
-    monkeypatch.setenv("STRIX_ACTION_APPROVAL_JUDGE", "retired")
+    assert loader.load_settings().action_approvals.judge == "decision"
+    monkeypatch.setenv("STRIX_ACTION_APPROVAL_JUDGE", "llm")
     monkeypatch.setattr(loader, "_cached", None)
     assert loader.load_settings().action_approvals.model is None
+    assert loader.load_settings().action_approvals.judge == "llm"
