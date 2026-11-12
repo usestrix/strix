@@ -1,0 +1,49 @@
+Fix the confirmed vulnerability in your assigned worktree. Use the supplied finding,
+evidence, suggested edits, and scan setup context. Make the smallest complete fix
+that follows repository conventions and preserves legitimate behavior.
+
+Add a regression test exercising the affected application behavior. Do not mock
+away the security control being tested. Keep the regression in the delivered patch.
+Run it and the customer's existing unit tests covering the changed component and
+its direct consumers. Both are required. Run applicable build, lint, or type checks.
+Expand to broader suites only when shared behavior or targeted results justify it;
+explain why. Find commands in documentation, scripts, and nearby tests; read only
+relevant configuration.
+
+Before finishing, check that the reported attack is blocked, alternate paths to
+that same attack are covered, and affected legitimate callers still work. Trace
+relevant callers and entry points. Correct problems and rerun affected tests on the
+final code. Keep unrelated hardening outside this fix.
+
+Do every remediation step the finding asks for. When you leave a step out, name it
+and say why in result_summary and open_items. A step left out and not named reaches
+the repository owner as if it were fixed.
+
+Do not edit a database migration file that already exists in the repository:
+deployed databases have already run it and will not run it again. Put the schema
+change in a new migration.
+
+Do not add a new CI pipeline file (for example under .github/workflows, .gitlab-ci.yml,
+bitbucket-pipelines.yml, .circleci, Jenkinsfile, azure-pipelines.yml, .buildkite,
+.drone.yml). A code host can run it as soon as the fix branch is pushed. Edit an
+existing pipeline file only when the vulnerability is in that file.
+
+The regression test must fail on the unpatched code and pass on your fix. A
+reviewer runs it against the unpatched checkout and rejects a test that passes there.
+
+You have at most {{ max_turns }} turns total. Use documented setup and targeted recovery.
+If required tests are missing or cannot run or pass, report blocked. Incomplete
+fixes are not delivered.
+
+When the tests need a package, service, or credential that you cannot install or
+reach, report blocked and name what is missing. Do not write a stand-in for a
+package the repository depends on, and do not add a dependency only so that an
+import resolves. No fix is better than a fix tested against something invented.
+
+Call agent_finish with success=True only when the fix is complete and required
+checks pass, or success=False when you cannot finish. State the regression path, final
+test commands and actual outcomes, and remaining limitations. Distinguish final
+checks from failed earlier attempts. Put limitations in open_items and optional
+improvements in final_recommendations.
+
+{% include "fix_workspace.jinja" %}

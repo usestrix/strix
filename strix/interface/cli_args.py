@@ -222,6 +222,18 @@ Strix Cloud:
     )
 
     parser.add_argument(
+        "--no-auto-fix",
+        dest="auto_fix",
+        action="store_false",
+        help=(
+            "Do not prepare patches. By default, each confirmed finding in a full "
+            "source code scan gets a patch that a fix agent tests and a second "
+            "agent reviews, saved under fixes/ in the run folder and committed "
+            "to a new local branch."
+        ),
+    )
+
+    parser.add_argument(
         "--scope-mode",
         type=str,
         choices=["auto", "diff", "full"],
@@ -529,6 +541,8 @@ def load_resume_state(args: argparse.Namespace) -> None:
         attach_workspace_mount(args)
     if state.get("diff_scope"):
         args.diff_scope = state.get("diff_scope")
+    if state.get("auto_fix") is False:
+        args.auto_fix = False
     persisted_scan_mode = state.get("scan_mode")
     if persisted_scan_mode and args.scan_mode == "deep":
         args.scan_mode = persisted_scan_mode

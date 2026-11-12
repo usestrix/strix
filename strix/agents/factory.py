@@ -828,6 +828,37 @@ def build_strix_agent(
     )
 
 
+_FIX_AGENT_TOOLS: frozenset[str] = frozenset(
+    {"think", "web_search", "web_get_contents", "agent_finish"}
+)
+
+
+def build_fix_agent(
+    *,
+    name: str,
+    instructions: str,
+    chat_completions_tools: bool = False,
+    strict_tool_schemas: bool = True,
+    supports_images: bool = True,
+) -> SandboxAgent[Any]:
+    """Build a fix agent or its reviewer: shell, files, web lookup, and ``agent_finish``.
+
+    The scan tools are left out so the agent cannot file, revise, or delete
+    findings, and cannot start agents of its own.
+    """
+    agent = build_strix_agent(
+        name=name,
+        is_root=False,
+        chat_completions_tools=chat_completions_tools,
+        strict_tool_schemas=strict_tool_schemas,
+        instructions_override=instructions,
+        supports_images=supports_images,
+        coverage_tools=False,
+    )
+    agent.tools = [tool for tool in agent.tools if tool.name in _FIX_AGENT_TOOLS]
+    return agent
+
+
 def make_child_factory(
     *,
     scan_mode: str = "deep",

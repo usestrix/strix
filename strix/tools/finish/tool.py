@@ -319,6 +319,23 @@ async def finish_scan(
     else:
         active_agents = []
 
+    fix_controller = inner.get("fix_controller")
+    fixing = fix_controller.pending() if fix_controller is not None and parent_id is None else []
+    if fixing and not active_agents and not (coordinator and coordinator.reserve_stopped):
+        return json.dumps(
+            {
+                "success": False,
+                "scan_completed": False,
+                "error": (
+                    "Cannot finish scan while patches are still being prepared and "
+                    "reviewed. Wait; you get a message as each one ends"
+                ),
+                "findings_being_fixed": fixing,
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+
     if active_agents:
         return json.dumps(
             {
