@@ -9,6 +9,11 @@ repos:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
         name: ruff-lint
+      # Text file IO states its encoding: the locale default is the ANSI code page on
+      # Windows. PLW1514 is a preview rule, so it runs on its own here.
+      - id: ruff
+        name: ruff-encoding
+        args: [--preview, --select, PLW1514, --exit-non-zero-on-fix]
       - id: ruff-format
         name: ruff-format
 
