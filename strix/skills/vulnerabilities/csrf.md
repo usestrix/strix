@@ -153,7 +153,7 @@ Cross-site request forgery abuses ambient authority (cookies, HTTP auth) across 
 - CSRF + IDOR: force actions on other users' resources once references are known
 - CSRF + Clickjacking: guide user interactions to bypass UI confirmations
 - CSRF + OAuth mix-up: bind victim sessions to unintended clients
-- Trace each forged value into later consumers (recovery, invitations, payments, authorization, exports). Try undisclosed action routes with GET/POST and form/JSON. A GET 404 does not rule out the action. Prove the highest reachable impact, a successful write is not the chain boundary
+- Trace each forged value into later consumers (recovery, invitations, payments, authorization, exports). Try undisclosed action routes with GET/POST and form/JSON. A GET 404 does not rule out the action. Prove the highest reachable impact. A successful write is not the chain boundary
 
 ## Testing Methodology
 
