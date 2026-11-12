@@ -122,6 +122,16 @@ _SKILL_PHRASINGS: dict[str, tuple[str, ...]] = {
         "rfi",
     ),
     "prototype_pollution": ("prototype pollution",),
+    "query_language_injection": (
+        "query language injection",
+        "jsonpath",
+        "jmespath",
+        "odata",
+        "lucene",
+        "ldap injection",
+        "xpath injection",
+        "cypher injection",
+    ),
     "race_conditions": ("race condition", "toctou"),
     "rce": ("rce", "remote code execution", "code execution", "command injection"),
     "semantic_confusion": (
