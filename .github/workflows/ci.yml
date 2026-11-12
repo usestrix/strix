@@ -44,7 +44,13 @@ jobs:
       - uses: ./.github/actions/setup-python-env
         with:
           python-version: ${{ matrix.python-version }}
-      - run: uv run --frozen pytest -q
+      # test_tool_call_ids_providers.py passes on its own (357 passed in ~3m)
+      # but hangs inside the full run: an earlier test leaks a litellm/aiohttp
+      # async client bound to its own event loop, and the provider file's async
+      # calls then block on that dead loop. Until the leak is fixed upstream,
+      # run that file in its own process so inherited state cannot wedge it.
+      - run: uv run --frozen pytest -q --ignore=tests/test_tool_call_ids_providers.py
+      - run: uv run --frozen pytest -q tests/test_tool_call_ids_providers.py
 
   tui:
     runs-on: ubuntu-latest
