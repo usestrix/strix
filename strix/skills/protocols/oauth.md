@@ -127,7 +127,7 @@ Authorization servers must support PKCE, public clients must use it, and confide
 - User approves attacker-initiated device login
 
 **Account Linking**
-- OAuth login links attacker's IdP identity to victim's local account without re-auth
+- After any attacker-controlled link, enumerate every identity consumer (provider sign-in, callback, session/token issuance, recovery, authorization) and prove whether the linked identity authenticates as or controls the victim; a stored profile change is not the impact boundary
 - Email collision: same email from different IdP providers
 
 ## Testing Methodology
