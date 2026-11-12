@@ -29,6 +29,10 @@ for xml_file in strix_root.rglob('*.xml'):
     rel_path = xml_file.relative_to(project_root)
     datas.append((str(xml_file), str(rel_path.parent)))
 
+for locale_file in strix_root.rglob('locales/*.json'):
+    rel_path = locale_file.relative_to(project_root)
+    datas.append((str(locale_file), str(rel_path.parent)))
+
 # Prebuilt local-viewer SPA (served by `strix view`).
 viewer_static = strix_root / 'interface' / 'viewer' / 'static'
 for asset in viewer_static.rglob('*'):
@@ -112,6 +116,7 @@ hiddenimports = [
 
     # Strix modules
     'strix',
+    'strix.i18n',
     'strix.interface',
     'strix.interface.main',
     'strix.interface.cli',
