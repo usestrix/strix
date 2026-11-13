@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -10,10 +11,18 @@ import pytest
 from agents.run_config import SandboxRunConfig
 from agents.sandbox import SandboxAgent
 from agents.sandbox.capabilities import Filesystem, Shell
+from agents.sandbox.capabilities.tools.shell_tool import ExecCommandArgs, ExecCommandTool
+from agents.sandbox.manifest import Manifest
 from agents.sandbox.runtime_session_manager import SandboxRuntimeSessionManager
+from agents.sandbox.sandboxes.unix_local import UnixLocalSandboxClient
 
 from strix.runtime import session_manager
-from strix.runtime.backends import _BACKENDS, _BIND_MOUNT_BACKENDS, register_backend
+from strix.runtime.backends import (
+    _BACKENDS,
+    _BIND_MOUNT_BACKENDS,
+    _PTY_BACKENDS,
+    register_backend,
+)
 from strix.runtime.deferred_session import DeferredSandboxClient, DeferredSandboxSession
 
 
@@ -119,7 +128,7 @@ class _Backend:
 def backend(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> Iterator[_Backend]:
     name = f"deferred-{request.node.name}"
     fake = _Backend(fail="fail" in request.node.name)
-    register_backend(name, fake, supports_bind_mounts=True)
+    register_backend(name, fake, supports_bind_mounts=True, supports_pty="pty" in request.node.name)
     monkeypatch.setattr(session_manager, "bootstrap_caido", _no_caido)
     monkeypatch.setattr(
         session_manager, "load_settings", lambda: _Settings(runtime=_RuntimeSettings(backend=name))
@@ -127,6 +136,7 @@ def backend(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> 
     yield fake
     _BACKENDS.pop(name, None)
     _BIND_MOUNT_BACKENDS.discard(name)
+    _PTY_BACKENDS.discard(name)
 
 
 async def _settle() -> None:
@@ -314,3 +324,64 @@ async def test_sdk_session_prep_does_not_wait_for_the_bring_up(backend: _Backend
         assert not session.pending
     finally:
         await session_manager.cleanup(scan_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("backend")
+async def test_pending_session_reports_the_backends_pty_support() -> None:
+    scan_id = "deferred-pty"
+    try:
+        bundle = await _create(scan_id)
+        session = bundle["session"]
+        assert session.pending
+        assert session.supports_pty()
+        assert [tool.name for tool in Shell(session=session).tools()] == [
+            "exec_command",
+            "write_stdin",
+        ]
+    finally:
+        await session_manager.cleanup(scan_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("backend")
+async def test_pending_session_without_declared_support_stays_one_shot() -> None:
+    scan_id = "deferred-one-shot"
+    try:
+        bundle = await _create(scan_id)
+        session = bundle["session"]
+        assert session.pending
+        assert not session.supports_pty()
+        assert [tool.name for tool in Shell(session=session).tools()] == ["exec_command"]
+    finally:
+        await session_manager.cleanup(scan_id)
+
+
+@pytest.mark.asyncio
+async def test_first_exec_while_pending_keeps_the_pty_session_id() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        manifest = Manifest(root=directory)
+        client = UnixLocalSandboxClient()
+        actual = await client.create(manifest=manifest)
+        await actual.start()
+        gate = asyncio.Event()
+
+        async def _bring_up() -> tuple[Any, Any]:
+            await gate.wait()
+            return client, actual
+
+        deferred = DeferredSandboxSession(
+            asyncio.create_task(_bring_up()), manifest=manifest, supports_pty=True
+        )
+        args = ExecCommandArgs(cmd="sleep 2; printf finished", yield_time_ms=5, login=False)
+        try:
+            first = asyncio.create_task(ExecCommandTool(session=deferred).run(args))
+            await asyncio.sleep(0)
+            gate.set()
+            output = await asyncio.wait_for(first, timeout=5)
+            assert "Process running with session ID" in output
+            assert "timed out" not in output
+        finally:
+            await actual.pty_terminate_all()
+            await actual.aclose()
+            await client.delete(actual)
