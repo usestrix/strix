@@ -179,7 +179,7 @@ def build_raw_request(
 ) -> tuple[ConnectionInfoInput, bytes]:
     parsed = urlparse(url)
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
-        raise ValueError(f"Invalid HTTP URL: {url}")
+        raise ValueError("Invalid HTTP URL: expected HTTP(S) URL with a hostname")
     if parsed.username is not None or parsed.password is not None:
         raise ValueError("HTTP URL must not contain userinfo")
     is_tls = parsed.scheme.lower() == "https"
