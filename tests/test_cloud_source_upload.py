@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from strix.interface import cloud
-from strix.interface.cloud import http, source_upload
+from strix.interface.cloud import http, source_scan, source_upload
 
 
 if TYPE_CHECKING:
@@ -391,6 +391,114 @@ def test_source_upload_is_completed_and_attached_to_scan(
         "upload_ids": ["upload-1"],
     }
     assert uploaded_path is not None and not uploaded_path.exists()
+
+
+def test_source_upload_polls_while_platform_is_processing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    (tmp_path / "app.py").write_text("print('safe')\n", encoding="utf-8")
+    monkeypatch.setattr(source_scan, "_UPLOAD_PROCESSING_POLL_S", 0)
+    calls: list[tuple[str, str]] = []
+    complete_calls = 0
+
+    def fake_request(method: str, path: str, **_kwargs: Any) -> FakeResponse:
+        nonlocal complete_calls
+        calls.append((method, path))
+        if path == "/uploads/request":
+            return FakeResponse(
+                {
+                    "upload_id": "upload-1",
+                    "signed_url": "https://storage.test/object",
+                    "token": "signed",
+                }
+            )
+        if path == "/uploads/complete":
+            complete_calls += 1
+            if complete_calls <= 2:
+                return FakeResponse({"status": "processing"}, status_code=202)
+            return FakeResponse({"id": "upload-1"})
+        if path == "/scans":
+            return FakeResponse({"scan_id": "scan-1", "status": "pending"})
+        raise AssertionError(path)
+
+    monkeypatch.setattr(http, "request", fake_request)
+    monkeypatch.setattr(http, "upload_file", lambda *_args, **_kwargs: None)
+
+    assert cloud.run_cloud(["scans", "start", "--source", str(tmp_path), "--yes", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["upload_id"] == "upload-1"
+    assert payload["scan"]["scan_id"] == "scan-1"
+    assert complete_calls == 3
+    assert ("DELETE", "/uploads/upload-1") not in calls
+
+
+def test_source_upload_processing_poll_stops_at_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(source_scan, "_UPLOAD_PROCESSING_POLL_S", 5)
+    monkeypatch.setattr(source_scan, "_UPLOAD_PROCESSING_TIMEOUT_S", 12)
+    now = 0.0
+    sleeps: list[float] = []
+    complete_calls = 0
+
+    def monotonic() -> float:
+        return now
+
+    def sleep(seconds: float) -> None:
+        nonlocal now
+        sleeps.append(seconds)
+        now += seconds
+
+    def fake_request(method: str, path: str, **_kwargs: Any) -> FakeResponse:
+        nonlocal complete_calls
+        assert method == "POST"
+        assert path == "/uploads/complete"
+        complete_calls += 1
+        return FakeResponse({"status": "processing"}, status_code=202)
+
+    monkeypatch.setattr("strix.interface.cloud.source_scan.time.monotonic", monotonic)
+    monkeypatch.setattr("strix.interface.cloud.source_scan.time.sleep", sleep)
+    monkeypatch.setattr(http, "request", fake_request)
+
+    with pytest.raises(http.CloudError, match=r"still processing.*after 12 seconds"):
+        source_scan._complete_upload("upload-1", token=None)
+
+    assert complete_calls == 4
+    assert sleeps == [5, 5, 2]
+
+
+def test_source_upload_kept_when_processing_outlasts_poll_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    (tmp_path / "app.py").write_text("print('safe')\n", encoding="utf-8")
+    monkeypatch.setattr(source_scan, "_UPLOAD_PROCESSING_TIMEOUT_S", 0)
+    calls: list[tuple[str, str]] = []
+
+    def fake_request(method: str, path: str, **_kwargs: Any) -> FakeResponse:
+        calls.append((method, path))
+        if path == "/uploads/request":
+            return FakeResponse(
+                {
+                    "upload_id": "upload-1",
+                    "signed_url": "https://storage.test/object",
+                    "token": "signed",
+                }
+            )
+        if path == "/uploads/complete":
+            return FakeResponse({"status": "processing"}, status_code=202)
+        raise AssertionError(path)
+
+    monkeypatch.setattr(http, "request", fake_request)
+    monkeypatch.setattr(http, "upload_file", lambda *_args, **_kwargs: None)
+
+    assert (
+        cloud.run_cloud(["scans", "start", "--source", str(tmp_path), "--yes", "--json"])
+        == http.EXIT_ERROR
+    )
+    error = json.loads(capsys.readouterr().out)["error"]
+    assert "still processing" in error
+    assert "--upload-ids upload-1" in error
+    assert ("DELETE", "/uploads/upload-1") not in calls
 
 
 def test_source_upload_with_domain_is_a_live_test(
