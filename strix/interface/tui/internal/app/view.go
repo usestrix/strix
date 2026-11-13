@@ -284,7 +284,7 @@ func (m Model) viewInner() string {
 	if m.snapshot.SetupMode {
 		main = m.setupView()
 	}
-	if m.modal == modalConfirmMount {
+	if m.modal == modalConfirmMount || m.modal == modalApproval {
 		// A corner prompt, not a dialog: it sits out of the way in the live view
 		// while the scan waits on the answer.
 		main = m.cornerOverlay(main, m.modalView())
@@ -558,7 +558,7 @@ func (m Model) sidebarView(width, height int) string {
 			m.agentsView(max(1, width-5), agentRows),
 			width-4,
 			agentRows,
-			len(agentTreeEntries(m.snapshot.Agents, m.collapsedAgents)),
+			len(m.agentDisplayEntries()),
 			agentRows,
 			m.agentOffset,
 			m.scrollbarThumb(scrollbarAgents),

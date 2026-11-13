@@ -9,6 +9,7 @@ var Capabilities = []string{
 	"collection-deltas",
 	"structured-command-errors",
 	"agents-collection",
+	"action-approvals",
 }
 
 type Envelope struct {
@@ -25,11 +26,12 @@ type Message struct {
 }
 
 type Agent struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`
-	ParentID     *string `json:"parent_id"`
-	Status       string  `json:"status"`
-	ErrorMessage string  `json:"error_message"`
+	ApprovalPending bool    `json:"approval_pending"`
+	ID              string  `json:"id"`
+	Name            string  `json:"name"`
+	ParentID        *string `json:"parent_id"`
+	Status          string  `json:"status"`
+	ErrorMessage    string  `json:"error_message"`
 }
 
 // Connection is one MCP connection the run may reach, as the backend projects
@@ -56,33 +58,47 @@ type Hello struct {
 	Capabilities []string `json:"capabilities"`
 }
 
+type Approval struct {
+	ID        string `json:"approval_id"`
+	AgentID   string `json:"agent_id"`
+	AgentName string `json:"agent_name"`
+	Tool      string `json:"tool"`
+	Summary   string `json:"summary"`
+	Risky     bool   `json:"risky"`
+	Category  string `json:"category"`
+	ExpiresAt string `json:"expires_at"`
+}
+
 type Snapshot struct {
-	SetupMode           bool             `json:"setup_mode"`
-	ScanStarted         bool             `json:"scan_started"`
-	ScanState           string           `json:"scan_state"`
-	Targets             []string         `json:"targets"`
-	TargetCount         int              `json:"target_count"`
-	WorkingDir          string           `json:"working_dir"`
-	PendingMount        string           `json:"pending_mount"`
-	Instruction         string           `json:"instruction"`
-	ScanMode            string           `json:"scan_mode"`
-	MaxBudgetUSD        *float64         `json:"max_budget_usd"`
-	MaxTurns            int              `json:"max_turns"`
-	ScopeMode           string           `json:"scope_mode"`
-	DiffBase            string           `json:"diff_base"`
-	Model               string           `json:"model"`
-	CaidoURL            string           `json:"caido_url"`
-	Messages            []Message        `json:"messages"`
-	Agents              []Agent          `json:"-"`
-	Events              []Event          `json:"-"`
-	Vulnerabilities     []map[string]any `json:"-"`
-	Usage               map[string]any   `json:"usage"`
-	Subscription        bool             `json:"subscription"`
-	Connections         []Connection     `json:"connections"`
-	ViewerStatus        string           `json:"viewer_status"`
-	ViewerURL           *string          `json:"viewer_url"`
-	Error               *string          `json:"error"`
-	ProjectionTruncated bool             `json:"projection_truncated"`
+	ApprovalOnTimeout    string           `json:"approval_on_timeout"`
+	PendingApprovalCount int              `json:"pending_approval_count"`
+	PendingApprovals     []Approval       `json:"pending_approvals"`
+	SetupMode            bool             `json:"setup_mode"`
+	ScanStarted          bool             `json:"scan_started"`
+	ScanState            string           `json:"scan_state"`
+	Targets              []string         `json:"targets"`
+	TargetCount          int              `json:"target_count"`
+	WorkingDir           string           `json:"working_dir"`
+	PendingMount         string           `json:"pending_mount"`
+	Instruction          string           `json:"instruction"`
+	ScanMode             string           `json:"scan_mode"`
+	MaxBudgetUSD         *float64         `json:"max_budget_usd"`
+	MaxTurns             int              `json:"max_turns"`
+	ScopeMode            string           `json:"scope_mode"`
+	DiffBase             string           `json:"diff_base"`
+	Model                string           `json:"model"`
+	CaidoURL             string           `json:"caido_url"`
+	Messages             []Message        `json:"messages"`
+	Agents               []Agent          `json:"-"`
+	Events               []Event          `json:"-"`
+	Vulnerabilities      []map[string]any `json:"-"`
+	Usage                map[string]any   `json:"usage"`
+	Subscription         bool             `json:"subscription"`
+	Connections          []Connection     `json:"connections"`
+	ViewerStatus         string           `json:"viewer_status"`
+	ViewerURL            *string          `json:"viewer_url"`
+	Error                *string          `json:"error"`
+	ProjectionTruncated  bool             `json:"projection_truncated"`
 }
 
 type StateUpdate struct {

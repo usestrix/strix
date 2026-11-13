@@ -23,6 +23,7 @@ from strix.interface.scan_setup import (
     prepare_run,
     telemetry_start,
 )
+from strix.interface.tui.approval_history import record_approval_history
 from strix.interface.tui.backend import TuiBackendServer, TuiController
 from strix.interface.tui.backend.live_view import TuiLiveView
 from strix.interface.tui.sidecar import (
@@ -231,6 +232,7 @@ class GoTuiRuntime:
                 max_budget_usd=self.args.max_budget_usd,
                 event_sink=self.capture_event,
                 mcp_status_sink=self.capture_mcp_status,
+                approval_event_sink=self.capture_approval,
             )
             await self._sync_agent_state()
             if self.controller.scan_state == "running":
@@ -269,6 +271,40 @@ class GoTuiRuntime:
     async def _sync_and_notify(self) -> None:
         with contextlib.suppress(Exception):
             await self._sync_agent_state()
+        self.controller.notify_changed()
+
+    def capture_approval(self, event: dict[str, Any]) -> None:
+        category = str(event.get("category", "")).replace("_", " ")
+        content = ""
+        if event["type"] == "requested":
+            content = f"Waiting for approval: {event['summary']} ({category})"
+        elif event["type"] == "blocked":
+            content = f"Blocked automatically ({category})"
+        elif event["type"] == "resolved":
+            decision = event.get("decision")
+            if decision in ("approved", "denied"):
+                action = "Approved" if decision == "approved" else "Denied"
+                who = "you" if event.get("decided_by") == "terminal" else "a person"
+                content = f"{action} by {who}"
+            elif decision == "timed_out":
+                guard = self.coordinator.action_approvals
+                minutes = guard.settings.timeout_seconds / 60 if guard is not None else 5
+                action = "Allowed" if guard and guard.settings.on_timeout == "allow" else "Blocked"
+                content = f"{action}: no answer within {minutes:g} minutes"
+            else:
+                content = "Blocked: agent or scan stopped"
+        if content:
+            self.live_view.record_approval(str(event["agent_id"]), content)
+            if self.report_state is not None and event["type"] in {"resolved", "blocked"}:
+                try:
+                    record_approval_history(
+                        self.report_state.get_run_dir(),
+                        str(event["agent_id"]),
+                        content,
+                        summary=str(event["summary"]) if "summary" in event else None,
+                    )
+                except OSError:
+                    logger.exception("Could not save approval history")
         self.controller.notify_changed()
 
     def capture_mcp_status(self, roster: list[dict[str, Any]]) -> None:

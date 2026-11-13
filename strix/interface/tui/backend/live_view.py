@@ -20,6 +20,17 @@ class TuiLiveView(BaseLiveView):
         self._event_change_cursor: dict[str, int] = {}
         self._events_by_id: dict[str, dict[str, Any]] = {}
 
+    def record_approval(self, agent_id: str, content: str) -> None:
+        self._append_event(
+            agent_id,
+            "chat",
+            {
+                "role": "assistant",
+                "content": content,
+                "metadata": {"source": "action_approval"},
+            },
+        )
+
     def upsert_agent(  # type: ignore[override]
         self,
         agent_id: str,

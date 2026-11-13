@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 from agents import RunContextWrapper, function_tool
 
+from strix.core.action_approvals import guard_function_tool
 from strix.tools.mcp.client import _errored_tool_output
 from strix.tools.mcp.naming import namespaced_tool_name
 from strix.tools.mcp.registry import MCP_REGISTRY_CONTEXT_KEY, McpRegistry
@@ -254,6 +255,7 @@ async def get_mcp_tool_schema(
     }
 
 
+@guard_function_tool
 @function_tool(timeout=120, strict_mode=False)
 async def call_mcp(
     ctx: RunContextWrapper,

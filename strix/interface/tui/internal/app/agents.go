@@ -10,9 +10,27 @@ import (
 )
 
 type agentTreeEntry struct {
-	index  int
-	depth  int
-	prefix string
+	index          int
+	depth          int
+	prefix         string
+	approvalStatus bool
+}
+
+func (m Model) agentDisplayEntries() []agentTreeEntry {
+	var rows []agentTreeEntry
+	for _, entry := range agentTreeEntries(m.snapshot.Agents, m.collapsedAgents) {
+		rows = append(rows, entry)
+		agent := m.snapshot.Agents[entry.index]
+		pending := agent.ApprovalPending
+		for _, approval := range m.snapshot.PendingApprovals {
+			pending = pending || approval.AgentID == agent.ID
+		}
+		if pending {
+			entry.approvalStatus = true
+			rows = append(rows, entry)
+		}
+	}
+	return rows
 }
 
 // agentTreeEntries mirrors Textual Tree's depth-first ordering while retaining
@@ -154,10 +172,14 @@ func (m Model) agentsView(width, height int) string {
 	// is drawn — only the agent nodes.
 	var lines []string
 	statusIcons := map[string]string{"running": "⚪", "waiting": "⏸", "budget_paused": "⏸", "completed": "🟢", "failed": "🔴", "crashed": "🔴", "stopped": "■"}
-	entries := agentTreeEntries(m.snapshot.Agents, m.collapsedAgents)
+	entries := m.agentDisplayEntries()
 	start := windowStart(m.agentOffset, len(entries), height)
 	end := min(len(entries), start+height)
 	for _, entry := range entries[start:end] {
+		if entry.approvalStatus {
+			lines = append(lines, render.Dim().Render(truncate(entry.prefix+"  waiting for approval", width)))
+			continue
+		}
 		agent := m.snapshot.Agents[entry.index]
 		icon := statusIcons[agent.Status]
 		if icon == "" {
@@ -204,7 +226,7 @@ func (m Model) agentVulnCount(agentID string) int {
 }
 
 func (m *Model) ensureAgentVisible() {
-	entries := agentTreeEntries(m.snapshot.Agents, m.collapsedAgents)
+	entries := m.agentDisplayEntries()
 	if len(entries) == 0 {
 		m.agentOffset = 0
 		return
@@ -225,7 +247,7 @@ func (m Model) agentPageSize() int {
 }
 
 func (m *Model) keepAgentSelectionInWindow() {
-	entries := agentTreeEntries(m.snapshot.Agents, m.collapsedAgents)
+	entries := m.agentDisplayEntries()
 	if len(entries) == 0 {
 		return
 	}

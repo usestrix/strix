@@ -7,7 +7,7 @@ import inspect
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from agents.agent import ToolsToFinalOutputResult
 from agents.sandbox import SandboxAgent
@@ -20,6 +20,7 @@ from pydantic import ValidationError
 from strix.agents.prompt import render_system_prompt
 from strix.config import load_settings
 from strix.config.tool_call_arguments import describe_malformed_arguments
+from strix.core.action_approvals import check_action, separate_tool_timeout
 from strix.tools.agents_graph.tools import (
     agent_finish,
     create_agent,
@@ -354,10 +355,30 @@ def _bound_custom_tool(tool: CustomTool) -> CustomTool:
     return tool
 
 
+def _wrap_apply_patch(tool: CustomTool | FunctionTool) -> None:
+    invoke_tool = (
+        separate_tool_timeout(tool) if isinstance(tool, FunctionTool) else tool.on_invoke_tool
+    )
+
+    async def invoke(ctx: Any, raw_input: str) -> Any:
+        blocked = await check_action(
+            ctx,
+            "apply_patch",
+            {"input": raw_input},
+        )
+        if blocked is not None:
+            return blocked
+        return await invoke_tool(ctx, raw_input)
+
+    tool.on_invoke_tool = invoke
+
+
 def _configure_filesystem_tools(
     toolset: Any, *, chat_completions: bool, strict_schemas: bool = True
 ) -> None:
     for name, tool in vars(toolset).items():
+        if isinstance(tool, CustomTool | FunctionTool) and tool.name == "apply_patch":
+            _wrap_apply_patch(tool)
         if chat_completions:
             if isinstance(tool, CustomTool):
                 setattr(toolset, name, _custom_tool_as_function_tool(tool))
@@ -481,7 +502,7 @@ def _annotate_running_non_tty(parsed: dict[str, Any], result: Any) -> Any:
 
 
 def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
-    invoke_tool = tool.on_invoke_tool
+    invoke_tool = separate_tool_timeout(tool)
     tool.description = f"{tool.description.rstrip()} {_EXEC_COMMAND_DESCRIPTION_NOTE}"
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
@@ -494,6 +515,9 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
                 parsed["shell"] = "bash"
             _apply_shell_output_cap(parsed)
             raw_input = json.dumps(parsed)
+            blocked = await check_action(ctx, "exec_command", cast("dict[str, Any]", parsed))
+            if blocked is not None:
+                return blocked
         try:
             result = await invoke_tool(ctx, raw_input)
         except ValidationError as exc:
@@ -514,7 +538,7 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
 
 
 def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
-    invoke_tool = tool.on_invoke_tool
+    invoke_tool = separate_tool_timeout(tool)
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
         try:
@@ -526,6 +550,10 @@ def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
                 parsed["chars"] = _decode_chars_escape(parsed["chars"])
             _apply_shell_output_cap(parsed)
             raw_input = json.dumps(parsed)
+            if cast("dict[str, Any]", parsed).get("chars"):
+                blocked = await check_action(ctx, "write_stdin", cast("dict[str, Any]", parsed))
+                if blocked is not None:
+                    return blocked
         try:
             return await invoke_tool(ctx, raw_input)
         except ValidationError as exc:

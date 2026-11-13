@@ -4,11 +4,16 @@ import argparse
 import asyncio
 import os
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
+from agents import RunContextWrapper
 
 from strix.config import apply_config_override, loader
-from strix.config.settings import DEFAULT_MAX_TURNS
+from strix.config.settings import DEFAULT_MAX_TURNS, ActionApprovalSettings
+from strix.core.action_approvals import ActionApprovalGuard
+from strix.core.agents import AgentCoordinator
 from strix.interface.tui.backend.controller import TuiController
 
 
@@ -20,6 +25,109 @@ class _SendingCoordinator:
     async def send(self, agent_id: str, message: dict[str, object]) -> bool:
         self.messages.append((agent_id, message))
         return self.delivered
+
+
+@pytest.mark.parametrize("on_timeout", ["block", "allow"])
+def test_approval_projection_is_bounded_sanitized_and_excludes_arguments(
+    on_timeout: str,
+) -> None:
+    pending = [
+        {
+            "approval_id": str(index),
+            "agent_id": "agent",
+            "agent_name": "agent\x1b[31m",
+            "tool": "exec_command",
+            "summary": "\x1b[31m" + "x" * 2000,
+            "risky": True,
+            "category": "deletes_data",
+            "expires_at": "2030-01-01T00:00:00Z",
+            "arguments": {"secret": "not for projection"},
+        }
+        for index in range(20)
+    ]
+    controller = TuiController(
+        args(),
+        coordinator=SimpleNamespace(
+            action_approvals=SimpleNamespace(
+                pending=lambda: pending, settings=SimpleNamespace(on_timeout=on_timeout)
+            ),
+        ),
+    )
+    projected = controller.snapshot()["pending_approvals"]
+    assert len(projected) == 8
+    assert controller.snapshot()["pending_approval_count"] == 20
+    assert controller.snapshot()["approval_on_timeout"] == on_timeout
+    assert projected[0]["approval_id"] == "0"
+    assert "arguments" not in projected[0]
+    assert "\x1b" not in projected[0]["summary"]
+    assert len(projected[0]["summary"]) < 650
+    assert TuiController(args()).snapshot()["pending_approvals"] == []
+    assert TuiController(args()).snapshot()["approval_on_timeout"] == "block"
+    controller.live_view.upsert_agent("agent", name="agent")
+    assert controller.collection("agents")[0]["approval_pending"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("approved", [True, False])
+@pytest.mark.parametrize("cross_loop", [True, False])
+async def test_approval_decision_resolves_on_scan_loop(
+    approved: bool, cross_loop: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    coordinator = AgentCoordinator()
+    guard = ActionApprovalGuard(
+        ActionApprovalSettings.model_validate({"enabled": True, "mode": "ask"})
+    )
+    coordinator.action_approvals = guard
+    requested = asyncio.Event()
+    events: list[dict[str, Any]] = []
+
+    def capture(event: dict[str, Any]) -> None:
+        events.append(event)
+        if event["type"] == "requested":
+            requested.set()
+
+    async def evaluate(_state: dict[str, Any]) -> tuple[bool, str, str]:
+        return True, "deletes_data", "Deletes target data."
+
+    guard.event_sink = capture
+    monkeypatch.setattr(guard.judge, "evaluate", evaluate)
+    ctx = RunContextWrapper(context={"agent_id": "agent", "coordinator": coordinator})
+    task = asyncio.create_task(guard.check(ctx, "exec_command", {"cmd": "test"}))
+    await asyncio.wait_for(requested.wait(), 1)
+    controller = TuiController(args(), coordinator=coordinator)
+    controller.scan_loop = asyncio.get_running_loop()
+    approval_id = controller.snapshot()["pending_approvals"][0]["approval_id"]
+    payload = {"approval_id": approval_id, "approved": approved}
+    if cross_loop:
+        result = await asyncio.to_thread(
+            lambda: asyncio.run(controller.handle("approval.decide", payload))
+        )
+    else:
+        result = await controller.handle("approval.decide", payload)
+    assert result == payload
+    assert ((await task) is None) is approved
+    assert events[1]["decided_by"] == "terminal"
+    assert not controller.snapshot()["pending_approvals"]
+    with pytest.raises(ValueError, match="unknown or has expired"):
+        await controller.handle("approval.decide", payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("approved", ["true", 1, None])
+async def test_approval_decision_requires_boolean(approved: Any) -> None:
+    controller = TuiController(args())
+    with pytest.raises(TypeError, match="boolean"):
+        await controller.handle("approval.decide", {"approval_id": "missing", "approved": approved})
+
+
+@pytest.mark.asyncio
+async def test_unknown_approval_returns_command_error() -> None:
+    coordinator = AgentCoordinator()
+    coordinator.action_approvals = ActionApprovalGuard(ActionApprovalSettings())
+    controller = TuiController(args(), coordinator=coordinator)
+    controller.scan_loop = asyncio.get_running_loop()
+    with pytest.raises(ValueError, match="unknown or has expired"):
+        await controller.handle("approval.decide", {"approval_id": "missing", "approved": True})
 
 
 def args() -> argparse.Namespace:

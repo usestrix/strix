@@ -207,6 +207,8 @@ func (m Model) modalView() string {
 		return m.confirmView("🛑 Stop '"+name+"'?", 30, mid, mid)
 	case modalConfirmMount:
 		return m.mountConfirmView()
+	case modalApproval:
+		return m.approvalView()
 	case modalVulnerability:
 		if len(m.snapshot.Vulnerabilities) == 0 {
 			return ""

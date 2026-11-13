@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { AgentTranscript } from "./AgentTranscript";
 import { ScanPromptComposer } from "./ScanPromptComposer";
-import type { TranscriptAgent, TranscriptEvent } from "@/data/serverSource";
+import type { ApprovalHistoryEntry, TranscriptAgent, TranscriptEvent } from "@/data/serverSource";
 
 /** Status -> the small leading dot color, matching the graph node styling. */
 const STATUS_DOT: Record<string, string> = {
@@ -34,12 +34,14 @@ export function AgentDetailModal({
   open,
   agent,
   events,
+  approvalHistory = [],
   steerable,
   onClose,
 }: {
   open: boolean;
   agent: TranscriptAgent | null;
   events: TranscriptEvent[];
+  approvalHistory?: ApprovalHistoryEntry[];
   steerable: boolean;
   onClose: () => void;
 }) {
@@ -147,6 +149,12 @@ export function AgentDetailModal({
         <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-5">
           {contentReady && (
             <AgentTranscript agent={shownAgent} events={events} showHeader={false} />
+          )}
+          {contentReady && approvalHistory.some(entry => entry.agent_id === shownAgent.id) && (
+            <section aria-label="Action approval history" className="mt-4 space-y-2 border-t border-white/10 pt-4 text-sm">
+              <h3 className="font-semibold">Action approvals</h3>
+              <ol className="space-y-3">{approvalHistory.filter(entry => entry.agent_id === shownAgent.id).map((entry, index) => <li key={`${entry.timestamp}-${index}`} className="space-y-1 text-white/70"><p>{entry.content}</p>{entry.summary && <pre className="whitespace-pre-wrap break-words font-mono text-xs [overflow-wrap:anywhere]"><code translate="no">{entry.summary}</code></pre>}</li>)}</ol>
+            </section>
           )}
         </div>
 
