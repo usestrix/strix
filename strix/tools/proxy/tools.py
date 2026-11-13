@@ -154,6 +154,99 @@ def _err(name: str, exc: Exception) -> str:
     )
 
 
+_INVALID_HTTPQL = "Invalid HTTPQL query"
+_HTTPQL_FIELDS: dict[str, dict[str, str]] = {
+    "req": {
+        "method": "text",
+        "host": "text",
+        "path": "text",
+        "query": "text",
+        "ext": "text",
+        "raw": "text",
+        "port": "int",
+        "len": "int",
+        "created_at": "date",
+        "tls": "bool",
+    },
+    "resp": {"code": "int", "len": "int", "roundtrip": "int", "raw": "text"},
+    "row": {"id": "int"},
+}
+_HTTPQL_OPERATORS: dict[str, frozenset[str]] = {
+    "int": frozenset({"eq", "ne", "gt", "gte", "lt", "lte"}),
+    "text": frozenset({"eq", "ne", "cont", "ncont", "like", "nlike", "regex", "nregex"}),
+    "date": frozenset({"gt", "lt"}),
+    "bool": frozenset({"eq", "ne"}),
+}
+_HTTPQL_STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
+_HTTPQL_CLAUSE = re.compile(
+    r"(?<![\w.])([A-Za-z_]+)\.([A-Za-z_]+)(?:\.([A-Za-z_]+))?(\s*):(\s*)"
+    r"(\"(?:[^\"\\]|\\.)*\"|'[^']*'|[^\s()]*)"
+)
+
+
+def _httpql_clause_mistake(match: re.Match[str]) -> str | None:
+    namespace, field, operator, before, after, value = match.groups()
+    clause = match.group(0).strip()
+    if before or after:
+        return f"{clause}: remove the spaces around ':'."
+    fields = _HTTPQL_FIELDS.get(namespace)
+    if fields is None:
+        return f"{clause}: unknown namespace {namespace!r}; use req, resp or row."
+    kind = fields.get(field)
+    if kind is None:
+        return (
+            f"{clause}: {namespace} has no field {field!r}; use one of {', '.join(sorted(fields))}."
+        )
+    if operator not in _HTTPQL_OPERATORS[kind]:
+        operators = ", ".join(sorted(_HTTPQL_OPERATORS[kind]))
+        return f"{clause}: {namespace}.{field} takes {operators}."
+    if value.startswith("'"):
+        return f"{clause}: use double quotes, not single quotes."
+    if kind in ("int", "bool") and value.startswith('"'):
+        return f"{clause}: {namespace}.{field} values are not quoted."
+    if kind in ("text", "date") and not value.startswith('"'):
+        return f'{clause}: quote the value, e.g. {namespace}.{field}.eq:"...".'
+    return None
+
+
+def _httpql_mistakes(httpql_filter: str) -> list[str]:
+    mistakes = [
+        f"{literal}: write each backslash twice inside a string (\\\\d, \\\\.)."
+        for literal in _HTTPQL_STRING.findall(httpql_filter)
+        if any(escape not in '"\\/' for escape in re.findall(r"\\(.)", literal[1:-1]))
+    ]
+    unquoted = _HTTPQL_STRING.sub('""', httpql_filter)
+    if re.search(r"\bNOT\b", unquoted, re.IGNORECASE):
+        mistakes.append("There is no NOT. Use a negated operator: ne, ncont, nlike, nregex.")
+    if "&&" in unquoted or "||" in unquoted:
+        mistakes.append("Use AND / OR, not && / ||.")
+    mistakes.extend(
+        f'{match.group(0)}: quote the value, e.g. {match.group(1)}:"intercept".'
+        for match in re.finditer(r"\b(source|preset):(?!\")(\S*)", unquoted)
+    )
+    for match in _HTTPQL_CLAUSE.finditer(httpql_filter):
+        mistake = _httpql_clause_mistake(match)
+        if mistake:
+            mistakes.append(mistake)
+    return mistakes
+
+
+def _invalid_httpql(httpql_filter: str) -> str:
+    mistakes = _httpql_mistakes(httpql_filter) or [
+        "Check each clause is namespace.field.operator:value, strings are "
+        "double-quoted, numbers are not, and clauses are joined with AND / OR."
+    ]
+    return json.dumps(
+        {
+            "success": False,
+            "error": f"list_requests failed: Caido rejected the HTTPQL filter {httpql_filter!r}.",
+            "likely_mistakes": mistakes,
+            "next_step": "Correct the filter and call list_requests again.",
+        },
+        ensure_ascii=False,
+    )
+
+
 @function_tool(timeout=120)
 async def list_requests(
     ctx: RunContextWrapper,
@@ -164,23 +257,29 @@ async def list_requests(
     sort_order: SortOrder = "desc",
     scope_id: str | None = None,
 ) -> str:
-    """List captured HTTP requests from the Caido proxy with HTTPQL filtering.
+    r"""List captured HTTP requests from the Caido proxy with HTTPQL filtering.
 
-    Caido HTTPQL syntax (operators differ by field type):
+    A clause is ``namespace.field.operator:value`` with no spaces around
+    the colon. Fields and operators by type:
 
-    - **Integer fields** (``resp.code``, ``req.port``, ``id``,
-      ``roundtrip``) — ``eq``, ``gt``, ``gte``, ``lt``, ``lte``, ``ne``.
-      Examples: ``resp.code.eq:200``, ``resp.code.gte:400``,
-      ``req.port.eq:443``.
-    - **Text/byte fields** (``req.method``, ``req.host``, ``req.path``,
-      ``req.query``, ``req.ext``, ``req.raw``) — ``regex``, ``cont``
-      (substring), ``eq``. Examples: ``req.method.eq:"POST"``,
-      ``req.path.cont:"/api/"``, ``req.host.regex:".*\\.example\\.com"``.
-    - **Date fields** (``req.created_at``) — ``gt``, ``lt`` with ISO
-      timestamps: ``req.created_at.gt:"2024-01-01T00:00:00Z"``.
-    - **Combine** with ``AND`` / ``OR``: ``req.method.eq:"POST" AND
-      resp.code.gte:400``.
-    - **Special**: ``source:intercept`` (only intercepted requests),
+    - **Integer fields** (``resp.code``, ``resp.len``, ``resp.roundtrip``,
+      ``req.port``, ``req.len``, ``row.id``) take ``eq``, ``ne``, ``gt``,
+      ``gte``, ``lt``, ``lte`` and an unquoted number. Examples:
+      ``resp.code.eq:200``, ``resp.code.gte:400``, ``req.port.eq:443``.
+    - **Text fields** (``req.method``, ``req.host``, ``req.path``,
+      ``req.query``, ``req.ext``, ``req.raw``, ``resp.raw``) take ``eq``,
+      ``ne``, ``cont``, ``ncont``, ``like``, ``nlike``, ``regex``,
+      ``nregex`` and a double-quoted string. Examples:
+      ``req.method.eq:"POST"``, ``req.path.cont:"/api/"``,
+      ``req.host.regex:".*\\.example\\.com"``. Inside a string, write
+      every regex backslash twice (``\\d``, ``\\.``).
+    - **Date field** ``req.created_at`` takes ``gt`` / ``lt`` and a quoted
+      ISO timestamp: ``req.created_at.gt:"2024-01-01T00:00:00Z"``.
+    - **Boolean field** ``req.tls`` takes ``eq`` / ``ne`` and an unquoted
+      ``true`` / ``false``.
+    - **Combine** with ``AND`` / ``OR`` and parentheses:
+      ``req.method.eq:"POST" AND resp.code.gte:400``.
+    - **Special**: ``source:"intercept"`` (only intercepted requests),
       ``preset:"name"``.
 
     For sitemap-style tree traversal use HTTPQL filters: drill into a
@@ -192,15 +291,17 @@ async def list_requests(
 
     Notes:
 
-    - HTTPQL has **no ``NOT`` operator**. Use the negated form of the
-      operator instead: ``ne``, ``ncont``, ``nlike``, ``nregex``
-      (e.g. ``req.path.ncont:"/static"`` to exclude static paths).
-    - String values **must be quoted**; integer values **must not**.
+    - HTTPQL has **no ``NOT`` operator** and no ``&&`` / ``||``. Use the
+      negated form of the operator instead: ``ne``, ``ncont``, ``nlike``,
+      ``nregex`` (e.g. ``req.path.ncont:"/static"`` to exclude static paths).
+    - String values **must be double-quoted**; integer values **must not**.
       ``resp.code.eq:200`` is right; ``resp.code.eq:"200"`` is a parse
-      error. Same rule for ``cont`` / ``regex`` strings.
+      error. There is no ``req.url`` or ``resp.status`` field.
     - A bare quoted string searches both ``req.raw`` and ``resp.raw``,
       handy for sensitive-data sweeps:
       ``"password" OR "secret" OR "api_key"``.
+    - A rejected filter returns the likely mistakes. Correct the filter
+      and call again.
 
     Args:
         httpql_filter: Caido HTTPQL query (optional).
@@ -285,6 +386,8 @@ async def list_requests(
             default=str,
         )
     except Exception as exc:  # noqa: BLE001
+        if httpql_filter and _INVALID_HTTPQL in str(exc):
+            return _invalid_httpql(httpql_filter)
         return _err("list_requests", exc)
 
 
