@@ -229,15 +229,15 @@ def prepare_source(
         archive_path = Path(handle.name)
     try:
         _write_archive(archive_path, manifest.files)
-    except BaseException:
+        archive_bytes = archive_path.stat().st_size
+        _validate_archive_size(manifest, archive_bytes)
+        digest = _sha256(archive_path)
+        return SourceBundle(manifest, archive_path, archive_bytes, digest)
+    except BaseException as exc:
         archive_path.unlink(missing_ok=True)
+        if isinstance(exc, OSError):
+            raise http.CloudError(f"could not prepare source archive: {exc}") from exc
         raise
-    archive_bytes = archive_path.stat().st_size
-    if archive_bytes > MAX_ARCHIVE_BYTES:
-        archive_path.unlink(missing_ok=True)
-        raise _archive_too_large_error(manifest, archive_bytes)
-    digest = _sha256(archive_path)
-    return SourceBundle(manifest, archive_path, archive_bytes, digest)
 
 
 _LARGEST_FILES_SHOWN = 5
@@ -247,13 +247,15 @@ def _format_mib(size: int) -> str:
     return f"{size / (1024 * 1024):.1f} MiB"
 
 
-def _archive_too_large_error(manifest: SourceManifest, archive_bytes: int) -> http.CloudError:
+def _validate_archive_size(manifest: SourceManifest, archive_bytes: int) -> None:
     """Name the largest selected files so the user knows what to exclude."""
+    if archive_bytes <= MAX_ARCHIVE_BYTES:
+        return
     largest = sorted(manifest.files, key=lambda item: item.size, reverse=True)
     listed = ", ".join(
         f"{item.archive_name} ({_format_mib(item.size)})" for item in largest[:_LARGEST_FILES_SHOWN]
     )
-    return http.CloudError(
+    raise http.CloudError(
         f"the source archive is {_format_mib(archive_bytes)}, larger than the "
         f"{_format_mib(MAX_ARCHIVE_BYTES)} upload limit. Largest files: {listed}.",
         next_step=(
