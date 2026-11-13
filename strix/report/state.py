@@ -1046,20 +1046,27 @@ def record_llm_request(event: "LlmRequestEvent") -> None:
 
 
 def record_tool_call(
-    *, started_at: datetime, agent_id: str | None, tool: str, duration_ms: int
+    *,
+    call_id: str,
+    started_at: datetime,
+    agent_id: str | None,
+    tool: str,
+    duration_ms: int | None,
 ) -> None:
-    """Each tool call's timing, kept in run.json's ``tool_calls``."""
+    """Record completed tool execution metadata without arguments or results."""
     report_state = get_global_report_state()
     if report_state is None:
         return
-    report_state.run_record.setdefault("tool_calls", []).append(
-        {
-            "started_at": started_at.isoformat(),
-            "agent_id": agent_id,
-            "tool": tool,
-            "duration_ms": duration_ms,
-        }
-    )
+    receipt: dict[str, Any] = {
+        "call_id": call_id,
+        "started_at": started_at.isoformat(),
+        "finished_at": datetime.now(UTC).isoformat(),
+        "agent_id": agent_id,
+        "tool": tool,
+    }
+    if duration_ms is not None:
+        receipt["duration_ms"] = duration_ms
+    report_state.run_record.setdefault("tool_calls", []).append(receipt)
 
 
 def record_openrouter_provider(provider: Any, usage: Any) -> None:

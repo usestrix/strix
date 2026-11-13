@@ -27,6 +27,8 @@ from typing import Any
 
 from agents import RunContextWrapper, function_tool
 
+from strix.report.execution_evidence import execution_receipts, resolve_execution_refs
+
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +63,14 @@ def _caller_identity(ctx: RunContextWrapper) -> tuple[str | None, str | None]:
             raw_agent_name = names.get(agent_id)
             agent_name = raw_agent_name if isinstance(raw_agent_name, str) else None
     return agent_id, agent_name
+
+
+def _execution_run_record() -> dict[str, Any]:
+    # Imported here because ReportState imports the coverage report builder.
+    from strix.report.state import get_global_report_state  # noqa: PLC0415
+
+    state = get_global_report_state()
+    return state.run_record if state is not None else {}
 
 
 def _generate_entry_id() -> str | None:
@@ -196,12 +206,19 @@ def _record_impl(
     evidence: str,
     agent_id: str | None,
     agent_name: str | None,
+    execution_refs: list[str] | None = None,
 ) -> dict[str, Any]:
     normalized, errors = _validate(
         surface=surface, risk_area=risk_area, outcome=outcome, evidence=evidence
     )
     if errors:
         return {"success": False, "error": "Validation failed", "errors": errors}
+    refs = execution_refs or []
+    if refs and resolve_execution_refs(_execution_run_record(), agent_id, refs) is None:
+        return {
+            "success": False,
+            "error": "Execution references must be completed calls belonging to this agent",
+        }
 
     entry: dict[str, Any] = {
         "surface": surface.strip(),
@@ -215,6 +232,8 @@ def _record_impl(
         entry["agent_id"] = agent_id
     if agent_name:
         entry["agent_name"] = agent_name
+    if refs:
+        entry["execution_refs"] = list(refs)
 
     with _coverage_lock:
         duplicate = _duplicate_of_locked(surface, risk_area)
@@ -263,7 +282,14 @@ def _update_impl(
     evidence: str,
     agent_id: str | None,
     agent_name: str | None,
+    execution_refs: list[str] | None = None,
 ) -> dict[str, Any]:
+    refs = execution_refs or []
+    if refs and resolve_execution_refs(_execution_run_record(), agent_id, refs) is None:
+        return {
+            "success": False,
+            "error": "Execution references must be completed calls belonging to this agent",
+        }
     key = (entry_id or "").strip()
     with _coverage_lock:
         existing = _coverage_storage.get(key)
@@ -292,6 +318,8 @@ def _update_impl(
             superseded["evidence"] = existing["evidence"]
         if existing.get("agent_name"):
             superseded["agent_name"] = existing["agent_name"]
+        if existing.get("execution_refs"):
+            superseded["execution_refs"] = existing["execution_refs"]
         history = existing.get("history")
         existing["history"] = [*history, superseded] if isinstance(history, list) else [superseded]
 
@@ -303,6 +331,9 @@ def _update_impl(
             existing["agent_id"] = agent_id
         if agent_name:
             existing["agent_name"] = agent_name
+        existing.pop("execution_refs", None)
+        if refs:
+            existing["execution_refs"] = list(refs)
         _persist_locked()
     logger.info(
         "Coverage updated: id=%s %s -> %s surface=%s",
@@ -358,6 +389,8 @@ def _list_impl(
         agent_name = entry.get("agent_name")
         if agent_name:
             listing["agent_name"] = agent_name
+        if entry.get("execution_refs"):
+            listing["execution_refs"] = entry["execution_refs"]
         history = entry.get("history")
         if isinstance(history, list) and history:
             listing["previous_outcomes"] = [str(h.get("outcome", "")) for h in history]
@@ -381,6 +414,7 @@ async def record_coverage(
     risk_area: str,
     outcome: str,
     evidence: str = "",
+    execution_refs: list[str] | None = None,
 ) -> str:
     """Record that you reviewed a surface, and how that review closed.
 
@@ -435,6 +469,8 @@ async def record_coverage(
             ``not_applicable``, and ``needs_follow_up``; recommended
             otherwise. Keep it to a sentence or two — name the control,
             the test performed, or the missing piece.
+        execution_refs: Completed call IDs from ``list_execution_receipts``.
+            A matching call demonstrates activity, not the truth of the conclusion.
     """
     agent_id, agent_name = _caller_identity(ctx)
     result = await asyncio.to_thread(
@@ -445,6 +481,7 @@ async def record_coverage(
         evidence=evidence,
         agent_id=agent_id,
         agent_name=agent_name,
+        execution_refs=execution_refs,
     )
     return json.dumps(result, ensure_ascii=False, default=str)
 
@@ -455,6 +492,7 @@ async def update_coverage(
     entry_id: str,
     outcome: str,
     evidence: str = "",
+    execution_refs: list[str] | None = None,
 ) -> str:
     """Change how an already-recorded surface closed.
 
@@ -490,6 +528,8 @@ async def update_coverage(
             ``not_applicable``, and ``needs_follow_up``. Say what
             changed, not just what you concluded — the reader needs to
             know why this closed differently the second time.
+        execution_refs: New completed call IDs from ``list_execution_receipts``.
+            Omitted references clear the previous conclusion's execution linkage.
     """
     agent_id, agent_name = _caller_identity(ctx)
     result = await asyncio.to_thread(
@@ -499,6 +539,7 @@ async def update_coverage(
         evidence=evidence,
         agent_id=agent_id,
         agent_name=agent_name,
+        execution_refs=execution_refs,
     )
     return json.dumps(result, ensure_ascii=False, default=str)
 
@@ -533,3 +574,20 @@ async def list_coverage(
         _list_impl, outcome=outcome, surface=surface, caller_agent_id=caller_agent_id
     )
     return json.dumps(result, ensure_ascii=False, default=str)
+
+
+@function_tool(timeout=30)
+async def list_execution_receipts(ctx: RunContextWrapper, limit: int = 20) -> str:
+    """List recent completed tool calls attributable to this agent.
+
+    Use the returned call IDs as execution_refs with record_coverage or
+    update_coverage after performing a test. The receipts contain no tool
+    arguments or results. They confirm a call occurred, not that the claimed
+    security conclusion is correct.
+    """
+    agent_id, _ = _caller_identity(ctx)
+    receipts = execution_receipts(_execution_run_record(), agent_id)
+    return json.dumps(
+        {"receipts": receipts[: min(max(limit, 1), 50)], "total_count": len(receipts)},
+        ensure_ascii=False,
+    )
