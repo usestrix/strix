@@ -1782,6 +1782,126 @@ def test_update_drops_reasoning_left_behind_by_the_field_it_describes(
     assert "Dropped as superseded: confidence_rationale, cvss_breakdown" in markdown
 
 
+def test_update_rejects_a_revision_that_leaves_an_unfilable_report(
+    report_state: ReportState,
+) -> None:
+    """Lowering confidence must carry the rationale the merged report then needs."""
+    _seed_weak_report(report_state)
+    report = report_state.vulnerability_reports[0]
+    report["counterevidence"] = "No write primitive found; the banner match is the only signal."
+    report["confidence"] = "high"
+    report["severity_change_conditions"] = "Confirming the write would raise this."
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="The replay did not reproduce the write.",
+        fields={"confidence": "low"},
+    )
+
+    assert result["success"] is False
+    assert any("confidence_rationale" in error for error in result["errors"])
+    unchanged = report_state.vulnerability_reports[0]
+    assert unchanged["confidence"] == "high", "a rejected revision changes nothing"
+    assert "update_history" not in unchanged
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="The replay did not reproduce the write.",
+        fields={
+            "confidence": "low",
+            "confidence_rationale": "The write could not be replayed; static trace only.",
+        },
+    )
+
+    assert result["success"] is True
+    assert report_state.vulnerability_reports[0]["confidence"] == "low"
+
+
+def test_update_rejects_a_rescoring_that_drops_its_severity_conditions(
+    report_state: ReportState,
+) -> None:
+    """A new rating must not stand beside the reasoning written for the old one."""
+    _seed_weak_report(report_state)
+    report = report_state.vulnerability_reports[0]
+    report["counterevidence"] = "No write primitive found; the banner match is the only signal."
+    report["confidence_rationale"] = "The banner is the only signal."
+    report["severity_change_conditions"] = "Confirming the write would raise this."
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="A stronger vector than first scored.",
+        fields={"cvss_breakdown": _CVSS},
+    )
+
+    assert result["success"] is False
+    assert any("severity_change_conditions" in error for error in result["errors"])
+    unchanged = report_state.vulnerability_reports[0]
+    assert unchanged["severity"] == "medium", "a rejected revision changes nothing"
+    assert "update_history" not in unchanged
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="A stronger vector than first scored.",
+        fields={
+            "cvss_breakdown": _CVSS,
+            "severity_change_conditions": "A guard before the write would remove the impact.",
+        },
+    )
+
+    assert result["success"] is True
+    revised = report_state.vulnerability_reports[0]
+    assert revised["severity"] == "critical"
+    assert revised["severity_change_conditions"].startswith("A guard")
+
+
+def test_update_keeps_an_explicitly_supplied_equal_rationale(
+    report_state: ReportState,
+) -> None:
+    """A dependent field the update carries is kept even when its value is unchanged.
+
+    Lowering confidence while restating the existing rationale must succeed:
+    the merge counts the unchanged value as unchanged, but the field was
+    explicitly supplied, so it is not superseded reasoning.
+    """
+    _seed_weak_report(report_state)
+    report = report_state.vulnerability_reports[0]
+    report["counterevidence"] = "No write primitive found; the banner match is the only signal."
+    report["severity_change_conditions"] = "Confirming the write would raise this."
+    report["confidence"] = "medium"
+    report["confidence_rationale"] = "Static trace only; no runtime access."
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Reachability could not be confirmed.",
+        fields={
+            "confidence": "low",
+            "confidence_rationale": "Static trace only; no runtime access.",
+        },
+    )
+
+    assert result["success"] is True
+    revised = report_state.vulnerability_reports[0]
+    assert revised["confidence"] == "low"
+    assert revised["confidence_rationale"] == "Static trace only; no runtime access."
+
+
+def test_update_never_makes_a_report_less_filable_than_it_already_is(
+    report_state: ReportState,
+) -> None:
+    """A report filed before a rule existed stays updatable: only violations the
+    revision itself introduces are rejected."""
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="A second scan confirmed the banner.",
+        fields={"evidence": "The version banner, seen on two consecutive scans."},
+    )
+
+    assert result["success"] is True
+    assert report_state.vulnerability_reports[0]["evidence"].endswith("consecutive scans.")
+
+
 def test_agent_revises_its_own_report_without_a_duplicate_verdict(
     report_state: ReportState,
 ) -> None:

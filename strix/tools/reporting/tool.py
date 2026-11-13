@@ -355,6 +355,34 @@ def _validate_fix_verification(
     ]
 
 
+def _validate_revision_candidate(report: dict[str, Any], candidate: dict[str, Any]) -> list[str]:
+    """Cross-field filing rules a revision breaks that the filed report did not.
+
+    The update path validates each incoming field on its own, but the merge can
+    pair a new rating with reasoning written for the old one: replacing a field
+    drops the fields that described its previous value, so the merged report is
+    checked against the same cross-field invariants create_vulnerability_report
+    enforces. Only violations the revision introduces are returned - a report
+    filed before a rule existed stays updatable, and a revision can never make
+    a report less filable than it already is.
+    """
+
+    def cross_field_errors(record: dict[str, Any]) -> list[str]:
+        errors = _validate_analysis_fields(
+            counterevidence=record.get("counterevidence", ""),
+            confidence=str(record.get("confidence") or "").strip().lower(),
+            confidence_rationale=record.get("confidence_rationale"),
+            severity_change_conditions=record.get("severity_change_conditions", ""),
+        )
+        errors.extend(
+            _validate_fix_verification(record.get("code_locations"), record.get("fix_verification"))
+        )
+        return errors
+
+    already_violated = set(cross_field_errors(report))
+    return [error for error in cross_field_errors(candidate) if error not in already_violated]
+
+
 def _finding_class_of(report: dict[str, Any]) -> str:
     """Resolve the class of a stored finding.
 
@@ -620,7 +648,7 @@ def _read_revision(
     return changes, None
 
 
-def _do_update(
+def _do_update(  # noqa: PLR0911
     *,
     report_id: str,
     update_reason: str,
@@ -639,7 +667,7 @@ def _do_update(
     if rejection is not None:
         return rejection
 
-    from strix.report.state import get_global_report_state
+    from strix.report.state import ReportRevisionValidationError, get_global_report_state
 
     report_state = get_global_report_state()
     if report_state is None:
@@ -659,7 +687,22 @@ def _do_update(
             update_reason=update_reason,
             updated_by_agent_id=agent_id,
             updated_by_agent_name=agent_name,
+            validate=_validate_revision_candidate,
         )
+    except ReportRevisionValidationError as e:
+        logger.info(
+            "update_vulnerability_report rejected a revision of %s: %s", report_id, e.errors
+        )
+        return {
+            "success": False,
+            "error": (
+                "Validation failed - the revision would leave the report in a state "
+                "create_vulnerability_report rejects. Nothing changed; supply the fields "
+                "below with your update."
+            ),
+            "errors": e.errors,
+            "report_id": report_id,
+        }
     except Exception as e:
         logger.exception("update_vulnerability_report persistence failed")
         return {
