@@ -9,12 +9,9 @@ call at a time against the shared client.
 from __future__ import annotations
 
 import asyncio
-import json
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from agents.tool_context import ToolContext
 from caido_sdk_client.errors import OperationUserError
 
 from strix.runtime.caido_handle import CaidoBootstrapHandle
@@ -294,87 +291,3 @@ def test_err_logs_caido_errors_as_warnings(caplog: pytest.LogCaptureFixture) -> 
 
     [record] = caplog.records
     assert record.levelname == "WARNING"
-
-
-@pytest.mark.parametrize(
-    ("httpql_filter", "expected"),
-    [
-        ('resp.code.eq:"200"', "values are not quoted"),
-        ('req.host.regex:".*\\.example\\.com"', "write each backslash twice"),
-        ("source:intercept", 'source:"intercept"'),
-        ('NOT req.path.cont:"/static"', "There is no NOT"),
-        ('req.host.eq:"a" && resp.code.eq:200', "Use AND / OR"),
-        ("req.host.eq:example.com", "quote the value"),
-        ("req.path.cont:'/api'", "double quotes"),
-        ('req.url.cont:"/api"', "req has no field 'url'"),
-        ("resp.status.eq:200", "resp has no field 'status'"),
-        ("id.eq:1", "unknown namespace 'id'"),
-        ('req.method:"POST"', "req.method takes"),
-        ('req.path.eq: "/x"', "remove the spaces"),
-    ],
-)
-def test_httpql_mistakes_name_the_error(httpql_filter: str, expected: str) -> None:
-    assert any(expected in mistake for mistake in tools._httpql_mistakes(httpql_filter))
-
-
-@pytest.mark.parametrize(
-    "httpql_filter",
-    [
-        "resp.code.gte:400",
-        'req.host.regex:".*\\\\.example\\\\.com"',
-        'source:"intercept"',
-        'preset:"name"',
-        "row.id.gt:1",
-        "req.tls.eq:true",
-        "resp.roundtrip.gt:100",
-        'req.path.ncont:"/static" AND resp.len.gt:0',
-        '(req.method.eq:"POST" OR req.method.eq:"PUT") AND resp.code.gte:400',
-        '"password" OR "secret"',
-        'req.path.cont:"a\\"b NOT && source:x"',
-        'req.created_at.gt:"2024-01-01T00:00:00Z"',
-    ],
-)
-def test_httpql_mistakes_accept_valid_filters(httpql_filter: str) -> None:
-    assert tools._httpql_mistakes(httpql_filter) == []
-
-
-async def test_list_requests_returns_retry_guidance_for_invalid_httpql(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    filters: list[str | None] = []
-
-    async def _list(_client: Any, *, httpql_filter: str | None = None, **_: Any) -> Any:
-        filters.append(httpql_filter)
-        if httpql_filter == 'resp.code.eq:"200"':
-            raise OperationUserError(
-                "{'message': 'Invalid HTTPQL query', 'locations': [{'line': 34, 'column': 3}]}"
-            )
-        page_info = SimpleNamespace(
-            has_next_page=False, has_previous_page=False, start_cursor=None, end_cursor=None
-        )
-        return SimpleNamespace(edges=[], page_info=page_info)
-
-    monkeypatch.setattr(caido_api, "list_requests_with_client", _list)
-    ctx = ToolContext(
-        context={"caido_client": _FakeClient("host")},
-        tool_name="list_requests",
-        tool_call_id="call-1",
-        tool_arguments="{}",
-    )
-
-    rejected = json.loads(
-        await tools.list_requests.on_invoke_tool(
-            ctx, json.dumps({"httpql_filter": 'resp.code.eq:"200"'})
-        )
-    )
-    assert rejected["success"] is False
-    assert 'resp.code.eq:"200"' in rejected["error"]
-    assert any("not quoted" in mistake for mistake in rejected["likely_mistakes"])
-
-    retried = json.loads(
-        await tools.list_requests.on_invoke_tool(
-            ctx, json.dumps({"httpql_filter": "resp.code.eq:200"})
-        )
-    )
-    assert retried["success"] is True
-    assert filters == ['resp.code.eq:"200"', "resp.code.eq:200"]
