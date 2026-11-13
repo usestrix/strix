@@ -17,8 +17,17 @@ import requests
 from rich.console import Console
 
 from strix.interface import cloud, platform_cli
-from strix.interface.cloud import http, render, runner, workspaces
+from strix.interface.cloud import billing, http, render, runner, workspaces
 from strix.interface.cloud.spec import GROUP_HELP, SPEC
+
+
+@pytest.fixture(autouse=True)
+def _wallet_cache_in_tmp(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Keep the top-up flow's npm cache (``~/.strix/wallet-npm-cache``) out of the real home."""
+    cache = tmp_path_factory.mktemp("wallet-npm-cache")
+    monkeypatch.setattr(billing, "_wallet_npm_cache", lambda: cache)
 
 
 class FakeResponse:
