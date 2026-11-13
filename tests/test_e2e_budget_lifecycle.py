@@ -170,6 +170,7 @@ async def test_full_budget_lifecycle_reserve_then_cap(  # noqa: PLR0915
                 name=f"recon-{child_id}",
                 parent_id="root",
                 task="probe things",
+                skills=[],
                 initial_input=[],
                 hooks=hooks,
             )
@@ -261,6 +262,7 @@ async def test_respawned_children_after_reserve_never_spend(
             name="recon-child-a",
             parent_id="root",
             task="probe things",
+            skills=[],
             initial_input=[],
             hooks=hooks,
         )
