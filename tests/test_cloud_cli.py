@@ -461,12 +461,65 @@ def test_wait_polls_until_the_status_is_final(monkeypatch: pytest.MonkeyPatch) -
     assert next(statuses, None) is None
 
 
+@pytest.mark.parametrize(
+    ("argv", "created"),
+    [
+        (
+            ["scans", "start", "--domain-ids", "d1"],
+            {"organization_id": "org-1", "scan_id": "scan-new", "status": "pending"},
+        ),
+        (
+            ["scans", "rerun", "scan-old"],
+            {"source_scan_id": "scan-old", "scan_id": "scan-new", "status": "pending"},
+        ),
+        (
+            ["vulns", "retest", "vuln-original"],
+            {
+                "source_vulnerability_id": "vuln-original",
+                "scan_id": "scan-new",
+                "title": "Retest",
+                "status": "pending",
+            },
+        ),
+    ],
+)
+def test_wait_polls_the_created_scan_instead_of_related_ids(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any, argv: list[str], created: dict[str, str]
+) -> None:
+    polled: list[str] = []
+
+    def fake_request(method: str, path: str, **_kwargs: Any) -> FakeResponse:
+        if method == "POST":
+            return FakeResponse(payload=created)
+        polled.append(path)
+        if path == "/scans/scan-new":
+            return FakeResponse(payload={"id": "scan-new", "status": "completed"})
+        return FakeResponse(status_code=404, payload={"detail": "Scan not found"})
+
+    monkeypatch.setattr(http, "request", fake_request)
+
+    assert cloud.run_cloud([*argv, "--wait", "--json"]) == 0
+    assert polled == ["/scans/scan-new"]
+    assert json.loads(capsys.readouterr().out)["id"] == "scan-new"
+
+
+@pytest.mark.parametrize(
+    "created",
+    [
+        {"id": "scan-created", "status": "running"},
+        {
+            "source_vulnerability_id": "vuln-original",
+            "scan_id": "scan-created",
+            "status": "running",
+        },
+    ],
+)
 def test_wait_failure_keeps_the_created_operation_id(
-    monkeypatch: pytest.MonkeyPatch, capsys: Any
+    monkeypatch: pytest.MonkeyPatch, capsys: Any, created: dict[str, str]
 ) -> None:
     def fake_request(method: str, _path: str, **_kwargs: Any) -> FakeResponse:
         if method == "POST":
-            return FakeResponse(payload={"id": "scan-created", "status": "running"})
+            return FakeResponse(payload=created)
         return FakeResponse(status_code=503, payload={"detail": "temporarily unavailable"})
 
     monkeypatch.setattr(http, "request", fake_request)
@@ -474,6 +527,25 @@ def test_wait_failure_keeps_the_created_operation_id(
     payload = json.loads(capsys.readouterr().out)
     assert payload["operation_id"] == "scan-created"
     assert payload["status_unknown"] is True
+
+
+def test_retest_response_without_a_scan_id_is_rejected_without_polling(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    calls: list[str] = []
+
+    def fake_request(_method: str, path: str, **_kwargs: Any) -> FakeResponse:
+        calls.append(path)
+        return FakeResponse(
+            payload={"source_vulnerability_id": "vuln-original", "status": "pending"}
+        )
+
+    monkeypatch.setattr(http, "request", fake_request)
+
+    assert cloud.run_cloud(["vulns", "retest", "vuln-original", "--wait", "--json"]) == 1
+    assert calls == ["/vulnerabilities/vuln-original/retest"]
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["launch_outcome_unknown"] is True
 
 
 def test_ambiguous_scan_request_warns_before_retry(
@@ -1510,6 +1582,19 @@ def test_created_id_reads_resource_id() -> None:
     assert runner._created_id({"status": "pending"}) is None
     assert runner._created_id({"scan_id": ""}) is None
     assert runner._created_id({"id": "   "}) is None
+
+
+def test_created_id_prefers_the_explicit_scan_id_over_a_generic_id() -> None:
+    assert runner._created_id({"id": "source-id", "scan_id": "scan-new"}) == "scan-new"
+
+
+def test_created_id_falls_back_to_id_after_an_empty_scan_id() -> None:
+    assert runner._created_id({"scan_id": " ", "id": "scan-new"}) == "scan-new"
+
+
+@pytest.mark.parametrize("field", ["source_vulnerability_id", "source_scan_id", "organization_id"])
+def test_created_id_rejects_unrelated_association_ids(field: str) -> None:
+    assert runner._created_id({field: "related-id", "status": "pending"}) is None
 
 
 def test_billing_subscribe_prints_checkout_url(
