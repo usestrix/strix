@@ -219,15 +219,22 @@ def _run_source_roots() -> list[tuple[str, tuple[str, ...]]]:
     state = get_global_report_state()
     if state is None:
         return []
-    roots: list[tuple[str, tuple[str, ...]]] = []
-    seen: set[str] = set()
+    roots: dict[str, list[str]] = {}
 
     def _add(root: str, *aliases: str) -> None:
         canonical = root.strip()
-        if not canonical or canonical in seen:
+        if not canonical:
             return
-        seen.add(canonical)
-        roots.append((canonical, tuple(alias.strip() for alias in aliases if alias.strip())))
+        known = roots.setdefault(canonical, [])
+        for alias in aliases:
+            spelling = alias.strip()
+            variants = [spelling]
+            # A repository URL is often given with ``.git``; findings name it without.
+            if "://" in spelling or spelling.startswith("git@"):
+                variants.append(spelling.removesuffix(".git"))
+            for variant in variants:
+                if variant and variant not in known:
+                    known.append(variant)
 
     sources = state.run_record.get("local_sources")
     for entry in sources if isinstance(sources, list) else []:
@@ -251,7 +258,7 @@ def _run_source_roots() -> list[tuple[str, tuple[str, ...]]]:
         original = str(entry.get("original") or "")
         repo_url = str(details.get("target_repo") or "")
         _add(source_path or subdir, source_path, subdir, mount, original, repo_url)
-    return roots
+    return [(canonical, tuple(aliases)) for canonical, aliases in roots.items()]
 
 
 def _names_source_root(target: str, resolved_target: str, alias: str) -> bool:
@@ -285,7 +292,7 @@ def _resolve_source_root(target: object) -> str | None:
     return max(matches, key=len) if matches else None
 
 
-def _distinct_source_roots(candidate: dict[str, Any], report: dict[str, Any]) -> bool:
+def _distinct_source_roots(candidate_root: str | None, report: dict[str, Any]) -> bool:
     """Two source repositories are two findings, never one.
 
     Dependency findings compare repository-relative manifest paths, so two
@@ -296,7 +303,6 @@ def _distinct_source_roots(candidate: dict[str, Any], report: dict[str, Any]) ->
     without source configuration) keeps the legacy repository-agnostic
     comparison.
     """
-    candidate_root = _resolve_source_root(candidate.get("target"))
     if candidate_root is None:
         return False
     report_root = _resolve_source_root(report.get("target"))
@@ -342,13 +348,14 @@ def _check_dependency_duplicate(
 
     cve, ecosystem, package_name = candidate_identity
     found_legacy_same_cve = False
+    candidate_root = _resolve_source_root(candidate.get("target"))
     for report in existing_reports:
         report_identity = _dependency_identity(report)
         if report_identity is not None:
             report_cve, report_ecosystem, report_package_name = report_identity
             if (report_cve, report_package_name) != (cve, package_name):
                 continue
-            if _distinct_source_roots(candidate, report):
+            if _distinct_source_roots(candidate_root, report):
                 continue
             if _distinct_manifest_paths(candidate, report):
                 continue
@@ -369,6 +376,8 @@ def _check_dependency_duplicate(
             continue
 
         if _report_cve(report) != cve:
+            continue
+        if _distinct_source_roots(candidate_root, report):
             continue
         found_legacy_same_cve = True
         if _legacy_report_mentions_package(

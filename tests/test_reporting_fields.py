@@ -1418,6 +1418,95 @@ def test_dependency_dedupe_falls_back_without_resolvable_source_root(
     assert result["duplicate_id"] == "vuln-0001"
 
 
+def _dependency_candidate(target: str) -> dict[str, Any]:
+    return {
+        "title": "CVE-2024-0001 in fixture-package",
+        "description": "Same advisory from another source tree.",
+        "target": target,
+        "cve": "CVE-2024-0001",
+        "dependency_metadata": {
+            "package_name": "fixture-package",
+            "installed_version": "1.0.0",
+            "package_ecosystem": "npm",
+            "manifest_path": "package-lock.json",
+        },
+    }
+
+
+def test_dependency_dedupe_keeps_cloned_repositories_apart_by_url(
+    report_state: ReportState, tmp_path: Path
+) -> None:
+    """Cloned repositories resolve by their URL, not only by the clone path.
+
+    ``local_sources`` and ``targets_info`` both carry the clone path, so the
+    URL aliases from ``targets_info`` must merge into the existing root.
+    """
+    targets_info = []
+    local_sources = []
+    for name in ("repo-a", "repo-b"):
+        clone = tmp_path / name
+        clone.mkdir()
+        url = f"https://github.com/acme/{name}.git"
+        targets_info.append(
+            {
+                "type": "repository",
+                "details": {
+                    "target_repo": url,
+                    "cloned_repo_path": str(clone),
+                    "workspace_subdir": name,
+                },
+                "original": url,
+            }
+        )
+        local_sources.append({"source_path": str(clone), "workspace_subdir": name})
+    report_state.set_scan_config({"targets": targets_info, "local_sources": local_sources})
+    existing = [
+        {"id": "vuln-0001", **_dependency_candidate("https://github.com/acme/repo-a")},
+    ]
+
+    other_repo = _check_dependency_duplicate(
+        _dependency_candidate("https://github.com/acme/repo-b"), existing
+    )
+    same_repo = _check_dependency_duplicate(
+        _dependency_candidate("https://github.com/acme/repo-a/package-lock.json"), existing
+    )
+
+    assert other_repo is not None
+    assert other_repo["is_duplicate"] is False
+    assert same_repo is not None
+    assert same_repo["is_duplicate"] is True
+    assert same_repo["duplicate_id"] == "vuln-0001"
+
+
+def test_dependency_dedupe_keeps_legacy_report_from_other_root_apart(
+    report_state: ReportState, tmp_path: Path
+) -> None:
+    """A legacy report without dependency metadata still honours source roots."""
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    for root in (repo_a, repo_b):
+        root.mkdir()
+    _configure_run_sources(report_state, repo_a, repo_b)
+    existing = [
+        {
+            "id": "vuln-0001",
+            "title": "CVE-2024-0001 in npm fixture-package",
+            "description": "Legacy dependency finding without structured metadata.",
+            "target": str(repo_a),
+            "cve": "CVE-2024-0001",
+        }
+    ]
+
+    other_root = _check_dependency_duplicate(_dependency_candidate(str(repo_b)), existing)
+    same_root = _check_dependency_duplicate(_dependency_candidate(str(repo_a)), existing)
+
+    assert other_root is not None
+    assert other_root["is_duplicate"] is False
+    assert same_root is not None
+    assert same_root["is_duplicate"] is True
+    assert same_root["duplicate_id"] == "vuln-0001"
+
+
 def test_tool_descriptions_include_formatting_guidance() -> None:
     vuln_desc = create_vulnerability_report.description
     assert "markdown" in vuln_desc.lower()
