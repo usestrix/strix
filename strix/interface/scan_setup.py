@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from strix.config import Settings, codex, load_settings
 from strix.core.paths import run_dir_for
+from strix.core.targets import is_whitebox_scan
 from strix.interface.utils import (
     assign_workspace_subdirs,
     clone_repository,
@@ -25,7 +26,6 @@ from strix.interface.utils import (
     derive_local_base_name,
     generate_run_name,
     infer_target_type,
-    is_whitebox_scan,
     read_target_list_file,
     resolve_diff_scope_context,
     rewrite_localhost_targets,
