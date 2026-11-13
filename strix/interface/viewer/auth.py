@@ -48,7 +48,7 @@ def read_auth() -> dict[str, Any] | None:
     """Return the stored ``{email, token, verified_at}`` record, or None."""
     try:
         data = json.loads(AUTH_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
     if not isinstance(data, dict):
         return None

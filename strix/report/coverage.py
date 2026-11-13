@@ -153,7 +153,7 @@ def read_agent_graph(state_dir: Path) -> dict[str, Any]:
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         logger.warning("agent graph snapshot at %s is unreadable", path, exc_info=True)
         return {}
     return data if isinstance(data, dict) else {}

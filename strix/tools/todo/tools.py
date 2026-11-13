@@ -47,7 +47,7 @@ def hydrate_todos_from_disk(state_dir: Path) -> None:
             return
         try:
             data = json.loads(_todos_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             logger.exception(
                 "todos.json at %s is unreadable; starting with empty todos",
                 _todos_path,
