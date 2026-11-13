@@ -1254,6 +1254,12 @@ def read_target_list_file(path_str: str) -> list[str]:
 
 def sanitize_name(name: str) -> str:
     sanitized = re.sub(r"[^A-Za-z0-9._-]", "-", name.strip())
+    # A name made only of dots is the current or the parent directory. As a path
+    # component it resolves outside the directory the caller builds (".." under
+    # <tmp>/strix_repos/<run> reaches the shared parent, which clone_repository
+    # then removes before it tries to clone), so it is not a usable name.
+    if not sanitized.strip("."):
+        return "target"
     return sanitized or "target"
 
 
@@ -1281,8 +1287,21 @@ def derive_local_base_name(path_str: str) -> str:
     return sanitize_name(base or "workspace")
 
 
+def unique_workspace_subdir(base_name: str, used: set[str]) -> str:
+    """Return ``base_name``, or the first ``base_name-N`` that ``used`` does not hold."""
+    workspace_subdir = base_name
+    count = 1
+    while workspace_subdir in used:
+        count += 1
+        workspace_subdir = f"{base_name}-{count}"
+    return workspace_subdir
+
+
 def assign_workspace_subdirs(targets_info: list[dict[str, Any]]) -> None:
-    name_counts: dict[str, int] = {}
+    # The spec staging directory is created under the workspace by stage_api_specs()
+    # whether or not this run has one, so a repository called `api-specs` must not
+    # take its name.
+    used: set[str] = {API_SPEC_WORKSPACE_SUBDIR}
 
     for target in targets_info:
         target_type = target["type"]
@@ -1297,10 +1316,11 @@ def assign_workspace_subdirs(targets_info: list[dict[str, Any]]) -> None:
         if base_name is None:
             continue
 
-        count = name_counts.get(base_name, 0) + 1
-        name_counts[base_name] = count
-
-        workspace_subdir = base_name if count == 1 else f"{base_name}-{count}"
+        # A per-name counter is not enough: `repo`, `repo` and `repo-2` would give the
+        # second and the third the same `repo-2`, and the run would mount - and clone
+        # into - one directory for two targets. Count until the name is unused.
+        workspace_subdir = unique_workspace_subdir(base_name, used)
+        used.add(workspace_subdir)
 
         details["workspace_subdir"] = workspace_subdir
 
