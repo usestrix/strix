@@ -187,7 +187,7 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         self._interactive = interactive
         self._budget_policy: BudgetPolicy = budget_policy
         self._record_tool_timings = record_tool_timings
-        self._tool_starts: dict[str, tuple[datetime, float]] = {}
+        self._tool_starts: dict[tuple[str | None, str], tuple[datetime, float]] = {}
 
     @property
     def max_budget_usd(self) -> float | None:
@@ -370,8 +370,11 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         tool: Tool,  # noqa: ARG002
     ) -> None:
         call_id = getattr(context, "tool_call_id", None)
-        if self._record_tool_timings and isinstance(call_id, str):
-            self._tool_starts[call_id] = (datetime.now(UTC), time.monotonic())
+        if isinstance(call_id, str) and call_id:
+            ctx = context.context if isinstance(context.context, dict) else {}
+            agent_id = ctx.get("agent_id")
+            agent_id = agent_id if isinstance(agent_id, str) else None
+            self._tool_starts[(agent_id, call_id)] = (datetime.now(UTC), time.monotonic())
 
     async def on_tool_end(
         self,
@@ -381,17 +384,23 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         result: object,  # noqa: ARG002
     ) -> None:
         call_id = getattr(context, "tool_call_id", None)
-        start = self._tool_starts.pop(call_id, None) if isinstance(call_id, str) else None
+        if not isinstance(call_id, str) or not call_id:
+            return
+        ctx = context.context if isinstance(context.context, dict) else {}
+        agent_id = ctx.get("agent_id")
+        agent_id = agent_id if isinstance(agent_id, str) else None
+        start = self._tool_starts.pop((agent_id, call_id), None)
         if start is None:
             return
         started_at, started = start
-        ctx = context.context if isinstance(context.context, dict) else {}
-        agent_id = ctx.get("agent_id")
         record_tool_call(
+            call_id=call_id,
             started_at=started_at,
-            agent_id=agent_id if isinstance(agent_id, str) else None,
+            agent_id=agent_id,
             tool=tool.name,
-            duration_ms=round((time.monotonic() - started) * 1000),
+            duration_ms=round((time.monotonic() - started) * 1000)
+            if self._record_tool_timings
+            else None,
         )
 
     async def on_llm_end(

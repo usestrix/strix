@@ -26,6 +26,7 @@ def _entry(**overrides: Any) -> dict[str, Any]:
         "evidence": "Two tenants tested; both received 403.",
         "agent_id": "agent-1",
         "agent_name": "authz-tester",
+        "execution_refs": ["call-1"],
         "created_at": "2026-07-02 10:00:00 UTC",
     }
     base.update(overrides)
@@ -44,7 +45,19 @@ def _graph(**overrides: Any) -> dict[str, Any]:
 
 def _document(**overrides: Any) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
-        "run_record": {"run_id": "r1", "run_name": "run-1", "status": "completed"},
+        "run_record": {
+            "run_id": "r1",
+            "run_name": "run-1",
+            "status": "completed",
+            "tool_calls": [
+                {
+                    "call_id": "call-1",
+                    "agent_id": "agent-1",
+                    "tool": "exec_command",
+                    "finished_at": "2026-07-02T09:59:00+00:00",
+                }
+            ],
+        },
         "entries": [_entry()],
         "agent_graph": _graph(),
         "vulnerability_reports": [],
@@ -305,3 +318,21 @@ def test_a_root_that_worked_alone_is_held_to_the_rule() -> None:
 
     silent = [gap for gap in doc["gaps"] if gap["kind"] == "agent_recorded_no_coverage"]
     assert [gap["agent_name"] for gap in silent] == ["Root Agent"]
+
+
+def test_clean_claim_without_tool_receipt_remains_an_open_evidence_gap() -> None:
+    doc = _document(entries=[_entry(execution_refs=[])], exit_reason="finished_by_tool")
+    assert doc["entries"][0]["execution_evidence"]["status"] == "agent_reported"
+    assert doc["summary"]["uncorroborated_test_claims"] == 1
+    assert any(gap["kind"] == "uncorroborated_test_claim" for gap in doc["gaps"])
+    assert doc["completeness"]["complete"] is False
+
+
+def test_clean_claim_with_matching_runtime_receipt_is_correlated_not_proven() -> None:
+    doc = _document(exit_reason="finished_by_tool")
+    evidence = doc["entries"][0]["execution_evidence"]
+    assert evidence["status"] == "execution_correlated"
+    assert evidence["receipts"][0]["tool"] == "exec_command"
+    assert doc["summary"]["execution_correlated_claims"] == 1
+    assert doc["summary"]["uncorroborated_test_claims"] == 0
+    assert doc["completeness"]["complete"] is True

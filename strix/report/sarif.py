@@ -686,6 +686,8 @@ def _build_coverage_result(
     message = f"{risk_area} — {label}: {surface}"
     if evidence:
         message = f"{message}\n\n{evidence}"
+    if kind == "open" and entry.get("outcome") in {"no_issue_found", "ruled_out"}:
+        message += "\n\nNo matching runtime tool execution was linked to this conclusion."
 
     result: dict[str, Any] = {
         "ruleId": rule_id,
@@ -702,6 +704,7 @@ def _build_coverage_result(
                 "surface": surface,
                 "recorded_by": entry.get("recorded_by", ""),
                 "source": entry.get("source", "agent_reported"),
+                "execution_evidence": entry.get("execution_evidence", {"status": "agent_reported"}),
             }
         },
     }
@@ -723,6 +726,13 @@ def _append_coverage(
         kind = _OUTCOME_TO_KIND.get(str(entry.get("outcome", "")))
         if kind is None:
             continue
+        execution = entry.get("execution_evidence")
+        if kind == "pass" and (
+            not isinstance(execution, dict)
+            or execution.get("status") != "execution_correlated"
+            or not execution.get("receipts")
+        ):
+            kind = "open"
         rule_id = _coverage_rule_id(str(entry.get("risk_area", "")))
         if rule_id not in rules_by_id:
             rule_index_by_id[rule_id] = len(rules_by_id)

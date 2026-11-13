@@ -32,6 +32,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from strix.report.execution_evidence import execution_receipt_index, resolve_execution_refs
 from strix.report.writer import atomic_write_text
 from strix.skills import get_available_skills
 
@@ -342,6 +343,7 @@ def _completeness(
     exit_reason: str | None,
     *,
     unverified_claims: int = 0,
+    uncorroborated_tests: int = 0,
 ) -> dict[str, Any]:
     """Whether this record can be read as a complete account of the scan.
 
@@ -366,6 +368,11 @@ def _completeness(
         caveats.append(
             f"{unverified_claims} coverage claim(s) reference agents "
             "absent from the execution graph."
+        )
+    if uncorroborated_tests:
+        caveats.append(
+            f"{uncorroborated_tests} clean/ruled-out claim(s) lack matching "
+            "runtime tool execution receipts."
         )
     unfinished = [agent for agent in agents if agent["status"] != _COMPLETED_AGENT_STATUS]
     if unfinished:
@@ -411,6 +418,16 @@ def build_coverage_document(
     skills_exercised = sorted(
         {_skill_leaf(skill) for agent in agents for skill in agent["skills"] if skill}
     )
+    receipt_index = execution_receipt_index(run_record)
+    receipt_matches = [
+        resolve_execution_refs(
+            run_record,
+            entry.get("agent_id"),
+            entry.get("execution_refs"),
+            index=receipt_index,
+        )
+        for entry in entries
+    ]
 
     ledger = [
         {
@@ -428,16 +445,31 @@ def build_coverage_document(
                 if isinstance(previous, dict)
             ],
             "source": "agent_reported",
+            "execution_evidence": {
+                "status": "execution_correlated" if matches is not None else "agent_reported",
+                "receipts": matches or [],
+            },
         }
-        for entry in entries
+        for entry, matches in zip(entries, receipt_matches, strict=True)
     ]
 
+    unverified_test_gaps = [
+        {
+            "kind": "uncorroborated_test_claim",
+            "surface": entry.get("surface", ""),
+            "risk_area": entry.get("risk_area", ""),
+            "detail": "Agent claims a clean or ruled-out result without linked tool execution.",
+        }
+        for entry, matches in zip(entries, receipt_matches, strict=True)
+        if entry.get("outcome") in {"no_issue_found", "ruled_out"} and matches is None
+    ]
     unverified_gaps = _unverified_coverage_gaps(entries, agents)
     gaps = [
         *_unresolved_gaps(entries),
         *skill_coverage_gaps(entries, agents),
         *_silent_agent_gaps(entries, agents),
         *unverified_gaps,
+        *unverified_test_gaps,
     ]
 
     return {
@@ -456,6 +488,8 @@ def build_coverage_document(
             "surfaces_reviewed": len(ledger),
             "outcomes": _outcome_counts(entries),
             "findings_filed": len(vulnerability_reports),
+            "execution_correlated_claims": sum(match is not None for match in receipt_matches),
+            "uncorroborated_test_claims": len(unverified_test_gaps),
             "gaps": len(gaps),
         },
         "machine_observed": {
@@ -465,7 +499,11 @@ def build_coverage_document(
             "source": "runtime",
         },
         "completeness": _completeness(
-            run_record, agents, exit_reason, unverified_claims=len(unverified_gaps)
+            run_record,
+            agents,
+            exit_reason,
+            unverified_claims=len(unverified_gaps),
+            uncorroborated_tests=len(unverified_test_gaps),
         ),
         "entries": ledger,
         "gaps": gaps,

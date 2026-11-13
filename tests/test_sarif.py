@@ -262,6 +262,16 @@ def _coverage_entry(**overrides: Any) -> dict[str, Any]:
         "evidence": "14 parameters fuzzed; all queries parameterized.",
         "recorded_by": "injection-tester",
         "source": "agent_reported",
+        "execution_evidence": {
+            "status": "execution_correlated",
+            "receipts": [
+                {
+                    "call_id": "call-1",
+                    "tool": "exec_command",
+                    "finished_at": "2026-07-02T09:59:00+00:00",
+                }
+            ],
+        },
     }
     base.update(overrides)
     return base
@@ -384,3 +394,25 @@ def test_calibration_metadata_survives_into_result_properties(tmp_path: Path) ->
     assert strix["confidence_rationale"] == "Reproduced once out of three attempts."
     assert strix["severity_change_conditions"] == "Critical if the WAF rule is removed."
     assert strix["fix_verification"] == "Not retested."
+
+
+def test_unlinked_clean_claim_is_open_not_pass(tmp_path: Path) -> None:
+    write_sarif(
+        tmp_path,
+        [],
+        coverage=_coverage(
+            _coverage_entry(execution_evidence={"status": "agent_reported", "receipts": []})
+        ),
+    )
+    [result] = _read(tmp_path)["runs"][0]["results"]
+    assert result["kind"] == "open"
+    assert "No matching runtime tool execution" in result["message"]["text"]
+
+
+def test_correlated_execution_metadata_survives_sarif(tmp_path: Path) -> None:
+    write_sarif(tmp_path, [], coverage=_coverage(_coverage_entry()))
+    [result] = _read(tmp_path)["runs"][0]["results"]
+    assert result["kind"] == "pass"
+    execution = result["properties"]["strix"]["execution_evidence"]
+    assert execution["status"] == "execution_correlated"
+    assert execution["receipts"][0]["call_id"] == "call-1"

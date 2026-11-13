@@ -28,7 +28,12 @@ from strix.tools.agents_graph.tools import (
     view_agent_graph,
     wait_for_agents,
 )
-from strix.tools.coverage.tools import list_coverage, record_coverage, update_coverage
+from strix.tools.coverage.tools import (
+    list_coverage,
+    list_execution_receipts,
+    record_coverage,
+    update_coverage,
+)
 from strix.tools.finish.tool import finish_scan
 from strix.tools.load_skill.tool import load_skill
 from strix.tools.mcp import (
@@ -619,7 +624,12 @@ def _finish_tool_use_behavior(
     return ToolsToFinalOutputResult(is_final_output=False, final_output=None)
 
 
-_COVERAGE_TOOLS: tuple[Tool, ...] = (record_coverage, update_coverage, list_coverage)
+_COVERAGE_TOOLS: tuple[Tool, ...] = (
+    record_coverage,
+    update_coverage,
+    list_coverage,
+    list_execution_receipts,
+)
 _FINISH_SCAN_COVERAGE_STEP = re.compile(
     r"\n5\. \*\*Coverage reconciliation\.\*\*.*?(?=\n\n)", re.DOTALL
 )
@@ -647,6 +657,7 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     record_coverage,
     update_coverage,
     list_coverage,
+    list_execution_receipts,
     get_threat_model,
     save_threat_model,
     amend_threat_model,
