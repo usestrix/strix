@@ -577,12 +577,15 @@ class StrixProvider(MultiProvider):
         base_url: str | None = None,
         **kwargs: Any,
     ) -> None:
+        llm = load_settings().llm
+        effective_key = api_key if api_key is not None else llm.api_key
+        effective_base = base_url if base_url is not None else llm.api_base
         super().__init__(
-            openai_api_key=api_key,
-            openai_base_url=base_url,
+            openai_api_key=effective_key,
+            openai_base_url=effective_base,
             # A custom endpoint is OpenAI-compatible, i.e. chat completions; the
             # global default is the main model's and may say otherwise.
-            openai_use_responses=False if base_url else None,
+            openai_use_responses=False if effective_base else None,
             **kwargs,
         )
         self._override_api_key = api_key
@@ -606,7 +609,7 @@ class StrixProvider(MultiProvider):
                 prefix=prefix,
                 stripped_model_name=stripped_model_name,
             )
-        if prefix == "pecut":
+        if prefix in {"pecut", "za", "ag", "ds", "oc", "vx", "mmf", "gx"}:
             return self.openai_provider, original_model_name
         if prefix == "ollama" and stripped_model_name:
             return self._get_fallback_provider("litellm"), f"ollama_chat/{stripped_model_name}"
@@ -1053,7 +1056,18 @@ def routes_through_litellm(model_name: str | None) -> bool:
     if not name or codex.subscription_model(name):
         return False
     prefix, _, rest = name.partition("/")
-    return bool(rest) and prefix.lower() not in {"openai", "any-llm"}
+    return bool(rest) and prefix.lower() not in {
+        "openai",
+        "any-llm",
+        "pecut",
+        "za",
+        "ag",
+        "ds",
+        "oc",
+        "vx",
+        "mmf",
+        "gx",
+    }
 
 
 def is_bedrock_route(model_name: str) -> bool:
