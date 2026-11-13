@@ -163,6 +163,20 @@ def test_failed_run_status_makes_the_record_partial() -> None:
     assert doc["completeness"]["complete"] is False
 
 
+def test_unknown_scan_status_cannot_claim_complete_coverage() -> None:
+    doc = _document(run_record={"run_id": "r1"}, exit_reason="finished_by_tool")
+
+    assert doc["completeness"]["complete"] is False
+    assert "unknown" in doc["completeness"]["caveats"][0]
+
+
+def test_missing_agent_graph_cannot_claim_complete_coverage() -> None:
+    doc = _document(agent_graph={}, exit_reason="finished_by_tool")
+
+    assert doc["completeness"]["complete"] is False
+    assert "execution graph" in doc["completeness"]["caveats"][0]
+
+
 def test_write_coverage_emits_a_top_level_artifact(tmp_path: Path) -> None:
     path = write_coverage(tmp_path, _document())
 

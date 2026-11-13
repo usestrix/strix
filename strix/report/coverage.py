@@ -57,9 +57,6 @@ OUTCOME_LABELS: dict[str, str] = {
 #: Statuses that mean the agent stopped early rather than finishing its task.
 _INCOMPLETE_AGENT_STATUSES = frozenset({"crashed", "stopped", "running", "waiting"})
 
-#: Run statuses that mean the scan itself did not run to completion.
-_INCOMPLETE_RUN_STATUSES = frozenset({"failed", "interrupted", "stopped", "running"})
-
 #: Only this skill category names a vulnerability class. ``tooling`` and
 #: ``reconnaissance`` skills describe how an agent works, not what it hunts,
 #: so holding one implies no coverage obligation.
@@ -326,10 +323,14 @@ def _completeness(
     status = str(run_record.get("status") or "unknown")
     caveats: list[str] = []
 
-    if status in _INCOMPLETE_RUN_STATUSES:
+    if status != "completed":
         caveats.append(
-            f"The scan ended with status '{status}' rather than completing, so coverage "
-            "reflects only the work finished before it stopped."
+            f"The scan has status '{status}' rather than 'completed', so coverage "
+            "cannot be considered complete."
+        )
+    if not agents:
+        caveats.append(
+            "The agent execution graph is missing or empty; completion cannot be verified."
         )
     unfinished = [agent for agent in agents if agent["status"] in _INCOMPLETE_AGENT_STATUSES]
     if unfinished:
