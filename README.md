@@ -309,14 +309,18 @@ export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, 
 > Strix automatically saves your configuration to `~/.strix/cli-config.json`, so you don't have to re-enter it on every run.
 > See the [configuration reference](https://docs.strix.ai/advanced/configuration) for every environment variable.
 
-#### Sign in with a ChatGPT subscription
+#### Sign in with a ChatGPT or Mistral subscription
 
-Instead of a metered API key, you can run Strix on your ChatGPT Plus/Pro subscription:
+Instead of a metered API key, you can run Strix on a model subscription:
 
 ```bash
 strix auth login chatgpt             # sign in with your ChatGPT account
-export STRIX_LLM="chatgpt/gpt-5.4"   # chatgpt/<model> runs on the subscription
-strix auth status                    # show the active sign-in, or logout to forget it
+export STRIX_LLM="chatgpt/gpt-5.4"   # chatgpt/<model> runs on the ChatGPT subscription
+
+strix auth login mistral             # sign in with your Mistral account (OIDC)
+export STRIX_LLM="lechat/mistral-large-latest"    # lechat/<model> runs on the Mistral subscription
+
+strix auth status                    # show active sign-ins, or logout to forget them
 ```
 
 #### Use the managed platform: `strix cloud`
