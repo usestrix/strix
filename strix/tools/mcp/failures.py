@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -50,9 +51,16 @@ def _retry_after(value: str | None) -> float | None:
     if not value:
         return None
     try:
-        return max(0.0, float(value))
+        seconds = float(value)
     except ValueError:
         pass
+    else:
+        # float() accepts syntaxes that are not RFC 9110 delay-seconds and can
+        # parse to a non-finite value ("inf", "Infinity", "1e309", a digit
+        # string long enough to overflow). A non-finite delay would make the
+        # supervisor's backoff sleep unending, so fall back to the ordinary
+        # bounded backoff instead, exactly like any other malformed value.
+        return max(0.0, seconds) if math.isfinite(seconds) else None
     try:
         date = parsedate_to_datetime(value)
         if date.tzinfo is None:
