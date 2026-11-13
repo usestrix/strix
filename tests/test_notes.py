@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import TYPE_CHECKING
 
 import pytest
+from agents.tool_context import ToolContext
 
 import strix.tools.notes.tools as notes_tools
 
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -131,3 +134,51 @@ def test_list_notes_still_filters_on_real_values() -> None:
 
     result = notes_tools._list_notes_impl(category="findings")
     assert [n["title"] for n in result["notes"]] == ["recon"]
+
+
+@pytest.mark.parametrize("content", ["", "   "])
+async def test_rejected_update_keeps_note_unchanged_after_later_save(
+    tmp_path: Path, content: str
+) -> None:
+    notes_tools.hydrate_notes_from_disk(tmp_path)
+    note_id = notes_tools._create_note_impl("Original title", "Original evidence")["note_id"]
+    original = notes_tools._get_note_impl(note_id)["note"]
+    ctx = ToolContext(
+        context={"agent_id": "root"},
+        tool_name="update_note",
+        tool_call_id="call-update",
+        tool_arguments="{}",
+    )
+
+    raw = await notes_tools.update_note.on_invoke_tool(
+        ctx, json.dumps({"note_id": note_id, "title": "Rejected title", "content": content})
+    )
+
+    assert json.loads(raw)["success"] is False
+    assert notes_tools._get_note_impl(note_id)["note"] == original
+    # A later successful tool call persists every note, including this one.
+    notes_tools._create_note_impl("Another note", "Unrelated evidence")
+    notes_tools.hydrate_notes_from_disk(tmp_path)
+    assert notes_tools._get_note_impl(note_id)["note"] == original
+
+
+def test_valid_note_update_persists_all_supplied_fields(tmp_path: Path) -> None:
+    notes_tools.hydrate_notes_from_disk(tmp_path)
+    note_id = notes_tools._create_note_impl(
+        "Original title", "Original evidence", tags=["old"], agent_id="root"
+    )["note_id"]
+    original = notes_tools._get_note_impl(note_id)["note"]
+
+    result = notes_tools._update_note_impl(
+        note_id, title=" Revised title ", content=" Revised evidence ", tags=[]
+    )
+
+    assert result["success"] is True
+    notes_tools.hydrate_notes_from_disk(tmp_path)
+    revised = notes_tools._get_note_impl(note_id)["note"]
+    assert revised["title"] == "Revised title"
+    assert revised["content"] == "Revised evidence"
+    assert revised["tags"] == []
+    assert revised["agent_id"] == "root"
+    assert revised["created_at"] == original["created_at"]
+    assert revised["updated_at"] >= original["updated_at"]
