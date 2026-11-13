@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 import pytest
 from agents.model_settings import ModelSettings
@@ -28,7 +30,7 @@ from strix.llm import request_log
 
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterator
+    from collections.abc import AsyncIterator, Generator, Iterator
 
 
 _STALL_SECONDS = 30.0
@@ -48,6 +50,9 @@ def _chunk(text: str) -> bytes:
 class _StallingHandler(BaseHTTPRequestHandler):
     """Streams a couple of tokens, then stops producing anything."""
 
+    # The stop event cannot unblock a read before do_POST is reached. Bound
+    # accepted idle connections so fixture teardown can finish after cancellation.
+    timeout = 1.0
     stop = threading.Event()
 
     def log_message(self, *args: Any) -> None:
@@ -65,8 +70,7 @@ class _StallingHandler(BaseHTTPRequestHandler):
         self.stop.wait(_STALL_SECONDS)
 
 
-@pytest.fixture
-def stalling_gateway() -> Iterator[str]:
+def _stalling_gateway() -> Generator[str, None, None]:
     _StallingHandler.stop.clear()
     server = HTTPServer(("127.0.0.1", 0), _StallingHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -77,6 +81,42 @@ def stalling_gateway() -> Iterator[str]:
         _StallingHandler.stop.set()
         server.shutdown()
         server.server_close()
+
+
+@pytest.fixture
+def stalling_gateway() -> Iterator[str]:
+    yield from _stalling_gateway()
+
+
+@pytest.mark.asyncio
+async def test_stalling_gateway_shutdown_with_idle_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    accepted = threading.Event()
+    original_setup = _StallingHandler.setup
+
+    def observed_setup(handler: _StallingHandler) -> None:
+        original_setup(handler)
+        accepted.set()
+
+    monkeypatch.setattr(_StallingHandler, "setup", observed_setup)
+    gateway = _stalling_gateway()
+    address = urlparse(next(gateway))
+    host, port = address.hostname, address.port
+    teardown: asyncio.Task[None] | None = None
+    try:
+        assert host is not None and port is not None
+        with await asyncio.to_thread(socket.create_connection, (host, port), 2):
+            # A queued connection would not exercise the blocked handler.
+            assert await asyncio.to_thread(accepted.wait, 2)
+            teardown = asyncio.create_task(asyncio.to_thread(gateway.close))
+            await asyncio.wait_for(asyncio.shield(teardown), timeout=3)
+    finally:
+        # The socket closes before waiting again, so even the unfixed fixture
+        # can finish and report a test failure rather than hang the test suite.
+        if teardown is None:
+            teardown = asyncio.create_task(asyncio.to_thread(gateway.close))
+        await asyncio.wait_for(asyncio.shield(teardown), timeout=3)
 
 
 class _ServedByRelace(OpenAIChatCompletionsModel):
