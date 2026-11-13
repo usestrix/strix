@@ -157,3 +157,26 @@ async def test_dedupe_id_is_matched_without_truncation(monkeypatch: pytest.Monke
 
     assert result["is_duplicate"] is False
     assert "error" in result
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("nan", 0.0),
+        ("inf", 1.0),
+        ("-inf", 0.0),
+        (-3, 0.0),
+        (99, 1.0),
+        ("0.5", 0.5),
+        (0.42, 0.42),
+    ],
+)
+def test_dedupe_parser_clamps_confidence_to_the_documented_range(
+    value: Any, expected: float
+) -> None:
+    """The prompt asks for 0..1; the answer is model output, so NaN or 99 must not reach callers."""
+    decision = dedupe._parse_dedupe_response(
+        json.dumps({"is_duplicate": False, "confidence": value})
+    )
+
+    assert decision["confidence"] == pytest.approx(expected)
