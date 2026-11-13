@@ -865,13 +865,60 @@ def test_topup_missing_wallet_keeps_json_machine_readable(
 
 
 def test_topup_success_without_payment(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
-    receipt = {"credits_granted": 5, "duplicate": False, "balance": 5}
+    receipt = {"credits_granted": 5, "duplicate": False, "reference": "pay_test_1", "balance": 5}
     monkeypatch.setattr(
         http, "request", lambda *_a, **_k: FakeResponse(status_code=200, payload=receipt)
     )
     code = cloud.run_cloud(["billing", "topup", "--credits", "5", "--json"])
     assert code == 0
     assert json.loads(capsys.readouterr().out) == receipt
+
+
+def test_topup_duplicate_receipt_without_payment_is_a_success(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    receipt = {"credits_granted": 0, "duplicate": True, "reference": "pay_test_1", "balance": 5}
+    monkeypatch.setattr(
+        http, "request", lambda *_a, **_k: FakeResponse(status_code=200, payload=receipt)
+    )
+    code = cloud.run_cloud(["billing", "topup", "--credits", "5", "--json"])
+    assert code == 0
+    assert json.loads(capsys.readouterr().out) == receipt
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"success": True},
+        {"credits_granted": 5, "duplicate": False, "balance": 5},
+        {"credits_granted": 5, "duplicate": False, "reference": "", "balance": 5},
+        {"credits_granted": True, "duplicate": False, "reference": "pay_test_1", "balance": 5},
+        ["credits_granted", 5],
+    ],
+)
+def test_topup_success_response_without_a_valid_receipt_is_not_a_success(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any, payload: Any
+) -> None:
+    calls: list[str] = []
+
+    def request(method: str, path: str, **_kwargs: Any) -> FakeResponse:
+        calls.append(f"{method} {path}")
+        return FakeResponse(status_code=200, payload=payload)
+
+    monkeypatch.setattr(http, "request", request)
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_a, **_k: pytest.fail("the wallet must not be started")
+    )
+
+    code = cloud.run_cloud(["billing", "topup", "--credits", "5", "--yes", "--json"])
+
+    assert code == http.EXIT_ERROR
+    assert calls == ["POST /billing/topup"]
+    result = json.loads(capsys.readouterr().out)
+    assert result["payment_outcome_unknown"] is True
+    assert "strix cloud billing credits" in result["error"]
+    assert "credits_granted" not in result
 
 
 def test_topup_keeps_token_out_of_wallet_process_and_forwards_payment(

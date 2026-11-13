@@ -106,8 +106,26 @@ def run_topup(  # noqa: PLR0911, PLR0912, PLR0915
     """Handle the HTTP 402 challenge and optional agent-wallet payment."""
     response = http.request("POST", "/billing/topup", token=token, body=body)
     if response.status_code != 402:
-        emit(console, http.check(response), as_json=as_json)
-        return http.EXIT_OK
+        receipt = http.check(response)
+        if _valid_topup_receipt(receipt):
+            emit(console, receipt, as_json=as_json)
+            return http.EXIT_OK
+        # A 2xx without the documented receipt proves neither a grant nor a failure, so
+        # this is a plain error rather than EXIT_PAYMENT: callers answer that code by
+        # approving a payment, and paying again here could charge twice.
+        emit(
+            console,
+            {
+                "error": (
+                    "The top-up response did not include a valid receipt. The outcome is "
+                    "unknown; run `strix cloud billing credits` and check the balance before "
+                    "retrying."
+                ),
+                "payment_outcome_unknown": True,
+            },
+            as_json=as_json,
+        )
+        return http.EXIT_ERROR
 
     challenge = http.parsed(response)
     if getattr(args, "no_pay", False):
