@@ -1111,10 +1111,21 @@ def _poll(
     as_json: bool,
     wait_timeout: float,
 ) -> Any:
-    """Poll a GET path until its status is final. Returns the last response."""
+    """Poll a GET path until its status is final. Returns the last response.
+
+    ``wait_timeout`` bounds the whole wait: no request starts once the deadline
+    has passed, each request's timeout is capped at the remaining budget, and a
+    response that only arrives after the deadline is reported as a timeout even
+    when it is final, so ``--wait`` never succeeds late.
+    """
     deadline = time.monotonic() + wait_timeout
     while True:
-        current: Any = http.check(http.request("GET", path, token=token))
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise _wait_timeout_error(wait_timeout)
+        current: Any = http.check(http.request("GET", path, token=token, timeout=remaining))
+        if time.monotonic() > deadline:
+            raise _wait_timeout_error(wait_timeout)
         fields = cast("dict[str, Any]", current) if isinstance(current, dict) else {}
         status = str(fields.get("status", ""))
         if status.lower() in _TERMINAL_STATUSES:
@@ -1125,8 +1136,12 @@ def _poll(
             )
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise http.CloudError(
-                f"wait timed out after {wait_timeout:g} seconds; the remote operation is still "
-                "running. Re-run its get command to check the status."
-            )
+            raise _wait_timeout_error(wait_timeout)
         time.sleep(min(_WAIT_POLL_S, remaining))
+
+
+def _wait_timeout_error(wait_timeout: float) -> http.CloudError:
+    return http.CloudError(
+        f"wait timed out after {wait_timeout:g} seconds; the remote operation is still "
+        "running. Re-run its get command to check the status."
+    )
