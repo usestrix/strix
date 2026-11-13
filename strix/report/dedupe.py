@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import posixpath
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -183,7 +184,18 @@ def _manifest_path(report: dict[str, Any]) -> str:
     metadata = report.get("dependency_metadata")
     if not isinstance(metadata, dict):
         return ""
-    return str(metadata.get("manifest_path") or "").strip()
+    raw = str(metadata.get("manifest_path") or "").strip()
+    if not raw:
+        return ""
+    # The path is model-authored, so one manifest arrives spelled several ways:
+    # "./package.json", "package.json//", ".\\package.json". Comparing the spellings
+    # makes two findings for the same manifest look like two manifests, and the
+    # duplicate is reported twice. ``normpath`` is the lexical rule for exactly these:
+    # it collapses "//", drops "." segments and resolves "..", and it keeps a leading
+    # "/" so an absolute path never equals a relative one. It never touches the
+    # filesystem, so a symlinked parent still compares by its written spelling.
+    resolved = posixpath.normpath(raw.replace("\\", "/"))
+    return "" if resolved == "." else resolved
 
 
 def _distinct_manifest_paths(candidate: dict[str, Any], report: dict[str, Any]) -> bool:
