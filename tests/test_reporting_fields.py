@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING, Any, cast
+from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from agents.tool_context import ToolContext
@@ -30,10 +31,6 @@ from strix.tools.reporting.tool import (
     delete_vulnerability_report,
     update_vulnerability_report,
 )
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 _CVSS = {
@@ -1226,6 +1223,191 @@ def test_dependency_dedupe_matches_structured_missing_ecosystem() -> None:
             "package_name": "sample",
             "installed_version": "1.0.1",
             "package_ecosystem": "npm",
+        },
+    }
+
+    result = _check_dependency_duplicate(candidate, existing)
+
+    assert result is not None
+    assert result["is_duplicate"] is True
+    assert result["duplicate_id"] == "vuln-0001"
+
+
+def _configure_run_sources(report_state: ReportState, *roots: Path) -> None:
+    """Give the run the local-source configuration a multi-repository scan has."""
+    targets_info = [
+        {
+            "type": "local_code",
+            "details": {"target_path": str(root), "workspace_subdir": root.name},
+            "original": str(root),
+        }
+        for root in roots
+    ]
+    local_sources = [
+        {
+            "source_path": str(root),
+            "workspace_subdir": root.name,
+            "protect_metadata": True,
+            "read_only": False,
+        }
+        for root in roots
+    ]
+    report_state.set_scan_config({"targets": targets_info, "local_sources": local_sources})
+
+
+async def _file_dependency_finding(target: str) -> dict[str, Any]:
+    """File the same CVE/package/manifest through the real reporting tool."""
+    return await _do_create_dependency(
+        title="CVE-2024-0001 in fixture-package 1.0.0",
+        description="Synthetic advisory fixture.",
+        target=target,
+        cve="CVE-2024-0001",
+        package_name="fixture-package",
+        installed_version="1.0.0",
+        impact="Synthetic impact.",
+        remediation_steps="Update the fixture dependency.",
+        assumptions="Synthetic evidence only.",
+        package_ecosystem="npm",
+        manifest_path="package-lock.json",
+        advisory_cvss=7.5,
+        fixed_version=None,
+        cwe=None,
+        technical_analysis=None,
+        fix_effort="low",
+        reachability="not_reachable",
+        reachability_evidence=_DEP_EVIDENCE,
+        contextual_cvss_breakdown=_DEP_CONTEXT,
+        contextual_cvss_reasoning=_DEP_REASONING,
+    )
+
+
+async def test_dependency_dedupe_keeps_same_manifest_across_source_roots(
+    report_state: ReportState, tmp_path: Path
+) -> None:
+    """Two repositories sharing a relative manifest path keep both findings.
+
+    Each source tree has its own ``package-lock.json``, so only the source
+    root distinguishes them; the second finding must not collapse onto the
+    first (#1737).
+    """
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    for root in (repo_a, repo_b):
+        root.mkdir()
+    _configure_run_sources(report_state, repo_a, repo_b)
+
+    first = await _file_dependency_finding(str(repo_a))
+    second = await _file_dependency_finding(str(repo_b))
+
+    assert first["success"] is True
+    assert second["success"] is True
+    saved = json.loads((report_state.get_run_dir() / "vulnerabilities.json").read_text())
+    assert sorted(Path(item["target"]).name for item in saved) == ["repo-a", "repo-b"]
+    assert (report_state.get_run_dir() / "vulnerabilities" / "vuln-0002.md").is_file()
+
+
+async def test_dependency_dedupe_still_collapses_same_source_duplicate(
+    report_state: ReportState, tmp_path: Path
+) -> None:
+    """A finding re-filed against the same source root stays suppressed."""
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    for root in (repo_a, repo_b):
+        root.mkdir()
+    _configure_run_sources(report_state, repo_a, repo_b)
+
+    first = await _file_dependency_finding(str(repo_a))
+    second = await _file_dependency_finding(str(repo_a))
+
+    assert first["success"] is True
+    assert second["success"] is False
+    assert second["duplicate_of"] == "vuln-0001"
+    saved = json.loads((report_state.get_run_dir() / "vulnerabilities.json").read_text())
+    assert [Path(item["target"]).name for item in saved] == ["repo-a"]
+
+
+def test_dependency_dedupe_keeps_workspace_mounts_apart(
+    report_state: ReportState, tmp_path: Path
+) -> None:
+    """Container-side ``/workspace/<subdir>`` targets resolve to their own root."""
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    for root in (repo_a, repo_b):
+        root.mkdir()
+    _configure_run_sources(report_state, repo_a, repo_b)
+    existing = [
+        {
+            "id": "vuln-0001",
+            "title": "CVE-2024-0001 in fixture-package",
+            "cve": "CVE-2024-0001",
+            "target": f"/workspace/{repo_a.name}/package-lock.json",
+            "dependency_metadata": {
+                "package_name": "fixture-package",
+                "installed_version": "1.0.0",
+                "package_ecosystem": "npm",
+                "manifest_path": "package-lock.json",
+            },
+        }
+    ]
+    candidate = {
+        "title": "CVE-2024-0001 in fixture-package re-reported",
+        "description": "Same advisory from the second source tree.",
+        "target": f"/workspace/{repo_b.name}/package-lock.json",
+        "cve": "CVE-2024-0001",
+        "dependency_metadata": {
+            "package_name": "fixture-package",
+            "installed_version": "1.0.0",
+            "package_ecosystem": "npm",
+            "manifest_path": "package-lock.json",
+        },
+    }
+
+    result = _check_dependency_duplicate(candidate, existing)
+
+    assert result is not None
+    assert result["is_duplicate"] is False
+
+    same_root = dict(candidate)
+    same_root["target"] = f"/workspace/{repo_a.name}/package-lock.json"
+
+    result = _check_dependency_duplicate(same_root, existing)
+
+    assert result is not None
+    assert result["is_duplicate"] is True
+    assert result["duplicate_id"] == "vuln-0001"
+
+
+def test_dependency_dedupe_falls_back_without_resolvable_source_root(
+    report_state: ReportState, tmp_path: Path
+) -> None:
+    """A target naming no configured source root keeps the legacy comparison."""
+    repo_a = tmp_path / "repo-a"
+    repo_a.mkdir()
+    _configure_run_sources(report_state, repo_a)
+    existing = [
+        {
+            "id": "vuln-0001",
+            "title": "CVE-2024-0001 in fixture-package",
+            "cve": "CVE-2024-0001",
+            "target": "acme-suite",
+            "dependency_metadata": {
+                "package_name": "fixture-package",
+                "installed_version": "1.0.0",
+                "package_ecosystem": "npm",
+                "manifest_path": "package-lock.json",
+            },
+        }
+    ]
+    candidate = {
+        "title": "CVE-2024-0001 in fixture-package re-reported",
+        "description": "Same advisory, unresolvable project-name target.",
+        "target": "acme-suite",
+        "cve": "CVE-2024-0001",
+        "dependency_metadata": {
+            "package_name": "fixture-package",
+            "installed_version": "1.0.0",
+            "package_ecosystem": "npm",
+            "manifest_path": "package-lock.json",
         },
     }
 

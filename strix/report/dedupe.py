@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agents.models.interface import ModelTracing
@@ -197,6 +198,111 @@ def _distinct_manifest_paths(candidate: dict[str, Any], report: dict[str, Any]) 
     return bool(candidate_path and report_path and candidate_path != report_path)
 
 
+_WORKSPACE_MOUNT_ROOT = "/workspace"
+
+
+def _resolved_path(path: str) -> str:
+    try:
+        return str(Path(path).expanduser().resolve())
+    except (OSError, RuntimeError):
+        return path
+
+
+def _run_source_roots() -> list[tuple[str, tuple[str, ...]]]:
+    """Canonical source-root identities configured for this run.
+
+    Each local source tree (local directory or cloned repository) contributes
+    its ``source_path``/``cloned_repo_path`` as the canonical form, plus every
+    other spelling the run gives it: the sandbox workspace mount, the
+    workspace subdir, and the original CLI target / repository URL.
+    """
+    state = get_global_report_state()
+    if state is None:
+        return []
+    roots: list[tuple[str, tuple[str, ...]]] = []
+    seen: set[str] = set()
+
+    def _add(root: str, *aliases: str) -> None:
+        canonical = root.strip()
+        if not canonical or canonical in seen:
+            return
+        seen.add(canonical)
+        roots.append((canonical, tuple(alias.strip() for alias in aliases if alias.strip())))
+
+    sources = state.run_record.get("local_sources")
+    for entry in sources if isinstance(sources, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        source_path = str(entry.get("source_path") or "")
+        subdir = str(entry.get("workspace_subdir") or "").strip().strip("/")
+        mount = f"{_WORKSPACE_MOUNT_ROOT}/{subdir}" if subdir else ""
+        _add(source_path or subdir, source_path, subdir, mount)
+
+    targets = state.run_record.get("targets_info")
+    for entry in targets if isinstance(targets, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        details = entry.get("details") or {}
+        if not isinstance(details, dict):
+            continue
+        source_path = str(details.get("target_path") or details.get("cloned_repo_path") or "")
+        subdir = str(details.get("workspace_subdir") or "").strip().strip("/")
+        mount = f"{_WORKSPACE_MOUNT_ROOT}/{subdir}" if subdir else ""
+        original = str(entry.get("original") or "")
+        repo_url = str(details.get("target_repo") or "")
+        _add(source_path or subdir, source_path, subdir, mount, original, repo_url)
+    return roots
+
+
+def _names_source_root(target: str, resolved_target: str, alias: str) -> bool:
+    if not alias:
+        return False
+    if target == alias or target.startswith(f"{alias.rstrip('/')}/"):
+        return True
+    if not alias.startswith("/"):
+        return False
+    root = _resolved_path(alias)
+    return resolved_target == root or resolved_target.startswith(f"{root.rstrip('/')}/")
+
+
+def _resolve_source_root(target: object) -> str | None:
+    """Map a finding's ``target`` text onto the run's canonical source root.
+
+    ``target`` is free text (repository, project, manifest or path), so it is
+    matched against every spelling the run configuration gives each source
+    root; the longest matching root wins so nested source trees resolve to
+    the innermost one. Returns None when no source root matches.
+    """
+    text = str(target or "").strip()
+    if not text:
+        return None
+    resolved_target = _resolved_path(text)
+    matches = [
+        canonical
+        for canonical, aliases in _run_source_roots()
+        if any(_names_source_root(text, resolved_target, alias) for alias in aliases)
+    ]
+    return max(matches, key=len) if matches else None
+
+
+def _distinct_source_roots(candidate: dict[str, Any], report: dict[str, Any]) -> bool:
+    """Two source repositories are two findings, never one.
+
+    Dependency findings compare repository-relative manifest paths, so two
+    source trees in one run (each with its own ``package-lock.json``) would
+    otherwise collapse onto the first filed finding for the shared
+    CVE/package/ecosystem. A finding whose ``target`` cannot be resolved onto
+    a run source root (project-name spellings, saved findings from runs
+    without source configuration) keeps the legacy repository-agnostic
+    comparison.
+    """
+    candidate_root = _resolve_source_root(candidate.get("target"))
+    if candidate_root is None:
+        return False
+    report_root = _resolve_source_root(report.get("target"))
+    return report_root is not None and report_root != candidate_root
+
+
 def _report_cve(report: dict[str, Any]) -> str:
     return str(report.get("cve") or "").strip().upper()
 
@@ -241,6 +347,8 @@ def _check_dependency_duplicate(
         if report_identity is not None:
             report_cve, report_ecosystem, report_package_name = report_identity
             if (report_cve, report_package_name) != (cve, package_name):
+                continue
+            if _distinct_source_roots(candidate, report):
                 continue
             if _distinct_manifest_paths(candidate, report):
                 continue
