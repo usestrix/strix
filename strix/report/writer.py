@@ -17,6 +17,7 @@ from pygments.lexers.special import TextLexer
 from pygments.util import ClassNotFound
 
 from strix.core.paths import run_record_path
+from strix.i18n import t
 
 
 if TYPE_CHECKING:
@@ -139,7 +140,7 @@ def write_run_record(run_dir: Path, run_record: dict[str, Any]) -> None:
 def write_executive_report(run_dir: Path, final_scan_result: str) -> None:
     path = run_dir / "penetration_test_report.md"
     with path.open("w", encoding="utf-8") as f:
-        f.write("# Security Penetration Test Report\n\n")
+        f.write(f"# {t('report.title')}\n\n")
         f.write(f"**Generated:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n")
         f.write(f"{final_scan_result}\n")
     logger.info("Saved final penetration test report to: %s", path)
@@ -259,17 +260,17 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
             lines.append(f"**{label}:** {value}")
 
     lines.append("")
-    lines.append("## Description\n")
+    lines.append(f"## {t('report.description')}\n")
     lines.append(report.get("description") or "No description provided.")
     lines.append("")
 
     if report.get("evidence"):
-        lines.append("## Evidence\n")
+        lines.append(f"## {t('report.evidence')}\n")
         lines.append(str(report["evidence"]))
         lines.append("")
 
     if report.get("impact"):
-        lines.append("## Impact\n")
+        lines.append(f"## {t('report.impact')}\n")
         lines.append(str(report["impact"]))
         lines.append("")
 
@@ -342,7 +343,7 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
             lines.append("")
 
     if report.get("remediation_steps"):
-        lines.append("## Remediation\n")
+        lines.append(f"## {t('report.remediation')}\n")
         lines.append(str(report["remediation_steps"]))
         lines.append("")
 
