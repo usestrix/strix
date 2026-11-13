@@ -54,8 +54,8 @@ OUTCOME_LABELS: dict[str, str] = {
     "needs_follow_up": "Requires further review",
 }
 
-#: Statuses that mean the agent stopped early rather than finishing its task.
-_INCOMPLETE_AGENT_STATUSES = frozenset({"crashed", "stopped", "running", "waiting"})
+#: Completion requires a terminal success for every recorded agent.
+_COMPLETED_AGENT_STATUS = "completed"
 
 #: Only this skill category names a vulnerability class. ``tooling`` and
 #: ``reconnaissance`` skills describe how an agent works, not what it hunts,
@@ -119,6 +119,15 @@ _SKILL_PHRASINGS: dict[str, tuple[str, ...]] = {
         "rfi",
     ),
     "prototype_pollution": ("prototype pollution",),
+    "query_language_injection": (
+        "query language injection",
+        "jsonpath injection",
+        "jmespath injection",
+        "odata injection",
+        "ldap injection",
+        "xpath injection",
+        "cypher injection",
+    ),
     "race_conditions": ("race condition", "toctou"),
     "rce": ("rce", "remote code execution", "code execution", "command injection"),
     "semantic_confusion": (
@@ -308,10 +317,32 @@ def _unresolved_gaps(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def _unverified_coverage_gaps(
+    entries: list[dict[str, Any]], agents: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Identify claims attributed to agents missing from the execution graph."""
+    known_ids = {str(agent["agent_id"]) for agent in agents}
+    return [
+        {
+            "kind": "unverified_agent_provenance",
+            "surface": entry.get("surface", ""),
+            "risk_area": entry.get("risk_area", ""),
+            "detail": (
+                f"Coverage refers to agent {entry['agent_id']!r}, "
+                "absent from the execution graph."
+            ),
+        }
+        for entry in entries
+        if entry.get("agent_id") and str(entry["agent_id"]) not in known_ids
+    ]
+
+
 def _completeness(
     run_record: dict[str, Any],
     agents: list[dict[str, Any]],
     exit_reason: str | None,
+    *,
+    unverified_claims: int = 0,
 ) -> dict[str, Any]:
     """Whether this record can be read as a complete account of the scan.
 
@@ -332,12 +363,19 @@ def _completeness(
         caveats.append(
             "The agent execution graph is missing or empty; completion cannot be verified."
         )
-    unfinished = [agent for agent in agents if agent["status"] in _INCOMPLETE_AGENT_STATUSES]
-    if unfinished:
-        names = ", ".join(sorted(str(agent["agent_name"]) for agent in unfinished))
+    if unverified_claims:
         caveats.append(
-            f"{len(unfinished)} agent(s) did not finish cleanly ({names}); any surface they "
-            "held is under-covered."
+            f"{unverified_claims} coverage claim(s) reference agents "
+            "absent from the execution graph."
+        )
+    unfinished = [agent for agent in agents if agent["status"] != _COMPLETED_AGENT_STATUS]
+    if unfinished:
+        details = ", ".join(
+            sorted(f"{agent['agent_name']}: {agent['status']}" for agent in unfinished)
+        )
+        caveats.append(
+            f"{len(unfinished)} agent(s) did not finish successfully ({details}); "
+            "their assigned surfaces may be under-covered."
         )
     if exit_reason and exit_reason not in {"finished_by_tool", "completed"}:
         caveats.append(
@@ -395,10 +433,12 @@ def build_coverage_document(
         for entry in entries
     ]
 
+    unverified_gaps = _unverified_coverage_gaps(entries, agents)
     gaps = [
         *_unresolved_gaps(entries),
         *skill_coverage_gaps(entries, agents),
         *_silent_agent_gaps(entries, agents),
+        *unverified_gaps,
     ]
 
     return {
@@ -425,7 +465,9 @@ def build_coverage_document(
             "findings_filed": len(vulnerability_reports),
             "source": "runtime",
         },
-        "completeness": _completeness(run_record, agents, exit_reason),
+        "completeness": _completeness(
+            run_record, agents, exit_reason, unverified_claims=len(unverified_gaps)
+        ),
         "entries": ledger,
         "gaps": gaps,
     }

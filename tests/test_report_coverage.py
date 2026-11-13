@@ -100,6 +100,14 @@ def test_synonym_phrasing_counts_as_recorded_coverage() -> None:
     assert not [gap for gap in doc["gaps"] if gap["kind"] == "unrecorded_risk_class"]
 
 
+def test_query_language_skill_coverage_uses_parser_specific_names() -> None:
+    doc = _document(
+        entries=[_entry(risk_area="XPath injection", surface="GET /search")],
+        agent_graph=_graph(metadata={"agent-1": {"skills": ["query_language_injection"]}}),
+    )
+    assert not [gap for gap in doc["gaps"] if gap["kind"] == "unrecorded_risk_class"]
+
+
 def test_non_risk_skills_carry_no_coverage_obligation() -> None:
     """Tooling skills describe how an agent works, not what it hunts."""
     doc = _document(agent_graph=_graph(metadata={"agent-1": {"skills": ["idor", "caido"]}}))
@@ -175,6 +183,27 @@ def test_missing_agent_graph_cannot_claim_complete_coverage() -> None:
 
     assert doc["completeness"]["complete"] is False
     assert "execution graph" in doc["completeness"]["caveats"][0]
+
+
+def test_failed_and_paused_agents_cannot_claim_complete_coverage() -> None:
+    for status in ("failed", "budget_paused", "unexpected"):
+        doc = _document(
+            agent_graph=_graph(statuses={"agent-1": status}),
+            exit_reason="finished_by_tool",
+        )
+        assert doc["completeness"]["complete"] is False
+        assert status in doc["completeness"]["caveats"][0]
+
+
+def test_unverified_agent_coverage_is_reported_as_a_gap() -> None:
+    doc = _document(
+        entries=[_entry(agent_id="missing-agent")],
+        exit_reason="finished_by_tool",
+    )
+
+    assert doc["completeness"]["complete"] is False
+    assert any(gap["kind"] == "unverified_agent_provenance" for gap in doc["gaps"])
+    assert doc["summary"]["gaps"] == len(doc["gaps"])
 
 
 def test_write_coverage_emits_a_top_level_artifact(tmp_path: Path) -> None:

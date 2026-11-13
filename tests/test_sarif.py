@@ -343,6 +343,19 @@ def test_incomplete_run_is_flagged_on_the_invocation(tmp_path: Path) -> None:
     assert invocation["toolExecutionNotifications"][0]["message"]["text"] == "Budget exhausted."
 
 
+def test_missing_completion_evidence_fails_closed_in_sarif(tmp_path: Path) -> None:
+    for completeness in ({}, {"complete": "false"}, {"complete": None}):
+        write_sarif(
+            tmp_path,
+            [],
+            coverage=_coverage(_coverage_entry(), completeness=completeness),
+        )
+        invocation = _read(tmp_path)["runs"][0]["invocations"][0]
+        assert invocation["executionSuccessful"] is False
+        warning = invocation["toolExecutionNotifications"][0]["message"]["text"]
+        assert "could not be verified" in warning
+
+
 def test_complete_run_reports_a_successful_invocation(tmp_path: Path) -> None:
     write_sarif(tmp_path, [], coverage=_coverage(_coverage_entry()))
     invocation = _read(tmp_path)["runs"][0]["invocations"][0]

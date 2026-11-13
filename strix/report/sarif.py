@@ -739,7 +739,11 @@ def _coverage_invocation(coverage: dict[str, Any]) -> dict[str, Any]:
     caveats = completeness.get("caveats")
     caveats = caveats if isinstance(caveats, list) else []
 
-    invocation: dict[str, Any] = {"executionSuccessful": bool(completeness.get("complete", True))}
+    complete = completeness.get("complete") is True
+    if not complete and not caveats:
+        caveats = ["Scan completion could not be verified from the coverage record."]
+
+    invocation: dict[str, Any] = {"executionSuccessful": complete}
     if caveats:
         invocation["toolExecutionNotifications"] = [
             {"level": "warning", "message": {"text": str(caveat)}} for caveat in caveats
