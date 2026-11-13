@@ -328,8 +328,7 @@ def _unverified_coverage_gaps(
             "surface": entry.get("surface", ""),
             "risk_area": entry.get("risk_area", ""),
             "detail": (
-                f"Coverage refers to agent {entry['agent_id']!r}, "
-                "absent from the execution graph."
+                f"Coverage refers to agent {entry['agent_id']!r}, absent from the execution graph."
             ),
         }
         for entry in entries
