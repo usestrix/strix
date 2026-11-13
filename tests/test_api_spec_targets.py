@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from strix.core.inputs import build_root_task, build_scope_context
-from strix.interface.scan_setup import build_targets_info
+from strix.core.paths import run_dir_for, runtime_state_dir
+from strix.interface.cli_args import parse_arguments
+from strix.interface.scan_setup import build_targets_info, prepare_run
 from strix.interface.utils import infer_target_type, stage_api_specs
+from strix.runtime.session_manager import build_bind_mounts, build_manifest_entries
 
 
 OPENAPI = {
@@ -131,6 +135,56 @@ def test_stage_api_specs_disambiguates_same_filename(tmp_path: Path) -> None:
 
 def test_stage_api_specs_without_specs_returns_nothing() -> None:
     assert stage_api_specs([{"type": "web_application", "details": {}}], "run") == []
+
+
+def test_resume_restores_staged_api_specs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("strix.interface.utils.tempfile.gettempdir", lambda: str(tmp_path))
+    first = _write_spec(tmp_path / "a")
+    second = _write_spec(tmp_path / "b")
+    monkeypatch.setattr(sys, "argv", ["strix", "-n", "-t", str(first), "-t", str(second)])
+    original = parse_arguments()
+    prepare_run(original)
+    state_dir = runtime_state_dir(run_dir_for(original.run_name))
+    state_dir.mkdir(parents=True)
+    (state_dir / "agents.json").write_text("{}", encoding="utf-8")
+    # Resume must use the staged snapshot, even if its inputs change or disappear.
+    first.write_text("changed after the scan started", encoding="utf-8")
+    second.unlink()
+    monkeypatch.setattr(sys, "argv", ["strix", "-n", "--resume", original.run_name])
+
+    resumed = parse_arguments()
+    prepare_run(resumed)
+
+    assert resumed.local_sources == original.local_sources
+    assert build_bind_mounts(resumed.local_sources) == build_bind_mounts(original.local_sources)
+    assert "api-specs" in build_manifest_entries(resumed.local_sources)
+    staging = Path(resumed.local_sources[0]["source_path"])
+    for name in ("openapi.json", "openapi-2.json"):
+        assert json.loads((staging / name).read_text(encoding="utf-8")) == OPENAPI
+    assert resumed.targets_info == original.targets_info
+
+
+def test_resume_rejects_a_missing_staged_api_spec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("strix.interface.utils.tempfile.gettempdir", lambda: str(tmp_path))
+    spec = _write_spec(tmp_path / "src")
+    monkeypatch.setattr(sys, "argv", ["strix", "-n", "-t", str(spec)])
+    original = parse_arguments()
+    prepare_run(original)
+    state_dir = runtime_state_dir(run_dir_for(original.run_name))
+    state_dir.mkdir(parents=True)
+    (state_dir / "agents.json").write_text("{}", encoding="utf-8")
+    (Path(original.local_sources[0]["source_path"]) / spec.name).unlink()
+    monkeypatch.setattr(sys, "argv", ["strix", "-n", "--resume", original.run_name])
+
+    with pytest.raises(SystemExit) as exc:
+        parse_arguments()
+
+    assert exc.value.code == 2
+    assert "staged API specification" in capsys.readouterr().err
 
 
 def test_build_root_task_points_at_the_spec_file(tmp_path: Path) -> None:
