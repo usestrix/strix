@@ -31,6 +31,12 @@ Configure Strix using environment variables or a config file.
   Price per 1M cached input tokens in USD for `STRIX_LLM`. If unset, cached tokens use the input price.
 </ParamField>
 
+<ParamField path="STRIX_LLM_CACHED_INPUT_WRITE_COST_PER_MTOK" type="number">
+  Price per 1M prompt-cache write tokens in USD for `STRIX_LLM`. Writes are billed above a
+  plain input token by every provider that charges for them, so they are counted separately
+  from cache reads. If unset, write tokens use the input price.
+</ParamField>
+
 <Note>
   Setting any of these prices replaces the provider-reported and LiteLLM cost for `STRIX_LLM` in reports and `--max-budget`. An unset input or output price counts as `0`, so set both. A separate `STRIX_DEDUPE_MODEL` keeps its LiteLLM price.
 </Note>
