@@ -519,6 +519,13 @@ def _validate_body(cmd: Cmd, body: dict[str, Any]) -> None:
             "--expires-at and --expires-in-days are mutually exclusive.",
             exit_code=http.EXIT_USAGE,
         )
+    try:
+        json.dumps(body, allow_nan=False)
+    except ValueError as exc:
+        raise http.CloudError(
+            "request fields must be valid JSON with finite numbers.",
+            exit_code=http.EXIT_USAGE,
+        ) from exc
 
 
 def _handoff_link(
