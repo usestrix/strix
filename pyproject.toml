@@ -236,6 +236,7 @@ ignore = [
 "tests/test_viewer_auth.py" = ["S105", "S106", "ARG001"]
 "tests/test_cloud_cli.py" = ["S105", "ARG001"]
 "tests/test_codex_auth.py" = ["S105", "S106", "SLF001"]
+"tests/test_mistral_auth.py" = ["S105", "S106", "SLF001"]
 # Hatchling loads the build hook by path, not as an importable package.
 "scripts/tui_sidecar_hook.py" = ["INP001"]
 # Stdlib HTTP handler overrides (do_GET/do_POST).
@@ -318,6 +319,8 @@ ignore = [
 # Heavy inference deps (httpx, openai) imported lazily so auth-status checks
 # don't pull them in.
 "strix/config/codex.py" = ["PLC0415"]
+# Same lazy heavy imports as codex.py.
+"strix/config/mistral.py" = ["PLC0415"]
 # Interface utility branches per scope-mode / target-type combination;
 # splitting would obscure the decision tree without simplifying it.
 "strix/interface/utils.py" = ["PLR0912", "BLE001", "PLC0415"]
