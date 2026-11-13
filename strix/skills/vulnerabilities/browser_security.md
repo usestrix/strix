@@ -96,6 +96,12 @@ Prove the strongest reliable capability first. If escalation requires a user ges
 - A sandbox inherited by a new top-level context can selectively block forms, scripts, popups, or navigation; enumerate the exact flag set.
 - Preserve and inspect history when a built-in error page replaces the active document; do not assume the errored URL is lost.
 
+#### OAuth and Sensitive Redirects
+
+For OAuth/OIDC/SAML callbacks, capture the raw `Location`, predict its components, then navigate a controlled browser and record the actual origin and code/token placement. Prove receiver-side fragment capture with synthetic data and continue, when authorized, through exact-redirect redemption and victim identity. Load `vulnerabilities/url_parser_differentials` when validation and navigation may see different URL representations.
+
+Fragments are not sent in HTTP requests, so receiver logs cannot disprove leakage and a parsed `Location` cannot prove JavaScript collection. Use an authorized distinct-origin receiver; an unavailable browser or receiver leaves `needs_follow_up`.
+
 ### CSP and Browser Parsing
 
 - Evaluate the delivered policy on the exact response, including redirects and error/API/static paths.

@@ -62,6 +62,10 @@ Open redirects enable phishing, OAuth/OIDC code and token theft, and allowlist b
 - IP variants: decimal 2130706433, octal 0177.0.0.1, hex 0x7f.1, IPv6 `[::ffff:127.0.0.1]`
 - User-controlled path bases: `/out?url=/\evil.com`
 
+### Parser and Decode Differentials
+
+When validation, redirect construction, and navigation may consume different URL representations, load `vulnerabilities/url_parser_differentials` before custom fuzzing. Use its bounded matrix and closure record; one safe atomic delimiter or parser result cannot rule out compound origin drift. OAuth flows also load `protocols/oauth`.
+
 ## Key Vulnerabilities
 
 ### Allowlist Evasion
@@ -84,6 +88,7 @@ Open redirects enable phishing, OAuth/OIDC code and token theft, and allowlist b
 - Weak prefix/suffix checks: `https://trusted.com` → `https://trusted.com.evil.com`
 - Path traversal/canonicalization: `/oauth/../../@evil.com`
 - `post_logout_redirect_uri` often less strictly validated
+- A redirect URI can pass component validation in one decoded representation and navigate elsewhere after another decode. Track where the authorization code is appended relative to the new query/fragment boundary.
 
 ### Client-Side Vectors
 
@@ -135,12 +140,14 @@ Open redirects enable phishing, OAuth/OIDC code and token theft, and allowlist b
 2. Show bypass of the stated validation (regex/allowlist) using canonicalization variants
 3. Test multi-hop: prove only first hop is validated and second hop escapes constraints
 4. For OAuth/SAML, demonstrate code/RelayState delivery to an attacker-controlled endpoint
+5. For a decoding differential, show the raw parameter, validator interpretation, raw `Location`, and browser-final origin as separate artifacts
 
 ## False Positives
 
 - Redirects constrained to relative same-origin paths with robust normalization
 - Exact pre-registered OAuth redirect_uri with strict verifier
 - Validators using a single canonical parser and comparing post-IDNA host and scheme
+- After compound asymmetric delimiter testing, extra decoding that does not change the browser-final origin or deliver sensitive flow data across an origin boundary
 - User prompts that show the exact final destination before navigating
 
 ## Impact
