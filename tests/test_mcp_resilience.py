@@ -111,6 +111,16 @@ async def test_retry_after_parses_seconds_and_http_date() -> None:
     assert 0 <= retry_after <= 20
 
 
+@pytest.mark.parametrize("value", ["Infinity", "inf", "1e309", "9" * 400])
+@pytest.mark.asyncio
+async def test_nonfinite_retry_after_falls_back_to_bounded_backoff(value: str) -> None:
+    recorder = HttpStatusRecorder()
+    await recorder(_http_error(429, retry_after=value).response)
+    info = recorder.take()
+    assert info is not None
+    assert info.retry_after is None
+
+
 @pytest.mark.asyncio
 async def test_successful_response_clears_previous_auth_failure() -> None:
     recorder = HttpStatusRecorder()
