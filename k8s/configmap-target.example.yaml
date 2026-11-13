@@ -1,0 +1,8 @@
+# Copy to configmap-target.yaml (git-ignored alongside secret.yaml — do not
+# commit real values) and fill in the GridFS artifact id of the scan.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: strix-scan-target
+data:
+  artifact-id: "<gridfs-file-id>"

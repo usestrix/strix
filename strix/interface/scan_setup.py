@@ -13,6 +13,7 @@ import asyncio
 import logging
 import unicodedata
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from strix.config import Settings, codex, load_settings
@@ -205,7 +206,12 @@ def build_targets_info(args: argparse.Namespace) -> None:
     args.targets_info = dedupe_local_targets(args.targets_info)
 
     assign_workspace_subdirs(args.targets_info)
-    rewrite_localhost_targets(args.targets_info, HOST_GATEWAY_HOSTNAME)
+    # A localhost target on the host is reachable from inside a container only
+    # via the host-gateway alias, so containerized backends rewrite it. The local
+    # backend runs on the host itself, where localhost is already the right
+    # address (and host.docker.internal may not even route there), so leave it.
+    if load_settings().runtime.backend != "local":
+        rewrite_localhost_targets(args.targets_info, HOST_GATEWAY_HOSTNAME)
 
 
 def _resolve_api_spec(target: str, details: dict[str, Any]) -> None:
@@ -252,6 +258,13 @@ def prepare_run(args: argparse.Namespace) -> None:
         if target_info["type"] == "repository":
             repo_url = target_info["details"]["target_repo"]
             dest_name = target_info["details"].get("workspace_subdir")
+            # The backend may have already delivered the code as an unpacked
+            # artifact (audit.request carries artifact_id); repo_url then stays
+            # in the payload as metadata only. Skip cloning when present.
+            preloaded = target_info["details"].get("cloned_repo_path")
+            if preloaded and Path(preloaded).is_dir():
+                target_info["details"]["cloned_repo_path"] = str(Path(preloaded).resolve())
+                continue
             cloned_path = clone_repository(repo_url, args.run_name, dest_name)
             target_info["details"]["cloned_repo_path"] = cloned_path
 

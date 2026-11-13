@@ -40,12 +40,17 @@ RUN apt-get update && \
     apt-get upgrade -y
 
 RUN useradd -m -s /bin/bash pentester && \
-    usermod -aG sudo pentester && \
+    usermod -aG sudo,0 pentester && \
     echo "pentester ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
     touch /home/pentester/.hushlogin
 
-RUN mkdir -p /home/pentester/tools /app/certs && \
-    chown -R pentester:pentester /app/certs /home/pentester/tools
+# HOME is explicit (not left to /etc/passwd's NSS lookup): under OpenShift
+# restricted SCC the container runs as an arbitrary UID with no /etc/passwd
+# entry, so ${HOME} must resolve from the environment alone.
+ENV HOME=/home/pentester
+
+RUN mkdir -p /home/pentester/tools /home/pentester/certs && \
+    chown -R pentester:pentester /home/pentester/certs /home/pentester/tools
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -69,28 +74,39 @@ RUN apt-get update && \
     chromium fonts-liberation
 
 
-RUN setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip $(which nmap)
+# Move the real binary aside and put a capability-aware wrapper on PATH ahead
+# of it (see nmap-wrapper.sh): file capabilities can only become effective if
+# the *calling process's* capability bounding set already has them, so under a
+# restricted-SCC Pod (no NET_ADMIN/NET_RAW in the bounding set) `setcap` alone
+# is a no-op at exec time regardless of these bits — the wrapper detects that
+# and degrades -sS to -sT instead of letting the scan fail outright. Under the
+# Docker backend, which does grant NET_RAW/NET_ADMIN, the wrapper is a
+# passthrough and these bits behave exactly as before.
+RUN mkdir -p /usr/lib/strix-tools && \
+    mv "$(which nmap)" /usr/lib/strix-tools/nmap && \
+    setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip /usr/lib/strix-tools/nmap
+COPY --chmod=0755 containers/nmap-wrapper.sh /usr/local/bin/nmap
 
 USER pentester
-RUN openssl ecparam -name prime256v1 -genkey -noout -out /app/certs/ca.key && \
-    openssl req -x509 -new -key /app/certs/ca.key \
-    -out /app/certs/ca.crt \
+RUN openssl ecparam -name prime256v1 -genkey -noout -out /home/pentester/certs/ca.key && \
+    openssl req -x509 -new -key /home/pentester/certs/ca.key \
+    -out /home/pentester/certs/ca.crt \
     -days 3650 \
     -subj "/C=US/ST=CA/O=Security Testing/CN=Testing Root CA" \
     -addext "basicConstraints=critical,CA:TRUE" \
     -addext "keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign" && \
     openssl pkcs12 -export \
-    -out /app/certs/ca.p12 \
-    -inkey /app/certs/ca.key \
-    -in /app/certs/ca.crt \
+    -out /home/pentester/certs/ca.p12 \
+    -inkey /home/pentester/certs/ca.key \
+    -in /home/pentester/certs/ca.crt \
     -passout pass:"" \
     -name "Testing Root CA" && \
-    chmod 644 /app/certs/ca.crt && \
-    chmod 600 /app/certs/ca.key && \
-    chmod 600 /app/certs/ca.p12
+    chmod 644 /home/pentester/certs/ca.crt && \
+    chmod 600 /home/pentester/certs/ca.key && \
+    chmod 600 /home/pentester/certs/ca.p12
 
 USER root
-RUN cp /app/certs/ca.crt /usr/local/share/ca-certificates/ca.crt && \
+RUN cp /home/pentester/certs/ca.crt /usr/local/share/ca-certificates/ca.crt && \
     update-ca-certificates
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
@@ -205,6 +221,33 @@ RUN set -eux; \
     rm -f /tmp/trivy /tmp/trivy.tgz; \
     trivy --version
 
+# CodeQL — the *bundle* (CLI + precompiled standard query packs), not the bare
+# CLI: the bare CLI resolves query packs from the registry at analyze time,
+# which costs network egress on every scan and breaks outright in an
+# egress-restricted Pod. Pinned rather than :latest so a scan's results are
+# reproducible against a known query set. ~1-2GB extracted — by far the
+# largest single tool here; drop this block if image size matters more than
+# taint-tracking depth (semgrep already covers breadth).
+#
+# Licensing: the CodeQL CLI is free for open source on public repos and for
+# academic research; running it against private proprietary code requires
+# GitHub Advanced Security. Confirm entitlement before enabling this in a
+# pipeline that scans private repositories.
+ARG CODEQL_BUNDLE_VERSION=v2.23.2
+RUN set -eux; \
+    ARCH="$(uname -m)"; \
+    case "$ARCH" in \
+        x86_64) CODEQL_ARCH="linux64" ;; \
+        aarch64|arm64) CODEQL_ARCH="linux-arm64" ;; \
+        *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/github/codeql-action/releases/download/codeql-bundle-${CODEQL_BUNDLE_VERSION}/codeql-bundle-${CODEQL_ARCH}.tar.gz" -o /tmp/codeql.tgz; \
+    mkdir -p /opt; \
+    tar -xzf /tmp/codeql.tgz -C /opt; \
+    rm -f /tmp/codeql.tgz; \
+    ln -sf /opt/codeql/codeql /usr/local/bin/codeql; \
+    codeql version --format=terse
+
 RUN apt-get install -y wapiti
 
 # CVE-2026-111497: out-of-bounds write in the brotli decoder, fixed in brotli
@@ -315,6 +358,31 @@ RUN python3 -m venv /app/.venv && \
 COPY --chown=pentester:pentester strix/tools/proxy/caido_api.py /opt/strix-python/caido_api.py
 ENV PYTHONPATH=/opt/strix-python
 
+# Orchestrator + tools, one image: install the strix-agent package itself
+# into the same venv the tools above use, so a single Pod (no Docker daemon,
+# no sibling sandbox container) can run `strix ...` directly — see
+# STRIX_RUNTIME_BACKEND=local / strix/runtime/local_backend.py, which execs
+# tools in-process against this same filesystem instead of `docker exec`-ing
+# into a separate container.
+#
+# -e (editable): pyproject.toml's hatchling build hook (scripts/
+# tui_sidecar_hook.py) compiles the Go Bubble Tea TUI sidecar into a regular
+# wheel — unnecessary weight/toolchain/network dependency for this image,
+# whose whole point is `strix -n ...` (non-interactive; see k8s/job.yaml).
+# The hook explicitly no-ops for `pip install -e` (its own
+# `if version == "editable": return"), which is exactly what we want here.
+# The hook script still needs to be present for hatchling to invoke it at
+# all, so it's copied alongside pyproject.toml even though it never runs.
+COPY --chown=pentester:pentester pyproject.toml uv.lock README.md /app/strix-src/
+COPY --chown=pentester:pentester scripts/ /app/strix-src/scripts/
+COPY --chown=pentester:pentester strix/ /app/strix-src/strix/
+RUN /app/.venv/bin/pip install --no-cache-dir -e /app/strix-src
+
+# GridFS storage (artifact upload/download for the orchestrator and the
+# fetch-target initContainer) is not a strix package dependency: only the
+# container entrypoints need it.
+RUN /app/.venv/bin/pip install --no-cache-dir "pymongo>=4.14"
+
 # Login shells (e.g. `bash -lc`) source /etc/profile, which on Debian/Kali
 # hard-resets PATH and drops the image's ENV PATH entries. Re-add the same
 # directories here — including /app/.venv/bin — so `python3`/`pip` resolve to
@@ -327,7 +395,31 @@ USER root
 COPY containers/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-USER pentester
+# --- Arbitrary-UID (OpenShift restricted SCC) support -----------------------
+# The container may run as any UID the platform assigns, always as a member
+# of GID 0. Normalize every path the workload writes to (plus the handful of
+# /etc files the entrypoint optionally refreshes proxy settings into) to
+# group-owned/group-writable so no sudo/chown/setcap is needed at runtime —
+# entrypoint.sh only ever reads STRIX_HOST_UID/GID to match host bind-mount
+# ownership for the classic Docker backend, a case that needs (and already
+# has, via setpriv while still root) real root, not a GID-0 workaround.
+# /usr/lib/strix-tools (the real nmap binary) is intentionally excluded:
+# chown/chgrp clears a file's capability xattr, which would silently undo the
+# setcap above.
+RUN chgrp -R 0 /home/pentester /app /workspace /etc/passwd /etc/group /etc/profile.d && \
+    chmod -R g=u /home/pentester /app /workspace && \
+    chmod g=u /etc/passwd /etc/group /etc/profile.d && \
+    touch /etc/environment /etc/wgetrc && \
+    chgrp 0 /etc/environment /etc/wgetrc && \
+    chmod g=u /etc/environment /etc/wgetrc
+
+# Default USER is root (not pentester): entrypoint.sh needs it to drop
+# privileges itself via setpriv without sudo (see its top section). OpenShift
+# restricted SCC overrides this with its own arbitrary non-root UID
+# regardless of what's declared here — this default only matters for a plain
+# `docker run`, where it reproduces the previous sudo-based behavior exactly.
+USER root
 WORKDIR /workspace
 
 ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["tail", "-f", "/dev/null"]

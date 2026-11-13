@@ -236,6 +236,17 @@ ignore = [
 "tests/test_viewer_auth.py" = ["S105", "S106", "ARG001"]
 "tests/test_cloud_cli.py" = ["S105", "ARG001"]
 "tests/test_codex_auth.py" = ["S105", "S106", "SLF001"]
+# Repo-preload tests patch scan_setup helpers whose signatures they narrow, and
+# assert on a FileNotFoundError from a fake GridFS definition.
+"tests/test_repo_preload.py" = ["ARG001", "ARG005", "TC002", "TC003", "E501"]
+# In-process E2E of the artifact pipeline with mongomock-style GridFS fakes.
+"tests/test_artifact_e2e.py" = ["ARG001", "ARG002", "ARG005", "TC002", "TC003", "PLC0415", "B017", "TRY002", "E501", "E402", "RUF012"]
+# Fixtures patch MongoClient/GridFSBucket lazily (mongomock-style), raising a
+# bare exception for the missing-artifact case matches the real one.
+"tests/test_artifact_fetch.py" = ["ARG001", "ARG005", "TC002", "TC003", "B017", "TRY002", "E501"]
+# The lab's k8s scripts live outside the package tree by design: they are the
+# job entrypoints baked into the strix-local image, not library modules.
+"k8s/artifact_fetch.py" = ["INP001", "RUF100"]
 # Hatchling loads the build hook by path, not as an importable package.
 "scripts/tui_sidecar_hook.py" = ["INP001"]
 # Stdlib HTTP handler overrides (do_GET/do_POST).

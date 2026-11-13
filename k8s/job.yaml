@@ -1,0 +1,172 @@
+# Runs a single Strix scan as one Job, one Pod, one container — no Docker
+# daemon, no sibling sandbox container. Requires STRIX_RUNTIME_BACKEND=local
+# (see strix/runtime/local_backend.py): the orchestrator execs tools directly
+# in this same container instead of driving a separate Docker sandbox.
+#
+# OpenShift only — see job.plain-k8s.yaml for vanilla Kubernetes. The two
+# differ in exactly one thing, and it matters: this file omits
+# securityContext.runAsUser so OpenShift's restricted SCC can inject its own
+# namespace-allocated UID. That's not optional on OpenShift — the SCC
+# validates any UID you *do* request against that namespace's allocated
+# range and rejects the Pod if it's outside it, so hardcoding a value here
+# would break on any namespace whose range doesn't happen to include it.
+# Vanilla Kubernetes has no SCC to do that assignment, so it needs the
+# opposite: an explicit numeric runAsUser (the image's default USER is root,
+# which satisfies OpenShift's own runAsNonRoot check by simply being
+# overridden, but which kubelet can't verify as non-root from a bare "restricted"
+# PodSecurity label without one — confirmed by actually running both).
+#
+# Security model: there is no sandbox *inside* this Pod. Under
+# STRIX_RUNTIME_BACKEND=local the agent's tool calls run in the
+# orchestrator's own process tree and UID, so everything reachable from this
+# Pod — the LLM Secret below, and the ServiceAccount token Kubernetes mounts
+# unless you add `automountServiceAccountToken: false` — is readable by any
+# command the agent runs. The Pod itself is the blast radius: dropped
+# capabilities, non-root, restricted egress (networkpolicy.yaml /
+# egressfirewall.yaml), ephemeral Job. That is a fine trade for scanning code
+# you control; for an untrusted target read the "Security model" section of
+# strix/runtime/local_backend.py first.
+#
+# Fill in before applying:
+#   - <REGISTRY>/strix-local:<TAG>   the merged image built from containers/Dockerfile
+#   - GIT_REPO_URL / GIT_REF          the target repository to scan
+#   - the strix-llm-credentials Secret (see secret.example.yaml)
+#
+# Apply with: oc apply -f k8s/job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: strix-scan
+  labels:
+    app.kubernetes.io/name: strix
+    app.kubernetes.io/component: scan
+spec:
+  # No retries: a failed scan should surface as a failed Job, not silently
+  # re-run against a target that may have been left in a mutated state.
+  backoffLimit: 0
+  # Hard ceiling so a hung scan (e.g. a stuck exec()) can't run the Pod
+  # forever. Generous for --scan-mode deep; tighten per scan-mode if scans
+  # are scheduled with different modes.
+  activeDeadlineSeconds: 7200
+  # Reap the completed Pod's records automatically; scan output lives in
+  # strix_runs/ (see the emptyDir below), not in the Pod itself.
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: strix
+        app.kubernetes.io/component: scan
+    spec:
+      restartPolicy: Never
+      # No SCC/securityContext override here on purpose: the restricted SCC
+      # (or restricted-v2) assigns automatically namespace-allocated
+      # runAsUser/fsGroup ranges. Do not request anyuid/privileged and do not
+      # set a specific runAsUser — let the platform pick it, which is exactly
+      # what local_backend.py and the image's entrypoint are built to handle.
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: fetch-target
+          image: <REGISTRY>/strix-local:<TAG>
+          # The backend downloads the repo and uploads it to GridFS; audit.request
+          # carries ``artifact_id`` and this init step only renders it locally, so
+          # the scan pod needs no GitHub access and holds no GitHub credential.
+          # The scan image carries pymongo, so no second image is needed and the
+          # NetworkPolicy's image-pull egress rule covers both with one allowance.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              python3 - <<'PY'
+              from artifact_fetch import render_artifact
+              import os, shutil
+              artifact_id = os.environ["ARTIFACT_ID"]
+              dest = render_artifact(
+                  artifact_id,
+                  mongo_uri=os.environ["MONGO_URI"],
+                  mongo_db=os.environ.get("MONGO_DB", "strix"),
+                  bucket=os.environ.get("MONGO_BUCKET", "strix_runs"),
+              )
+              shutil.move(str(dest), "/workspace/target")
+              print(f"[fetch-target] artifact {artifact_id} rendered at /workspace/target")
+              PY
+          env:
+            - name: ARTIFACT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: strix-scan-target
+                  key: artifact-id
+            - name: MONGO_URI
+              valueFrom:
+                secretKeyRef:
+                  name: strix-mongo
+                  key: MONGO_URI
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          resources:
+            requests: {cpu: "100m", memory: "128Mi"}
+            limits: {cpu: "500m", memory: "256Mi"}
+      containers:
+        - name: strix
+          image: <REGISTRY>/strix-local:<TAG>
+          # Overrides the image's default keep-alive CMD (`tail -f /dev/null`,
+          # used when this image is run as a plain Docker-backend sandbox) —
+          # here the container itself *is* the orchestrator run.
+          command: ["strix"]
+          args:
+            - "-n"
+            - "-t"
+            - "./target"
+            - "--scan-mode"
+            - "quick"
+            - "--scope-mode"
+            - "full"
+          env:
+            - name: STRIX_RUNTIME_BACKEND
+              value: "local"
+            - name: STRIX_LLM
+              valueFrom:
+                secretKeyRef:
+                  name: strix-llm-credentials
+                  key: STRIX_LLM
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: strix-llm-credentials
+                  key: LLM_API_KEY
+                  optional: true
+            - name: LLM_API_BASE
+              valueFrom:
+                secretKeyRef:
+                  name: strix-llm-credentials
+                  key: LLM_API_BASE
+                  optional: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          workingDir: /workspace
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          resources:
+            requests: {cpu: "1", memory: "2Gi"}
+            limits: {cpu: "4", memory: "8Gi"}
+      volumes:
+        # emptyDir rather than the container's writable layer: only the
+        # target checkout needs to be *shared* with the init container: HOME
+        # (caido's CA import, npm/tree-sitter caches, browser profile, ...)
+        # and /tmp stay on the image's normal writable overlay — the image
+        # isn't read-only, and everything baked into /home/pentester at build
+        # time (tools, certs, parsers) would otherwise be hidden under an
+        # empty mount.
+        - name: workspace
+          emptyDir:
+            sizeLimit: 4Gi
