@@ -394,35 +394,6 @@ def _make_filesystem_configurator(
     return configure
 
 
-_CHARS_ESCAPE_RE = re.compile(r"\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[0abtnvfr\\])")
-_CHARS_ESCAPE_MAP = {
-    "\\\\": "\\",
-    "\\n": "\n",
-    "\\t": "\t",
-    "\\r": "\r",
-    "\\0": "\x00",
-    "\\a": "\x07",
-    "\\b": "\x08",
-    "\\v": "\x0b",
-    "\\f": "\x0c",
-}
-
-
-def _decode_chars_escape(s: str) -> str:
-    if "\\" not in s:
-        return s
-
-    def sub(match: re.Match[str]) -> str:
-        token = match.group(0)
-        if token in _CHARS_ESCAPE_MAP:
-            return _CHARS_ESCAPE_MAP[token]
-        if token.startswith(("\\u", "\\x")):
-            return chr(int(token[2:], 16))
-        return token
-
-    return _CHARS_ESCAPE_RE.sub(sub, s)
-
-
 def _format_validation_error(tool_name: str, exc: ValidationError) -> str:
     parts: list[str] = []
     for err in exc.errors():
@@ -522,8 +493,9 @@ def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
         except json.JSONDecodeError:
             parsed = None
         if isinstance(parsed, dict):
-            if isinstance(parsed.get("chars"), str):
-                parsed["chars"] = _decode_chars_escape(parsed["chars"])
+            # Accept the legacy standalone Ctrl-C spelling without decoding ordinary input.
+            if parsed.get("chars") in (r"\u0003", r"\x03"):
+                parsed["chars"] = "\x03"
             _apply_shell_output_cap(parsed)
             raw_input = json.dumps(parsed)
         try:
