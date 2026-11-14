@@ -66,6 +66,7 @@ def _patch_engine_scaffold(
             prompt_cache=True,
             extra_headers=None,
             extra_body=None,
+            max_tokens=12_000,
         ),
         runtime=types.SimpleNamespace(max_context_images=3),
         telemetry=types.SimpleNamespace(run_record_timings=False),
@@ -92,7 +93,6 @@ def _patch_engine_scaffold(
 
     monkeypatch.setattr(runner, "build_root_task", lambda _scan_config: "task")
     monkeypatch.setattr(runner, "build_scope_context", lambda _scan_config: scope_context)
-    monkeypatch.setattr(runner, "make_model_settings", lambda *_args, **_kwargs: ModelSettings())
     monkeypatch.setattr(
         mcp_client,
         "_build_server",
@@ -100,6 +100,12 @@ def _patch_engine_scaffold(
     )
 
     captured: dict[str, Any] = {}
+
+    def _make_model_settings(*_args: Any, **kwargs: Any) -> ModelSettings:
+        captured["model_settings_kwargs"] = kwargs
+        return ModelSettings()
+
+    monkeypatch.setattr(runner, "make_model_settings", _make_model_settings)
 
     def _build_strix_agent(**kwargs: Any) -> object:
         if kwargs.get("is_root") and "kwargs" not in captured:
@@ -397,3 +403,20 @@ def test_cache_point_marker_is_removed_without_cache_points() -> None:
     prompt = "shared\n<cache_point>\ntargets"
 
     assert _split_cached_prefix(prompt, "go", settings) == ("shared\n\ntargets", "go")
+
+
+@pytest.mark.asyncio
+async def test_llm_max_tokens_flows_into_model_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    captured = _patch_engine_scaffold(monkeypatch, tmp_path, {"scope": "built-in"})
+
+    await runner.run_strix_scan(
+        scan_config={"targets": [], "scan_mode": "deep"},
+        scan_id="scan-token-budget",
+        image="img",
+        coordinator=AgentCoordinator(),
+    )
+
+    assert captured["model_settings_kwargs"]["max_tokens"] == 12_000
