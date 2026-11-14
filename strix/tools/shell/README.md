@@ -16,6 +16,11 @@ exec_command(cmd="python3", tty=true)      # start a PTY-backed process
 write_stdin(session_id=<id>, chars="print(1)\n")
 ```
 
+`chars` is sent literally after JSON decoding: a backslash followed by `n` inside
+an interactive command stays unchanged. Use a JSON `\n` escape to submit a line
+and `\u0003` for Ctrl-C. A standalone literal `\u0003` or `\x03` is still
+accepted for compatibility.
+
 Calling `write_stdin` on a command started with the default `tty=false`, or on
 a process that has already exited, fails with
 `stdin is not available for this process. Start the command with 'tty=true' in
