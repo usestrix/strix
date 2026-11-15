@@ -21,8 +21,22 @@ from strix.interface.utils import (
 from strix.report.runs import list_run_summaries
 
 
-# Severities ``--fail-on`` accepts, most severe first.
+# Severities ``--fail-on`` / ``--fail-on-new`` accept, most severe first.
 FAIL_ON_SEVERITIES = ("critical", "high", "medium", "low", "info")
+
+
+def severity_meets_fail_on(severity: object, fail_on: str) -> bool:
+    """Whether a finding's severity fails a ``--fail-on`` / ``--fail-on-new`` gate.
+
+    Unknown labels fail closed so a gate never passes on a value it cannot rank.
+    ``none`` is below ``info`` and never meets a threshold.
+    """
+    rank = str(severity or "").strip().lower()
+    if rank == "none":
+        return False
+    if rank not in FAIL_ON_SEVERITIES:
+        return True
+    return FAIL_ON_SEVERITIES.index(rank) <= FAIL_ON_SEVERITIES.index(fail_on)
 
 
 def get_version() -> str:
