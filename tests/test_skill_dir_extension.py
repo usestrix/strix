@@ -278,6 +278,7 @@ def test_new_skill_files_load() -> None:
         "analysis/fix_verification",
         "analysis/source_aware_discovery",
         "scan_modes/diff",
+        "frameworks/rails",
     ]
     loaded = load_skills(names)
     for name in names:
