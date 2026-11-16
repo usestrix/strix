@@ -7,16 +7,14 @@ import copy
 import json
 import logging
 import math
-import os
-import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import httpx
+from agents.model_settings import ModelSettings
 from agents.models.interface import ModelTracing
 from agents.tool import FunctionTool, invoke_function_tool
 from openai.types.responses import ResponseOutputMessage
@@ -40,9 +38,7 @@ ACTION_APPROVAL_TOOLS = frozenset(
 )
 
 
-CATEGORIES = frozenset(
-    {"deletes_data", "changes_target", "disrupts_service", "outside_scope", "safe"}
-)
+CATEGORIES = frozenset({"deletes_data", "changes_target", "disrupts_service", "safe"})
 
 LLM_SYSTEM_PROMPT = (
     "You decide whether one action in an authorized penetration test must wait for human "
@@ -65,7 +61,6 @@ LLM_SYSTEM_PROMPT = (
     "Categories: deletes_data: Deletes or overwrites data. "
     "changes_target: Changes target state or configuration. "
     "disrupts_service: Could degrade or stop a service. "
-    "outside_scope: Acts outside the authorized target scope. "
     "safe: None of the listed risks apply. "
     'Return only strict JSON: {"risky": false, "category": "safe", '
     '"reason": "One plain sentence."}. '
@@ -115,7 +110,6 @@ QUESTIONS: dict[str, _Question] = {
             "deletes_data": "Deletes or overwrites data.",
             "changes_target": "Changes target state or configuration.",
             "disrupts_service": "Could degrade or stop a service.",
-            "outside_scope": "Acts outside the authorized target scope.",
             "safe": "None of the listed risks apply.",
         },
     },
@@ -212,18 +206,30 @@ class LlmJudge:
         )
 
         async def ask(prompt_text: str, payload: dict[str, Any], effort: Any) -> str:
+            model_settings = make_model_settings(
+                effort,
+                model_name=model_name,
+                force_required_tool_choice=False,
+                request_timeout=settings.llm.timeout,
+                extra_headers={} if dedicated else settings.llm.extra_headers,
+                extra_body={} if dedicated else settings.llm.extra_body,
+                has_tools=False,
+            )
+            if effort == "none" and model_name.startswith("openrouter/"):
+                # OpenRouter models that reason by default ignore an omitted setting;
+                # only its own body field turns reasoning off.
+                model_settings = model_settings.resolve(
+                    ModelSettings(
+                        extra_body={
+                            **cast("dict[str, Any]", model_settings.extra_body or {}),
+                            "reasoning": {"enabled": False},
+                        }
+                    )
+                )
             response = await provider.get_model(model_name).get_response(
                 system_instructions=prompt_text,
                 input=json.dumps(payload, ensure_ascii=False),
-                model_settings=make_model_settings(
-                    effort,
-                    model_name=model_name,
-                    force_required_tool_choice=False,
-                    request_timeout=settings.llm.timeout,
-                    extra_headers={} if dedicated else settings.llm.extra_headers,
-                    extra_body={} if dedicated else settings.llm.extra_body,
-                    has_tools=False,
-                ),
+                model_settings=model_settings,
                 tools=[],
                 output_schema=None,
                 handoffs=[],
@@ -243,13 +249,13 @@ class LlmJudge:
         first_pass = {k: v for k, v in state.items() if k != "registered_test_objects"}
         try:
             word = (
-                (await ask(PREFILTER_INSTRUCTIONS, first_pass, None)).strip().strip('".`').lower()
+                (await ask(PREFILTER_INSTRUCTIONS, first_pass, "none")).strip().strip('".`').lower()
             )
         except Exception:  # noqa: BLE001 - a failed first pass falls through to the full check
             word = "check"
         if word == "safe":
             return False, "safe", "First pass found no risk."
-        content = await ask(LLM_SYSTEM_PROMPT, state, "low")
+        content = await ask(LLM_SYSTEM_PROMPT, state, "medium")
         raw_result: object = json.loads(content)
         if not isinstance(raw_result, dict):
             raise TypeError("Invalid approval JSON object")
@@ -270,28 +276,6 @@ class LlmJudge:
 class _Approval:
     event: dict[str, Any]
     future: asyncio.Future[str]
-
-
-def _trace(
-    state: dict[str, Any], risky: bool, category: str, reason: str | None, latency_s: float
-) -> None:
-    """Append one check to STRIX_ACTION_APPROVAL_TRACE (benchmarking; off by default)."""
-    path = os.environ.get("STRIX_ACTION_APPROVAL_TRACE")
-    if not path:
-        return
-    row = {
-        "at": datetime.now(UTC).isoformat(),
-        "state": state,
-        "risky": risky,
-        "category": category,
-        "reason": reason,
-        "latency_s": latency_s,
-    }
-    try:
-        with Path(path).open("a", encoding="utf-8") as trace:
-            trace.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
-    except OSError:
-        logger.exception("action approval trace write to %s failed", path)
 
 
 def _context(ctx: Any) -> dict[str, Any]:
@@ -438,10 +422,7 @@ class ActionApprovalGuard:
                 state["files"] = files
         if owned := matching_test_objects(json.dumps([args, state.get("files")], default=str)):
             state["registered_test_objects"] = owned
-        started = time.monotonic()
         risky, category, explanation = await self._evaluate(state)
-        latency_s = round(time.monotonic() - started, 3)
-        _trace(state, risky, category, explanation, latency_s)
         event = {
             "type": "checked",
             "approval_id": None,
