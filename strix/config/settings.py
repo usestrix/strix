@@ -144,7 +144,6 @@ class ActionApprovalSettings(BaseSettings):
     model_config = _BASE_CONFIG
 
     enabled: bool = Field(default=False, alias="STRIX_ACTION_APPROVALS")
-    judge: Literal["llm", "decision"] = Field(default="llm", alias="STRIX_ACTION_APPROVAL_JUDGE")
     mode: Literal["auto", "ask"] = Field(default="ask", alias="STRIX_ACTION_APPROVAL_MODE")
     model: str | None = Field(default=None, alias="STRIX_ACTION_APPROVAL_MODEL")
     timeout_seconds: float = Field(
@@ -156,7 +155,7 @@ class ActionApprovalSettings(BaseSettings):
     api_key: str | None = Field(default=None, alias="ACTION_APPROVAL_API_KEY", repr=False)
     api_base: str | None = Field(default=None, alias="ACTION_APPROVAL_API_BASE")
 
-    @field_validator("judge", "mode", "on_timeout", mode="before")
+    @field_validator("mode", "on_timeout", mode="before")
     @classmethod
     def _normalize_case(cls, value: object) -> object:
         return _lowercase(value)
