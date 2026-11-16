@@ -1107,9 +1107,7 @@ async def test_runner_model_override_is_checker_default_without_environment_mode
     guard = coordinator.action_approvals
     assert guard is not None
     assert await guard.judge.evaluate({}) == (False, "safe", "Read only.")
-    provider.return_value.get_model.assert_called_once_with(
-        approval_model or "openai/scan-override"
-    )
+    provider.return_value.get_model.assert_called_with(approval_model or "openai/scan-override")
 
 
 @pytest.mark.asyncio
@@ -1160,7 +1158,8 @@ def _fake_llm(monkeypatch: pytest.MonkeyPatch, *outputs: str) -> tuple[Mock, Asy
                 )
             ]
         )
-        for text in outputs
+        for output in outputs
+        for text in ("check", output)
     ]
     get_response = AsyncMock(side_effect=responses)
     provider = Mock()
@@ -1213,7 +1212,7 @@ async def test_llm_judge_and_reason_events(
         assert result is None
     assert all(event["reason"] == reason for event in events)
     provider.assert_called_once_with()
-    provider.return_value.get_model.assert_called_once_with("openai/gpt-5")
+    provider.return_value.get_model.assert_called_with("openai/gpt-5")
     request = model.call_args.kwargs
     assert request["tools"] == [] and request["handoffs"] == []
     assert request["output_schema"] is None
@@ -1236,7 +1235,7 @@ async def test_llm_dedicated_provider_configuration(
     )
     assert await judge.evaluate({}) == (0.0, "safe", "This only reads public data.")
     provider.assert_called_once_with(api_key="judge-key", base_url="https://judge.test/v1")
-    provider.return_value.get_model.assert_called_once_with(model_name)
+    provider.return_value.get_model.assert_called_with(model_name)
     request = model.call_args.kwargs
     assert request["model_settings"].extra_headers != {"X-Main": "private"}
     assert not request["model_settings"].extra_body
@@ -1271,7 +1270,7 @@ async def test_llm_provider_override_with_scan_model(
     )
     await LlmJudge(_settings(**overrides)).evaluate({})
     provider.assert_called_once_with(**expected)
-    provider.return_value.get_model.assert_called_once_with("openai/gpt-5")
+    provider.return_value.get_model.assert_called_with("openai/gpt-5")
     assert model.call_args.kwargs["model_settings"].extra_headers != {"X-Main": "private"}
 
 
@@ -1304,7 +1303,7 @@ async def test_llm_invalid_output_retried(monkeypatch: pytest.MonkeyPatch, outpu
     monkeypatch.setattr(asyncio, "sleep", sleep)
     guard = ActionApprovalGuard(_settings())
     assert await guard.check(_ctx(guard), "exec_command", {"cmd": "test command"}) is None
-    assert model.await_count == 2
+    assert model.await_count == 4
     sleep.assert_awaited_once_with(1.0)
 
 
@@ -1336,3 +1335,45 @@ async def test_llm_low_reasoning_only_when_supported(
     await LlmJudge(_settings()).evaluate({})
     reasoning = model.call_args.kwargs["model_settings"].reasoning
     assert reasoning.effort == "low" if supports_reasoning else reasoning is None
+
+
+def _message(text: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        output=[
+            ResponseOutputMessage(
+                id="judge-message",
+                type="message",
+                role="assistant",
+                status="completed",
+                content=[ResponseOutputText(type="output_text", text=text, annotations=[])],
+            )
+        ]
+    )
+
+
+_RISKY_JSON = '{"risky":true,"category":"deletes_data","reason":"Deletes a real user."}'
+
+
+@pytest.mark.asyncio
+async def test_first_pass_safe_skips_full_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    _, model = _fake_llm(monkeypatch)
+    model.side_effect = [_message("Safe")]
+    judge = action_approvals.LlmJudge(_settings())
+    state = {"tool": "exec_command", "registered_test_objects": [{"identifier": "3007"}]}
+    assert await judge.evaluate(state) == (False, "safe", "First pass found no risk.")
+    assert model.await_count == 1
+    first_pass_input = model.await_args_list[0].kwargs["input"]
+    assert "registered_test_objects" not in first_pass_input
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first", [_message("check"), RuntimeError("first pass down")])
+async def test_first_pass_check_or_failure_runs_full_check(
+    monkeypatch: pytest.MonkeyPatch, first: Any
+) -> None:
+    _, model = _fake_llm(monkeypatch)
+    model.side_effect = [first, _message(_RISKY_JSON)]
+    judge = action_approvals.LlmJudge(_settings())
+    state = {"tool": "exec_command", "registered_test_objects": [{"identifier": "3007"}]}
+    assert await judge.evaluate(state) == (True, "deletes_data", "Deletes a real user.")
+    assert "registered_test_objects" in model.await_args_list[1].kwargs["input"]
