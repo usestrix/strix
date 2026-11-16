@@ -555,9 +555,12 @@ async def save_threat_model(ctx: RunContextWrapper, target: str, content: str) -
 
     - **Overview** — what the target actually is, its real-world usage,
       and which parts are product/runtime versus tooling or
-      non-production.
+      non-production. One short paragraph, then the main components as
+      a list, one line each: the component, then what it does.
     - **Trust Boundaries and Assumptions** — the boundaries, the actors
-      on either side, and the invariants that must hold. Separate
+      on either side, and the invariants that must hold. Give each
+      boundary its own item: who trusts what, and what enforces it
+      (or that nothing does). Separate
       attacker-controlled, operator-controlled, and
       developer-controlled inputs explicitly. Black-box, this is the
       role, tenant, and privilege model: who can reach what before
@@ -571,6 +574,31 @@ async def save_threat_model(ctx: RunContextWrapper, target: str, content: str) -
       look like for *this* target, with a concrete example at each
       level. Where a vulnerability class needs attacker control that
       does not exist in real usage, say so here.
+
+    **Write it to be read.** A person opens this document after the
+    scan to learn how the target was understood, and an agent reads it
+    before every decision, so both need to find one fact quickly. Use
+    plain, complete sentences and say each thing once.
+
+    - One point per list item, in a sentence or two. When an item
+      needs more than that, give the topic a ``###`` sub-heading under
+      its section and break it into short items there.
+    - Put anything enumerable in a Markdown table instead of a
+      sentence: hosts, endpoints, roles and what each can reach,
+      entrypoints and their sinks, files and the control each one
+      holds. One row per thing, with a column for why it matters.
+      Never run a chain of identifiers through a sentence or a
+      bracket.
+    - Use code formatting only for literal identifiers the reader may
+      search for (a path, a route, a function, a claim name), and bold
+      only for the term an item defines. A line that is mostly code
+      spans and bold reads as noise.
+    - Keep the four section headings above exactly, so agents can find
+      them.
+
+    Readable does not mean thinner. Keep every file, route, role, and
+    control that grounds a claim; move it into a table or a diagram
+    rather than dropping it.
 
     **Draw it where a picture is clearer than prose.** People read this
     document too, and fenced ``mermaid`` blocks render as diagrams. Under
