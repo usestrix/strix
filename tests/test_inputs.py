@@ -38,6 +38,12 @@ def test_child_initial_input_single_message_without_history() -> None:
     assert "Inherited context" not in content
 
 
+def test_child_initial_input_names_the_finish_tool() -> None:
+    assert "Call agent_finish" in child_initial_input(**_child_kwargs([]))[0]["content"]
+    content = child_initial_input(**_child_kwargs([]), finish_tool="validator_finish")[0]["content"]
+    assert "Call validator_finish" in content
+
+
 def test_child_initial_input_single_message_with_history() -> None:
     history = [{"role": "assistant", "content": "previous work"}]
     result = child_initial_input(**_child_kwargs(history))

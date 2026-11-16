@@ -195,3 +195,28 @@ def test_disabling_strict_leaves_shared_tools_untouched() -> None:
 )
 def test_lifecycle_tool_completed(tool_name: str, output: str, completed: bool) -> None:
     assert factory._lifecycle_tool_completed(tool_name, output) is completed
+
+
+def test_registered_lifecycle_tool_ends_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(factory, "_LIFECYCLE_TOOLS", dict(factory._LIFECYCLE_TOOLS))
+    output = '{"success": true, "agent_completed": true}'
+    assert not factory._lifecycle_tool_completed("validator_finish", output)
+
+    factory.register_lifecycle_tool("validator_finish")
+
+    assert factory._lifecycle_tool_completed("validator_finish", output)
+
+
+def test_select_tools_picks_each_agents_tools() -> None:
+    calls: list[tuple[bool, list[str]]] = []
+
+    def select(*, is_root: bool, skills: list[str], tools: list[Any]) -> list[Any]:
+        calls.append((is_root, skills))
+        return [t for t in tools if t.name in {"think", "agent_finish"}]
+
+    child = factory.make_child_factory(select_tools=select)(name="v", skills=["xss"])
+    root = factory.build_strix_agent(is_root=True, select_tools=select)
+
+    assert [t.name for t in child.tools] == ["think", "agent_finish"]
+    assert [t.name for t in root.tools] == ["think"]
+    assert calls == [(False, ["xss"]), (True, [])]

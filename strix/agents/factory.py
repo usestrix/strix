@@ -564,14 +564,22 @@ def _make_shell_configurator(*, chat_completions: bool, strict_schemas: bool) ->
 _PARKING_TOOLS: frozenset[str] = frozenset({"wait_for_user", "wait_for_agents"})
 
 
+# Tools that end their agent's run, each by returning success with its key set.
+_LIFECYCLE_TOOLS: dict[str, str] = {
+    "agent_finish": "agent_completed",
+    "finish_scan": "scan_completed",
+    "finish_pr_review": "review_completed",  # registered by strix-pro
+}
+
+
+def register_lifecycle_tool(name: str, completion_key: str = "agent_completed") -> None:
+    """Let a tool of an embedder's end its agent's run, like ``agent_finish``."""
+    _LIFECYCLE_TOOLS[name] = completion_key
+
+
 def _lifecycle_tool_completed(tool_name: str, output: Any) -> bool:
-    if tool_name == "agent_finish":
-        completion_key = "agent_completed"
-    elif tool_name == "finish_scan":
-        completion_key = "scan_completed"
-    elif tool_name == "finish_pr_review":  # registered by strix-pro
-        completion_key = "review_completed"
-    else:
+    completion_key = _LIFECYCLE_TOOLS.get(tool_name)
+    if completion_key is None:
         return False
 
     if not isinstance(output, str):
@@ -738,6 +746,7 @@ def build_strix_agent(
     finish_tool: Tool = finish_scan,
     report_tool: Tool = create_vulnerability_report,
     coverage_tools: bool = True,
+    select_tools: Callable[..., Sequence[Tool]] | None = None,
 ) -> SandboxAgent[Any]:
     """Build a SandboxAgent for either root or child use.
 
@@ -755,6 +764,8 @@ def build_strix_agent(
             ``create_vulnerability_report``.
         coverage_tools: Give the agent the coverage ledger tools and the
             prompt rules for them.
+        select_tools: Called with ``is_root``, the agent's ``skills`` and its
+            default ``tools``; returns the tools to build it with instead.
     """
     if instructions_override is not None:
         instructions = instructions_override
@@ -786,6 +797,8 @@ def build_strix_agent(
         tools: list[Tool] = [*base_tools, *agent_tools, finish_tool]
     else:
         tools = [*base_tools, *agent_tools, agent_finish]
+    if select_tools is not None:
+        tools = list(select_tools(is_root=is_root, skills=list(skills or []), tools=tools))
     _ensure_unique_tool_names(tools)
     tools = [
         _with_bounded_result(_with_strictness(_with_coerced_arguments(tool), strict_tool_schemas))
@@ -841,6 +854,7 @@ def make_child_factory(
     supports_images: bool = True,
     report_tool: Tool = create_vulnerability_report,
     coverage_tools: bool = True,
+    select_tools: Callable[..., Sequence[Tool]] | None = None,
 ) -> Any:
     """Return the runner-owned builder used by ``spawn_child_agent``.
 
@@ -865,6 +879,7 @@ def make_child_factory(
             supports_images=supports_images,
             report_tool=report_tool,
             coverage_tools=coverage_tools,
+            select_tools=select_tools,
         )
 
     return _factory
