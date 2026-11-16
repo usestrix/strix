@@ -64,7 +64,7 @@ from strix.tools.reporting.tool import (
     list_reports,
     update_vulnerability_report,
 )
-from strix.tools.test_objects.tools import register_test_object
+from strix.tools.test_objects.tools import register_test_object, with_registration_reminder
 from strix.tools.thinking.tool import think
 from strix.tools.threat_model.tools import (
     amend_threat_model,
@@ -530,6 +530,7 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
                 "(or omitted to use the turn's cwd). "
                 f"Got: {rel!r}."
             )
+        result = with_registration_reminder(result)
         if isinstance(parsed, dict):
             return _annotate_running_non_tty(parsed, result)
         return result
@@ -556,7 +557,7 @@ def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
                 if blocked is not None:
                     return blocked
         try:
-            return await invoke_tool(ctx, raw_input)
+            return with_registration_reminder(await invoke_tool(ctx, raw_input))
         except ValidationError as exc:
             return _format_validation_error(tool.name, exc)
 

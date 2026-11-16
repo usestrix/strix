@@ -1,6 +1,9 @@
 from pathlib import Path
 
+import pytest
+
 from strix.tools.test_objects import tools as registry
+from strix.tools.test_objects.tools import with_registration_reminder
 
 
 def _fresh(tmp_path: Path) -> None:
@@ -32,3 +35,25 @@ def test_seed_provisioned_accounts(tmp_path: Path) -> None:
     assert registry.seed_provisioned_accounts(text) == 1
     match = registry.matching_test_objects("user qa.user@example.com")[0]
     assert match["source"] == "provisioned"
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        'STATUS 201\nRESP: {"client_id": "client_01ABC"}',
+        '--- attacker-domain: 201 {"client_id":"client_01ABC"}',
+        "HTTP/1.1 201 Created",
+    ],
+)
+def test_reminder_added_to_output_reporting_a_create(output: str) -> None:
+    result = with_registration_reminder(output)
+    assert result.startswith(output)
+    assert "register_test_object" in result
+
+
+@pytest.mark.parametrize(
+    "output",
+    ["STATUS 200\n{}", "host 104.20.30.201 up", "id 12013 size=201.5", "port :201/tcp", None],
+)
+def test_reminder_not_added_without_a_create(output: str | None) -> None:
+    assert with_registration_reminder(output) == output

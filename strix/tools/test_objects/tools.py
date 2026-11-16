@@ -28,6 +28,15 @@ _MIN_IDENTIFIER_CHARS = 3
 _MAX_IDENTIFIER_CHARS = 200
 _MAX_MATCHES = 20
 
+# A bare 201 status in tool output, not one inside an address, version or id.
+_CREATED_RE = re.compile(r"(?<![\w.,:/-])201(?![\w.,:/-])")
+_REGISTRATION_REMINDER = (
+    "Note: this output shows HTTP 201 Created. If this test just created objects on the "
+    "target, your next call must be register_test_object with every identifier returned, "
+    "all in one call. Register identifiers only, never secrets, tokens or passwords. "
+    "Ignore this if nothing was created or they are already registered."
+)
+
 _objects: dict[str, dict[str, Any]] = {}
 _lock = threading.RLock()
 _path: Path | None = None
@@ -101,6 +110,13 @@ def matching_test_objects(text: str) -> list[dict[str, str]]:
     return matches
 
 
+def with_registration_reminder(result: Any) -> Any:
+    """Append a registration reminder to shell output that reports a 201 Created."""
+    if isinstance(result, str) and _CREATED_RE.search(result):
+        return f"{result}\n{_REGISTRATION_REMINDER}"
+    return result
+
+
 @function_tool(timeout=30)
 async def register_test_object(ctx: RunContextWrapper, identifiers: list[str], kind: str) -> str:
     """Record objects you just created on the target as this test's own.
@@ -113,6 +129,7 @@ async def register_test_object(ctx: RunContextWrapper, identifiers: list[str], k
 
     Args:
         identifiers: IDs, emails, usernames or names exactly as the target uses them.
+            Identifiers only, never secrets, tokens or passwords.
         kind: What they are, e.g. "account", "record", "file", "role".
     """
     inner = ctx.context if isinstance(ctx.context, dict) else {}
