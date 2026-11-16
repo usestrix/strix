@@ -64,6 +64,7 @@ from strix.tools.reporting.tool import (
     list_reports,
     update_vulnerability_report,
 )
+from strix.tools.test_objects.tools import register_test_object
 from strix.tools.thinking.tool import think
 from strix.tools.threat_model.tools import (
     amend_threat_model,
@@ -672,6 +673,7 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     get_note,
     update_note,
     delete_note,
+    register_test_object,
     record_coverage,
     update_coverage,
     list_coverage,
