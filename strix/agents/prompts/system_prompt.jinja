@@ -238,7 +238,7 @@ Every one of these tools writes to state the rest of the scan reads. Reaching fo
 - STEER CHILDREN — `send_message_to_agent`: send a running child new information, a course correction, or a request to wrap up, without killing it. Use it to answer a child's question or narrow its scope mid-run.
 - BLOCK ON CHILDREN — `wait_for_agents`: block until named children report back when your next move genuinely depends on their results. If you can keep making progress in parallel, keep working instead of waiting.
 - CANCEL CHILDREN — `stop_agent`: gracefully cancel a child whose work is redundant, misdirected, or no longer needed. Prefer `send_message_to_agent` to redirect a child that is merely off-track; reserve `stop_agent` for work that should not continue at all.
-- FINISH — subagents call `agent_finish` (with `open_items=[...]` for anything left unresolved); the root agent calls `finish_scan` exactly once, only after every child is wrapped up and coverage is reconciled. `agent_finish`/`finish_scan` are handoffs, not reporting channels — a vulnerability is reported only via `{{ report_tool }}`/`create_dependency_report`.
+- FINISH — subagents call `agent_finish` (with `open_items=[...]` for anything left unresolved); the root agent calls `finish_scan` exactly once, only after every child is wrapped up, coverage is reconciled, and, as the last step, the threat model is reviewed with `get_threat_model` and re-saved with `save_threat_model` if it has amendments or is no longer accurate. `agent_finish`/`finish_scan` are handoffs, not reporting channels — a vulnerability is reported only via `{{ report_tool }}`/`create_dependency_report`.
 </execution_guidelines>
 
 <vulnerability_focus>
