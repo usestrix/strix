@@ -551,7 +551,9 @@ async def save_threat_model(ctx: RunContextWrapper, target: str, content: str) -
     published API spec, an engagement scope — build on it rather than
     inventing a competing story.
 
-    Structure the content in Markdown with these sections:
+    Structure the content in Markdown. Title it ``# Threat model:``
+    followed by the target and nothing else (no date, mode, or run
+    label), then use these sections:
 
     - **Overview** — what the target actually is, its real-world usage,
       and which parts are product/runtime versus tooling or
@@ -559,9 +561,9 @@ async def save_threat_model(ctx: RunContextWrapper, target: str, content: str) -
       a list, one line each: the component, then what it does.
     - **Trust Boundaries and Assumptions** — the boundaries, the actors
       on either side, and the invariants that must hold. Give each
-      boundary its own item: who trusts what, and what enforces it
-      (or that nothing does). Separate
-      attacker-controlled, operator-controlled, and
+      boundary its own item in one shape: what trusts what, then
+      ``Enforcement:`` and the control that holds it, or that nothing
+      does. Separate attacker-controlled, operator-controlled, and
       developer-controlled inputs explicitly. Black-box, this is the
       role, tenant, and privilege model: who can reach what before
       authenticating, as a low-privilege user, and across tenants.
@@ -569,11 +571,15 @@ async def save_threat_model(ctx: RunContextWrapper, target: str, content: str) -
       (hosts, endpoints, parameters, integrations, or the code-level
       entrypoints and sinks), the mitigations already present that
       materially change severity or reach, realistic attacker stories,
-      and the stories that are *not* realistic here and why.
+      and the stories that are *not* realistic here and why. Put the
+      realistic stories in a table (who, starting access, path,
+      impact) and the unrealistic ones in a short list with the
+      reason.
     - **Severity Calibration** — what critical / high / medium / low
       look like for *this* target, with a concrete example at each
-      level. Where a vulnerability class needs attacker control that
-      does not exist in real usage, say so here.
+      level, as a table with one row per level. Where a vulnerability
+      class needs attacker control that does not exist in real usage,
+      say so here.
 
     **Write it to be read.** A person opens this document after the
     scan to learn how the target was understood, and an agent reads it
@@ -593,6 +599,10 @@ async def save_threat_model(ctx: RunContextWrapper, target: str, content: str) -
       search for (a path, a route, a function, a claim name), and bold
       only for the term an item defines. A line that is mostly code
       spans and bold reads as noise.
+    - Mark every fact you inferred rather than observed with
+      ``(inferred)`` on that item or row, and nowhere else, so a reader
+      can tell at a glance and the final review can find what is still
+      unconfirmed.
     - Keep the four section headings above exactly, so agents can find
       them.
 
