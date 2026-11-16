@@ -1321,7 +1321,7 @@ async def test_llm_requires_a_model(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("supports_reasoning", [True, False])
-async def test_llm_low_reasoning_only_when_supported(
+async def test_llm_medium_reasoning_only_when_supported(
     monkeypatch: pytest.MonkeyPatch, supports_reasoning: bool
 ) -> None:
     _, model = _fake_llm(
@@ -1334,7 +1334,26 @@ async def test_llm_low_reasoning_only_when_supported(
     monkeypatch.setattr(inputs, "model_supports_reasoning", supports_model_reasoning)
     await LlmJudge(_settings()).evaluate({})
     reasoning = model.call_args.kwargs["model_settings"].reasoning
-    assert reasoning.effort == "low" if supports_reasoning else reasoning is None
+    assert reasoning.effort == "medium" if supports_reasoning else reasoning is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model_name", "expected"),
+    [("openrouter/vendor/model", {"reasoning": {"enabled": False}}), ("vendor/model", None)],
+)
+async def test_first_pass_turns_reasoning_off_on_openrouter(
+    monkeypatch: pytest.MonkeyPatch, model_name: str, expected: dict[str, Any] | None
+) -> None:
+    _, model = _fake_llm(
+        monkeypatch, '{"risky":false,"category":"safe","reason":"This only reads public data."}'
+    )
+    await LlmJudge(_settings(model=model_name)).evaluate({})
+    first, full = (
+        call.kwargs["model_settings"].extra_body or None for call in model.call_args_list
+    )
+    assert first == expected
+    assert full is None
 
 
 def _message(text: str) -> SimpleNamespace:
