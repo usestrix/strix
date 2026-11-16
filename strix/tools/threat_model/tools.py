@@ -572,6 +572,16 @@ async def save_threat_model(ctx: RunContextWrapper, target: str, content: str) -
       level. Where a vulnerability class needs attacker control that
       does not exist in real usage, say so here.
 
+    **Draw it where a picture is clearer than prose.** People read this
+    document too, and fenced ``mermaid`` blocks render as diagrams. Under
+    Trust Boundaries, include a ``flowchart`` of the actors and
+    components with one ``subgraph`` per trust zone and each edge
+    labelled with what crosses it (credential, token, untrusted
+    content). Where one attacker story carries the model, add a
+    ``sequenceDiagram`` of it. Draw only what the prose states — a
+    diagram is a view of the model, not a place for new claims — and
+    keep it small enough to read: a dozen nodes, short labels.
+
     Args:
         target: What the model describes — a host or URL
             (``https://app.example.com``), or a repository path
