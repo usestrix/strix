@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import inspect
 import json
@@ -15,7 +16,7 @@ from agents.sandbox.capabilities import Filesystem, Shell
 from agents.sandbox.errors import InvalidManifestPathError
 from agents.sandbox.session.pty_types import PTY_YIELD_TIME_MS_MAX
 from agents.tool import CustomTool, FunctionTool, Tool
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from strix.agents.prompt import render_system_prompt
 from strix.config import load_settings
@@ -504,6 +505,7 @@ def _annotate_running_non_tty(parsed: dict[str, Any], result: Any) -> Any:
 
 _SESSION_ID_RE = re.compile(r"^Process running with session ID (\d+)$", re.MULTILINE)
 _SESSION_INPUT_CHARS = 2000
+_SESSION_ID = TypeAdapter(int)
 
 
 def _shell_sessions(ctx: Any) -> dict[str, dict[str, str]]:
@@ -573,6 +575,12 @@ def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
             if isinstance(parsed.get("chars"), str):
                 parsed["chars"] = _decode_chars_escape(parsed["chars"])
             _apply_shell_output_cap(parsed)
+            # The session is looked up by the number the tool will type into, and what it
+            # runs comes from the engine's record alone, never from the agent's arguments.
+            with contextlib.suppress(ValidationError):
+                parsed["session_id"] = _SESSION_ID.validate_python(parsed.get("session_id"))
+            for key in ("session_command", "earlier_input"):
+                parsed.pop(key, None)
             raw_input = json.dumps(parsed)
             if cast("dict[str, Any]", parsed).get("chars"):
                 session = _shell_sessions(ctx).get(str(parsed.get("session_id")))
