@@ -321,6 +321,8 @@ ignore = [
 "strix/config/codex.py" = ["PLC0415"]
 # Same lazy heavy imports as codex.py.
 "strix/config/mistral.py" = ["PLC0415"]
+# fcntl is POSIX-only; imported inside the lock so Windows falls back to the thread lock.
+"strix/config/subscription_store.py" = ["PLC0415"]
 # Interface utility branches per scope-mode / target-type combination;
 # splitting would obscure the decision tree without simplifying it.
 "strix/interface/utils.py" = ["PLR0912", "BLE001", "PLC0415"]

@@ -12,7 +12,7 @@ from unittest import mock
 import pytest
 import requests
 
-from strix.config import codex
+from strix.config import codex, subscription_store
 
 
 if TYPE_CHECKING:
@@ -31,7 +31,7 @@ def _fake_jwt(account_id: str) -> str:
 @pytest.fixture(autouse=True)
 def _tmp_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / "home" / ".strix" / "subscription-auth.json"
-    monkeypatch.setattr(codex, "AUTH_PATH", path)
+    monkeypatch.setattr(subscription_store, "AUTH_PATH", path)
     return path
 
 
@@ -273,7 +273,8 @@ def test_get_valid_token_recovers_when_refresh_loses_race(
     codex.save_record(_expired_record("r1", "stale"))
 
     def _fake_post(_payload: dict[str, str]) -> dict[str, Any]:
-        codex.save_record(
+        subscription_store.put(
+            "codex",
             {
                 "type": "oauth",
                 "provider": "codex",
@@ -281,7 +282,7 @@ def test_get_valid_token_recovers_when_refresh_loses_race(
                 "refresh": "r2",
                 "account_id": "acct-42",
                 "expires_at": time.time() + 3600,
-            }
+            },
         )
         raise codex.CodexAuthError("token_http_error", "HTTP 400: invalid_grant")
 

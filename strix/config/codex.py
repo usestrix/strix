@@ -16,20 +16,16 @@ import hashlib
 import json
 import logging
 import secrets
-import threading
 import time
 import urllib.parse
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import requests
 
-from strix.utils.secret_files import write_secret_text
+from strix.config import subscription_store
 
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from openai import AsyncOpenAI
 
 
@@ -54,26 +50,9 @@ _ACCOUNT_CLAIM = "https://api.openai.com/auth"
 _TOKEN_TIMEOUT = 30
 _EXPIRY_SKEW_S = 300
 
-_refresh_lock = threading.Lock()
-
-# Kept separate from cli-config.json so OAuth tokens never land in the env-var config.
-AUTH_PATH = Path.home() / ".strix" / "subscription-auth.json"
-
-
-def _read_store() -> dict[str, Any]:
-    try:
-        data = json.loads(AUTH_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _write_store(data: dict[str, Any]) -> None:
-    write_secret_text(AUTH_PATH, json.dumps(data, indent=2))
-
 
 def read_record() -> dict[str, Any] | None:
-    record = _read_store().get(PROVIDER)
+    record = subscription_store.read(PROVIDER)
     if not isinstance(record, dict) or record.get("type") != "oauth":
         return None
     if not (record.get("access") and record.get("refresh") and record.get("account_id")):
@@ -86,45 +65,13 @@ def is_authenticated() -> bool:
 
 
 def save_record(record: dict[str, Any]) -> None:
-    data = _read_store()
-    data[PROVIDER] = record
-    _write_store(data)
+    with subscription_store.locked():
+        subscription_store.put(PROVIDER, record)
 
 
 def logout() -> None:
-    data = _read_store()
-    if PROVIDER not in data:
-        return
-    del data[PROVIDER]
-    if data:
-        _write_store(data)
-        return
-    with contextlib.suppress(OSError):
-        AUTH_PATH.unlink()
-
-
-@contextlib.contextmanager
-def _refresh_guard() -> Iterator[None]:
-    """Serialize token refresh within (lock) and across (flock) Strix processes,
-    so concurrent runs can't both spend the single-use refresh token."""
-    with _refresh_lock:
-        try:
-            import fcntl
-
-            lock_path = AUTH_PATH.with_suffix(".lock")
-            lock_path.parent.mkdir(parents=True, exist_ok=True)
-            handle = lock_path.open("w")
-        except (ImportError, OSError):
-            yield
-            return
-        try:
-            with contextlib.suppress(OSError):
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            yield
-        finally:
-            with contextlib.suppress(OSError):
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-            handle.close()
+    with subscription_store.locked():
+        subscription_store.put(PROVIDER, None)
 
 
 class CodexAuthError(Exception):
@@ -330,7 +277,7 @@ def get_valid_token() -> tuple[str, str]:
         raise CodexAuthError("not_authenticated", "not signed in; run: strix auth login")
     if not _near_expiry(record):
         return record["access"], record["account_id"]
-    with _refresh_guard():
+    with subscription_store.locked():
         record = read_record()
         if record is None:
             raise CodexAuthError("not_authenticated", "not signed in; run: strix auth login")
@@ -344,7 +291,7 @@ def get_valid_token() -> tuple[str, str]:
             if latest and latest["refresh"] != record["refresh"] and not _near_expiry(latest):
                 return latest["access"], latest["account_id"]
             raise
-        save_record(refreshed)
+        subscription_store.put(PROVIDER, refreshed)
         return refreshed["access"], refreshed["account_id"]
 
 

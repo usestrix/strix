@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from strix.config import codex, mistral, subscriptions
+from strix.config import codex, mistral, subscription_store, subscriptions
 from strix.interface import auth_cli
 
 
@@ -18,8 +18,7 @@ if TYPE_CHECKING:
 @pytest.fixture(autouse=True)
 def _tmp_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / "home" / ".strix" / "subscription-auth.json"
-    monkeypatch.setattr(codex, "AUTH_PATH", path)
-    monkeypatch.setattr(mistral, "AUTH_PATH", path)
+    monkeypatch.setattr(subscription_store, "AUTH_PATH", path)
 
 
 def test_login_provider_is_chatgpt() -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import threading
 import time
 from typing import TYPE_CHECKING, Any
 from unittest import mock
@@ -13,7 +14,7 @@ import httpx
 import pytest
 import requests
 
-from strix.config import codex, mistral, subscriptions
+from strix.config import codex, mistral, subscription_store, subscriptions
 
 
 if TYPE_CHECKING:
@@ -64,9 +65,7 @@ def _record(**overrides: Any) -> dict[str, Any]:
 @pytest.fixture(autouse=True)
 def _tmp_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / "home" / ".strix" / "subscription-auth.json"
-    # Both providers share the store file; point them at the same tmp path.
-    monkeypatch.setattr(mistral, "AUTH_PATH", path)
-    monkeypatch.setattr(codex, "AUTH_PATH", path)
+    monkeypatch.setattr(subscription_store, "AUTH_PATH", path)
     return path
 
 
@@ -288,6 +287,58 @@ def test_store_roundtrip_logout_and_codex_coexistence() -> None:
     assert codex.read_record() is None
 
 
+def test_logout_waits_for_a_chatgpt_refresh_and_keeps_its_rotated_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codex.save_record(
+        {
+            "type": "oauth",
+            "provider": "codex",
+            "access": "stale",
+            "refresh": "codex-r1",
+            "account_id": "acct-codex",
+            "expires_at": time.time() - 10,
+        }
+    )
+    mistral.save_record(_record())
+    refreshing = threading.Event()
+    release = threading.Event()
+    codex_access = (
+        "e30."
+        + base64.urlsafe_b64encode(
+            json.dumps(
+                {"https://api.openai.com/auth": {"chatgpt_account_id": "acct-codex"}}
+            ).encode()
+        )
+        .rstrip(b"=")
+        .decode()
+        + ".sig"
+    )
+
+    def _slow_codex_refresh(_payload: dict[str, str]) -> dict[str, Any]:
+        refreshing.set()
+        release.wait(5)
+        return {"access_token": codex_access, "refresh_token": "codex-r2", "expires_in": 3600}
+
+    monkeypatch.setattr(codex, "_post_form", _slow_codex_refresh)
+    scan = threading.Thread(target=codex.get_valid_token)
+    scan.start()
+    assert refreshing.wait(5)
+
+    signout = threading.Thread(target=mistral.logout)
+    signout.start()
+    signout.join(0.2)
+    assert signout.is_alive(), "logout must wait for the in-flight refresh"
+
+    release.set()
+    scan.join(5)
+    signout.join(5)
+    record = codex.read_record()
+    assert record is not None
+    assert record["refresh"] == "codex-r2"
+    assert mistral.read_record() is None
+
+
 def test_read_record_rejects_incomplete_records() -> None:
     mistral.save_record({"type": "oauth", "access": "a"})  # missing refresh/account
     assert mistral.read_record() is None
@@ -387,7 +438,7 @@ def test_request_headers_recover_when_refresh_loses_race(
     mistral.save_record(_record(id_token="id-stale", expires_at=time.time() - 10))
 
     def _fake_post(_payload: dict[str, str]) -> dict[str, Any]:
-        mistral.save_record(_record(id_token="id-from-peer", refresh="r2"))
+        subscription_store.put("mistral", _record(id_token="id-from-peer", refresh="r2"))
         raise mistral.MistralAuthError("token_http_error", "HTTP 400: invalid_grant")
 
     monkeypatch.setattr(mistral, "_post_form", _fake_post)
