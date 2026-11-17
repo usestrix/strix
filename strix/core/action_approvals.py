@@ -217,9 +217,12 @@ def _summary(tool: str, args: dict[str, Any]) -> str:
         return str(args.get("cmd", ""))
     if tool == "write_stdin":
         return str(args.get("chars", ""))
+    # A person approves what the summary says, so it carries the call's own input.
     if tool == "call_mcp":
-        return f"{args.get('connection', '')}.{args.get('tool', '')}"
-    return f"{args.get('method', '')} {args.get('url', '')}"
+        arguments = json.dumps(args.get("arguments") or {}, ensure_ascii=False, default=str)
+        return f"{args.get('connection', '')}.{args.get('tool', '')} {arguments}"
+    request = f"{args.get('method', '')} {args.get('url', '')}"
+    return f"{request}\n\n{args['body']}" if args.get("body") else request
 
 
 class ActionApprovalGuard:

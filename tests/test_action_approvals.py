@@ -650,11 +650,13 @@ async def test_dispatch_guard_runs_before_connections_or_locks(
         return _verdict()
 
     with patch.object(LlmJudge, "evaluate", side_effect=evaluate):
-        guard = ActionApprovalGuard(_settings())
+        events: list[dict[str, Any]] = []
+        guard = ActionApprovalGuard(_settings(), event_sink=events.append)
         result = await tool.on_invoke_tool(_ctx(guard), json.dumps(args))
         assert "Blocked by action approvals" in result
         judged = requests[0]["arguments"]
         assert judged == {"connection": "test", "tool": "change", "arguments": {"value": 1}}
+        assert events[0]["summary"] == 'test.change {"value": 1}'
 
 
 def _replay_context(
@@ -727,7 +729,8 @@ async def test_replay_judges_effective_delete_without_header_values(
         serialized = json.dumps(requests[0])
         for private_value in ("fixture-value", "fixture-cookie", "private-value"):
             assert private_value not in serialized
-        assert events[0]["summary"] == f"DELETE {url}"
+        body = "x" * min(body_length, 4000)
+        assert events[0]["summary"] == (f"DELETE {url}\n\n{body}" if body else f"DELETE {url}")
 
 
 @pytest.mark.asyncio
