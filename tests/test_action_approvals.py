@@ -89,6 +89,12 @@ def _settings(**overrides: Any) -> ActionApprovalSettings:
         ("python -m json.tool", ".", []),
         ("printf hello", ".", []),
         ("python3 $SCRIPT", ".", []),
+        ("source x.sh", "/w", ["/w/x.sh"]),
+        ("cd /w && . ./x.sh arg", ".", ["/w/x.sh"]),
+        ("bash < x.sh", "/w", ["/w/x.sh"]),
+        ("bash -x < x.sh > out.log", "/w", ["/w/x.sh"]),
+        ("python3 a.py < input.txt", "/w", ["/w/a.py"]),
+        ("source", ".", []),
         ("python3 'unterminated", ".", []),
     ],
 )
@@ -659,6 +665,40 @@ async def test_dispatch_guard_runs_before_connections_or_locks(
         assert events[0]["summary"] == 'test.change {"value": 1}'
 
 
+@pytest.mark.asyncio
+async def test_input_typed_into_a_running_program_is_checked_with_that_program() -> None:
+    requests: list[dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
+    results = iter(["Process running with session ID 7\nDelete all rows? [y/N]", "ok", "ok"])
+
+    async def invoke(_ctx: Any, _raw_input: str) -> str:
+        return next(results)
+
+    def evaluate(state: dict[str, Any]) -> tuple[bool, str, str | None]:
+        requests.append(state["arguments"])
+        return _verdict(risky=state["tool"] == "write_stdin" and len(requests) > 2)
+
+    def tool(name: str) -> FunctionTool:
+        return FunctionTool(
+            name=name, description="test", params_json_schema={}, on_invoke_tool=invoke
+        )
+
+    run, write = _wrap_exec_command(tool("exec_command")), _wrap_write_stdin(tool("write_stdin"))
+    with patch.object(LlmJudge, "evaluate", side_effect=evaluate):
+        ctx = _ctx(ActionApprovalGuard(_settings(), event_sink=events.append))
+        await run.on_invoke_tool(ctx, json.dumps({"cmd": "psql -f purge.sql", "tty": True}))
+        assert await write.on_invoke_tool(ctx, json.dumps({"session_id": 7, "chars": "y"})) == "ok"
+        blocked = await write.on_invoke_tool(ctx, json.dumps({"session_id": 7, "chars": "es\n"}))
+        assert "Blocked by action approvals" in blocked
+        assert requests[1]["session_command"] == "psql -f purge.sql"
+        assert "earlier_input" not in requests[1]
+        assert requests[2]["earlier_input"] == "y"
+        assert events[-1]["summary"] == "es\n\n\nTyped into: psql -f purge.sql"
+        # Input for a session this agent did not open is still checked, on its own.
+        await write.on_invoke_tool(ctx, json.dumps({"session_id": 9, "chars": "ls\n"}))
+        assert "session_command" not in requests[3]
+
+
 def _replay_context(
     monkeypatch: pytest.MonkeyPatch, guard: ActionApprovalGuard
 ) -> tuple[ToolContext[Any], list[bytes]]:
@@ -689,6 +729,52 @@ def _replay_context(
     ctx = _ctx(guard)
     ctx.context["caido_client"] = object()
     return ctx, sent
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("modifications", "carried"),
+    [
+        ({"url": "https://other.example/collect"}, ["Authorization", "Cookie"]),
+        (
+            {"url": "https://other.example/collect", "headers": {"Authorization": "Bearer own"}},
+            ["Cookie"],
+        ),
+        ({"url": "https://example.com/users/124"}, None),
+        ({}, None),
+    ],
+)
+async def test_replay_check_is_told_when_captured_credentials_go_to_another_host(
+    monkeypatch: pytest.MonkeyPatch, modifications: dict[str, Any], carried: list[str] | None
+) -> None:
+    requests: list[dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
+
+    def evaluate(state: dict[str, Any]) -> tuple[bool, str, str | None]:
+        requests.append(state["arguments"])
+        return _verdict()
+
+    with patch.object(LlmJudge, "evaluate", side_effect=evaluate):
+        guard = ActionApprovalGuard(_settings(), event_sink=events.append)
+        ctx, _sent = _replay_context(monkeypatch, guard)
+        await repeat_request.on_invoke_tool(
+            ctx, json.dumps({"request_id": "123", "modifications": modifications})
+        )
+        forwarded = requests[0].get("captured_credentials_sent_to_another_host")
+        if carried is None:
+            assert forwarded is None
+            assert "captured from" not in events[0]["summary"]
+            return
+        assert forwarded == {
+            "headers": carried,
+            "captured_from": "example.com",
+            "sent_to": "other.example",
+        }
+        assert (
+            f"Sends the {', '.join(carried)} captured from example.com to other.example"
+            in (events[0]["summary"])
+        )
+        assert "fixture-value" not in json.dumps(requests[0])
 
 
 @pytest.mark.asyncio

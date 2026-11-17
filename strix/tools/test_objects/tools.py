@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 _MIN_IDENTIFIER_CHARS = 3
 _MAX_IDENTIFIER_CHARS = 200
 _MAX_MATCHES = 20
+_ISSUED_IDENTIFIER_RE = re.compile(r"[0-9@]")
 
 # A bare 201 status in tool output, not one inside an address, version or id.
 _CREATED_RE = re.compile(r"(?<![\w.,:/-])201(?![\w.,:/-])")
@@ -75,6 +76,10 @@ def register(identifier: str, kind: str, source: str, agent_id: str | None = Non
     identifier = identifier.strip()
     if not _MIN_IDENTIFIER_CHARS <= len(identifier) <= _MAX_IDENTIFIER_CHARS:
         return False
+    # An agent's entry must name one object the target issued (an id, an email, a numbered
+    # name). A bare word such as "users" or "admin" names a whole table, route or role.
+    if source == "agent" and not _ISSUED_IDENTIFIER_RE.search(identifier):
+        return False
     with _lock:
         _objects.setdefault(
             identifier,
@@ -90,7 +95,11 @@ def register(identifier: str, kind: str, source: str, agent_id: str | None = Non
 
 
 def seed_provisioned_accounts(instructions: str) -> int:
-    """Register the accounts named in the scan's credentials block."""
+    """Register the accounts named in a structured credentials block.
+
+    Credentials written as prose cannot be told from the rest of the instructions,
+    so the agent registers those itself before it first uses them.
+    """
     names = re.findall(r"<username>\s*([^<\s][^<]*?)\s*</username>", instructions or "")
     return sum(register(name, "account", "provisioned") for name in names)
 
@@ -129,7 +138,8 @@ async def register_test_object(ctx: RunContextWrapper, identifiers: list[str], k
 
     Args:
         identifiers: IDs, emails, usernames or names exactly as the target uses them.
-            Identifiers only, never secrets, tokens or passwords.
+            Identifiers only, never secrets, tokens or passwords. A bare word with no
+            digit or "@" (a table, route or role name) is not accepted.
         kind: What they are, e.g. "account", "record", "file", "role".
     """
     inner = ctx.context if isinstance(ctx.context, dict) else {}

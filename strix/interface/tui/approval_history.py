@@ -2,21 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, cast
+from pathlib import Path
+from typing import cast
 
-from strix.core.paths import runtime_state_dir
+
+# A run directory can sit inside the workspace the agent writes to, so the record of what a
+# person decided is kept with the user's own Strix files, where the sandbox has no mount.
+HISTORY_DIR = Path.home() / ".strix" / "approval-history"
 
 
-if TYPE_CHECKING:
-    from pathlib import Path
+def _history_path(run_dir: Path) -> Path:
+    name = hashlib.sha256(str(run_dir.resolve()).encode()).hexdigest()[:32]
+    return HISTORY_DIR / f"{name}.jsonl"
 
 
 def record_approval_history(
     run_dir: Path, agent_id: str, content: str, summary: str | None = None
 ) -> None:
-    path = runtime_state_dir(run_dir) / "action_approvals.jsonl"
+    path = _history_path(run_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     record = {"agent_id": agent_id, "content": content, "timestamp": datetime.now(UTC).isoformat()}
     if summary is not None:
@@ -26,7 +32,7 @@ def record_approval_history(
 
 
 def read_approval_history(run_dir: Path) -> list[dict[str, str]]:
-    path = runtime_state_dir(run_dir) / "action_approvals.jsonl"
+    path = _history_path(run_dir)
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:

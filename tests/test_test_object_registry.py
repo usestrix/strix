@@ -14,6 +14,11 @@ def test_register_persists_and_rehydrates(tmp_path: Path) -> None:
     _fresh(tmp_path)
     assert registry.register("zed.qa.probe.001@example.com", "account", "agent", "a1")
     assert not registry.register("7", "record", "agent")
+    # A bare word names a table, route or role, not one object the target issued.
+    for word in ("users", "admin", "billing-settings"):
+        assert not registry.register(word, "record", "agent")
+    assert registry.register("client_01ABC", "oauth client", "agent")
+    assert registry.register("qa-admin", "account", "provisioned")
     _fresh(tmp_path)
     assert registry.matching_test_objects("login zed.qa.probe.001@example.com now") == [
         {"identifier": "zed.qa.probe.001@example.com", "kind": "account", "source": "agent"}

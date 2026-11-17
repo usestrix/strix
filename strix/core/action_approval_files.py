@@ -24,6 +24,9 @@ def _script_argument(name: str, args: list[str], cwd: str) -> list[str]:
             args.pop(0)
         if option == "--":
             break
+    # `bash < x.sh` runs the file as surely as `bash x.sh`.
+    if args[:1] == ["<"]:
+        args = args[1:]
     if not args or args[0].startswith(("<", ">")):
         return []
     return [posixpath.normpath(posixpath.join(cwd, args[0]))]
@@ -69,7 +72,10 @@ def script_paths(command: str, workdir: str = ".") -> list[str]:
             cwd = posixpath.normpath(posixpath.join(cwd, args[0]))
             continue
         name = posixpath.basename(executable)
-        if re.fullmatch(r"(?:python(?:\d+(?:\.\d+)*)?|bash|sh|zsh|dash|node|ruby|perl)", name):
+        if executable in {".", "source"}:
+            if args:
+                paths.append(posixpath.normpath(posixpath.join(cwd, args[0])))
+        elif re.fullmatch(r"(?:python(?:\d+(?:\.\d+)*)?|bash|sh|zsh|dash|node|ruby|perl)", name):
             paths.extend(_script_argument(name, args, cwd))
         else:
             path = executable if executable.startswith(("./", "../", "/")) else ""
