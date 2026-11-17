@@ -1,4 +1,9 @@
-"""Read directly invoked sandbox scripts without executing shell input."""
+"""Read the sandbox files a command names, without executing shell input.
+
+The check is told what a command would run. Shell has no end of ways to start a
+file (a wrapper, a pipe, a prefix assignment), so besides the direct interpreter
+forms every file the command names is offered, and the reader keeps the text ones.
+"""
 
 from __future__ import annotations
 
@@ -48,8 +53,31 @@ def _without_heredocs(command: str) -> str:
     return "".join(result)
 
 
-def script_paths(command: str, workdir: str = ".") -> list[str]:
-    """Extract literal script paths from simple shell command chains."""
+_MAX_PATHS = 8
+_NAMED_FILE_RE = re.compile(r"(?:^~?\.{0,2}/|/|\.[A-Za-z0-9]{1,5}$)")
+
+
+def _named_files(args: list[str], cwd: str, depth: int) -> list[str]:
+    """Every argument that reads as a file, wherever it sits in the command."""
+    paths: list[str] = []
+    written = False
+    for arg in args:
+        if arg in {">", ">>", ">&", "&>"}:
+            written = True
+            continue
+        target, written = written, False
+        if target or arg.startswith("-") or "://" in arg or "=" in arg:
+            continue
+        if _NAMED_FILE_RE.search(arg):
+            paths.append(posixpath.normpath(posixpath.join(cwd, arg)))
+        # A quoted string can be a command of its own: sh -c '...', eval "...".
+        if depth < 2 and re.search(r"\s", arg):
+            paths.extend(script_paths(arg, cwd, _depth=depth + 1))
+    return paths
+
+
+def script_paths(command: str, workdir: str = ".", *, _depth: int = 0) -> list[str]:
+    """Extract the literal file paths a shell command chain names."""
     try:
         lexer = shlex.shlex(_without_heredocs(command), posix=True, punctuation_chars="();<>|&\n")
         lexer.whitespace = " \t\r"
@@ -67,11 +95,12 @@ def script_paths(command: str, workdir: str = ".") -> list[str]:
         if not segment:
             continue
         executable, *args = segment
-        segment = []
+        segment_tokens, segment = segment, []
         if executable == "cd" and len(args) == 1:
             cwd = posixpath.normpath(posixpath.join(cwd, args[0]))
             continue
         name = posixpath.basename(executable)
+        named = _named_files(segment_tokens, cwd, _depth)
         if executable in {".", "source"}:
             if args:
                 paths.append(posixpath.normpath(posixpath.join(cwd, args[0])))
@@ -81,7 +110,9 @@ def script_paths(command: str, workdir: str = ".") -> list[str]:
             path = executable if executable.startswith(("./", "../", "/")) else ""
             if path:
                 paths.append(posixpath.normpath(posixpath.join(cwd, path)))
-    return list(dict.fromkeys(path for path in paths if not any(c in path for c in "$`*?[]\n")))
+        paths.extend(named)
+    usable = dict.fromkeys(path for path in paths if not any(c in path for c in "$`*?[]\n&|;"))
+    return list(usable)[:_MAX_PATHS]
 
 
 async def command_files(session: Any, args: dict[str, Any]) -> dict[str, str]:

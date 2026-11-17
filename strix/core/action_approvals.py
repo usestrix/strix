@@ -1,4 +1,10 @@
-"""Per-agent action checks and human approvals, independent of any interface."""
+"""Per-agent action checks and human approvals, independent of any interface.
+
+The check guards against an agent that is careless, not one that is working
+against it: the command text, the files it names and the test-object registry
+all come from the agent. It is one layer next to scope enforcement and the
+sandbox, not a boundary that contains a hostile agent.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +12,7 @@ import asyncio
 import copy
 import json
 import logging
+import re
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, fields
@@ -210,7 +217,15 @@ def _context(ctx: Any) -> dict[str, Any]:
     return cast("dict[str, Any]", inner) if isinstance(inner, dict) else {}
 
 
+# Characters that reorder or hide text on screen, so what a person reads is what runs.
+_INVISIBLE_RE = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]")
+
+
 def _summary(tool: str, args: dict[str, Any]) -> str:
+    return _INVISIBLE_RE.sub(lambda m: f"\\u{ord(m[0]):04x}", _action_text(tool, args))
+
+
+def _action_text(tool: str, args: dict[str, Any]) -> str:
     if tool == "apply_patch":
         return str(args.get("input", ""))
     if tool == "exec_command":

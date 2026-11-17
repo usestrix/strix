@@ -517,7 +517,9 @@ def _shell_sessions(ctx: Any) -> dict[str, dict[str, str]]:
 def _remember_shell_session(ctx: Any, parsed: dict[str, Any], result: Any) -> None:
     if not isinstance(result, str) or not isinstance(parsed.get("cmd"), str):
         return
-    if match := _SESSION_ID_RE.search(result):
+    # Only the header the runtime writes, never the command's own output.
+    header = _OUTPUT_HEADER_RE.search(result)
+    if match := _SESSION_ID_RE.search(result, 0, header.start() if header else len(result)):
         _shell_sessions(ctx)[match[1]] = {"command": parsed["cmd"], "typed": ""}
 
 
