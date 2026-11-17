@@ -55,8 +55,11 @@ def hydrate_test_objects_from_disk(state_dir: Path) -> None:
         except (OSError, json.JSONDecodeError):
             logger.exception("test_objects.json at %s is unreadable; starting empty", _path)
             return
-        if isinstance(data, dict):
-            _objects.update({k: v for k, v in data.items() if isinstance(v, dict)})
+        # The file can sit where the agent writes, so nothing in it is taken as provisioned;
+        # the scan seeds its provisioned accounts again on every start.
+        for identifier, entry in data.items() if isinstance(data, dict) else ():
+            if isinstance(entry, dict) and _ISSUED_IDENTIFIER_RE.search(str(identifier)):
+                _objects[str(identifier)] = {**entry, "source": "agent"}
 
 
 def _persist() -> None:

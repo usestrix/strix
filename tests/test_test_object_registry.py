@@ -20,6 +20,9 @@ def test_register_persists_and_rehydrates(tmp_path: Path) -> None:
     assert registry.register("client_01ABC", "oauth client", "agent")
     assert registry.register("qa-admin", "account", "provisioned")
     _fresh(tmp_path)
+    # The saved file can be edited, so on reload nothing is provisioned and a bare word is dropped.
+    assert not registry.matching_test_objects("delete qa-admin")
+    assert registry.matching_test_objects("x client_01ABC")[0]["source"] == "agent"
     assert registry.matching_test_objects("login zed.qa.probe.001@example.com now") == [
         {"identifier": "zed.qa.probe.001@example.com", "kind": "account", "source": "agent"}
     ]

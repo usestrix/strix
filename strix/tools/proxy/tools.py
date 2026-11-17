@@ -52,6 +52,14 @@ ScopeAction = Literal["get", "list", "create", "update", "delete"]
 # is not concurrency-safe (parallel calls raise "Transport is already
 # connected"). Serialize every host-side proxy call through this lock.
 _CAIDO_CALL_LOCK = asyncio.Lock()
+
+
+def _carries(captured: str | None, sent: str) -> bool:
+    """Whether a sent header still holds a credential of the captured one; one cookie is enough."""
+    parts = {part.strip() for part in (captured or "").split(";") if part.strip()}
+    return bool(parts & {part.strip() for part in sent.split(";")})
+
+
 _CREDENTIAL_HEADER_RE = re.compile(r"authorization|cookie|token|api[-_]?key|secret|session", re.I)
 
 
@@ -498,7 +506,7 @@ async def repeat_request(
         carried = [
             name
             for name, value in sent_headers.items()
-            if _CREDENTIAL_HEADER_RE.search(name) and captured.get(name.lower()) == value
+            if _CREDENTIAL_HEADER_RE.search(name) and _carries(captured.get(name.lower()), value)
         ]
         if carried and captured_host and str(connection.host or "").lower() != captured_host:
             arguments["captured_credentials_sent_to_another_host"] = {
