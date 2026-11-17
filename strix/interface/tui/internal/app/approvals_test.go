@@ -141,8 +141,19 @@ func TestApprovalVariantsAndNextRequestResetsChoice(t *testing.T) {
 		t.Fatal("next approval must reset to Block")
 	}
 	m.snapshot.PendingApprovals[0].Summary = strings.Repeat("long-command-", 100)
-	if !strings.Contains(ansi.Strip(m.approvalView()), "[summary truncated]") {
-		t.Fatal("long summaries must be bounded")
+	m.height = 40
+	if out := ansi.Strip(m.approvalView()); strings.Count(out, "-") < 200 || strings.Contains(out, "too long") {
+		t.Fatalf("an action that fits must be shown whole:\n%s", out)
+	}
+	m.snapshot.PendingApprovals[0].Summary = strings.Repeat("line\n", 200) + "rm -rf /srv"
+	if !strings.Contains(ansi.Strip(m.approvalView()), "it can only be blocked") {
+		t.Fatal("an action that does not fit must say so")
+	}
+	if m.answerApproval(true) != nil {
+		t.Fatal("an action not shown in full must not be allowed")
+	}
+	if m.answerApproval(false) == nil {
+		t.Fatal("an action not shown in full can still be blocked")
 	}
 }
 

@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
+
+from strix.utils.secret_files import SECRET_FILE_MODE
 
 
 # A run directory can sit inside the workspace the agent writes to, so the record of what a
@@ -23,11 +26,13 @@ def record_approval_history(
     run_dir: Path, agent_id: str, content: str, summary: str | None = None
 ) -> None:
     path = _history_path(run_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    # The record holds whole commands and request bodies: readable by its owner only.
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     record = {"agent_id": agent_id, "content": content, "timestamp": datetime.now(UTC).isoformat()}
     if summary is not None:
         record["summary"] = summary
-    with path.open("a", encoding="utf-8") as stream:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, SECRET_FILE_MODE)
+    with os.fdopen(fd, "a", encoding="utf-8") as stream:
         stream.write(json.dumps(record) + "\n")
 
 
