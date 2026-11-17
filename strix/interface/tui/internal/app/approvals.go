@@ -73,10 +73,9 @@ func (m Model) approvalView() string {
 	if len(category) > 0 {
 		category = strings.ToUpper(category[:1]) + category[1:]
 	}
-	summary := ansi.Hardwrap(ansi.Strip(a.Summary), max(1, width-4), false)
-	lines := strings.Split(summary, "\n")
-	if len(lines) > 4 {
-		lines = append(lines[:3], "[summary truncated]")
+	lines, whole := m.approvalLines(a.Summary, width)
+	if !whole {
+		lines = append(lines, "[too long to show in full here: it can only be blocked]")
 	}
 	body := truncate(ansi.Strip(a.AgentName), width-4) + "\n" + strings.Join(lines, "\n") + "\n" +
 		fmt.Sprintf("%s · %s in %d:%02d", category, timeoutAction, seconds/60, seconds%60) + "\n" +
@@ -84,9 +83,26 @@ func (m Model) approvalView() string {
 	return m.cornerPrompt(render.Bold(amber).Render(title), body, width, "Allow", "Block")
 }
 
+// approvalLines wraps the action to the prompt and reports whether all of it fits on screen.
+func (m Model) approvalLines(summary string, width int) ([]string, bool) {
+	lines := strings.Split(ansi.Hardwrap(ansi.Strip(summary), max(1, width-4), false), "\n")
+	room := max(3, m.height-12)
+	if len(lines) <= room {
+		return lines, true
+	}
+	return lines[:room-1], false
+}
+
 func (m *Model) answerApproval(approved bool) tea.Cmd {
 	if m.approvalSending || m.approvalID == "" {
 		return nil
+	}
+	// A person only allows an action they were shown in full.
+	if approved && len(m.snapshot.PendingApprovals) > 0 {
+		_, _, chatWidth, _ := m.layout()
+		if _, whole := m.approvalLines(m.snapshot.PendingApprovals[0].Summary, min(76, max(20, chatWidth-4))); !whole {
+			return nil
+		}
 	}
 	m.approvalSending = true
 	return send(m.client, "approval.decide", map[string]any{
