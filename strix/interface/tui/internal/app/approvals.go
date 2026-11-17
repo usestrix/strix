@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/usestrix/strix/tui/internal/protocol"
 	"github.com/usestrix/strix/tui/internal/render"
 )
 
@@ -73,7 +74,7 @@ func (m Model) approvalView() string {
 	if len(category) > 0 {
 		category = strings.ToUpper(category[:1]) + category[1:]
 	}
-	lines, whole := m.approvalLines(a.Summary, width)
+	lines, whole := m.approvalLines(a, width)
 	if !whole {
 		lines = append(lines, "[too long to show in full here: it can only be blocked]")
 	}
@@ -84,11 +85,11 @@ func (m Model) approvalView() string {
 }
 
 // approvalLines wraps the action to the prompt and reports whether all of it fits on screen.
-func (m Model) approvalLines(summary string, width int) ([]string, bool) {
-	lines := strings.Split(ansi.Hardwrap(ansi.Strip(summary), max(1, width-4), false), "\n")
+func (m Model) approvalLines(a protocol.Approval, width int) ([]string, bool) {
+	lines := strings.Split(ansi.Hardwrap(ansi.Strip(a.Summary), max(1, width-4), false), "\n")
 	room := max(3, m.height-12)
 	if len(lines) <= room {
-		return lines, true
+		return lines, !a.Truncated
 	}
 	return lines[:room-1], false
 }
@@ -100,7 +101,7 @@ func (m *Model) answerApproval(approved bool) tea.Cmd {
 	// A person only allows an action they were shown in full.
 	if approved && len(m.snapshot.PendingApprovals) > 0 {
 		_, _, chatWidth, _ := m.layout()
-		if _, whole := m.approvalLines(m.snapshot.PendingApprovals[0].Summary, min(76, max(20, chatWidth-4))); !whole {
+		if _, whole := m.approvalLines(m.snapshot.PendingApprovals[0], min(76, max(20, chatWidth-4))); !whole {
 			return nil
 		}
 	}

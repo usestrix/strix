@@ -60,7 +60,10 @@ def test_approval_projection_is_bounded_sanitized_and_excludes_arguments(
     assert projected[0]["approval_id"] == "0"
     assert "arguments" not in projected[0]
     assert "\x1b" not in projected[0]["summary"]
-    assert len(projected[0]["summary"]) < 650
+    assert projected[0]["summary"] == "x" * 2000
+    assert projected[0]["truncated"] is False
+    assert projected[1]["truncated"] is True
+    assert len(projected[1]["summary"]) < 650
     assert TuiController(args()).snapshot()["pending_approvals"] == []
     assert TuiController(args()).snapshot()["approval_on_timeout"] == "block"
     controller.live_view.upsert_agent("agent", name="agent")

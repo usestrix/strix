@@ -152,6 +152,10 @@ func TestApprovalVariantsAndNextRequestResetsChoice(t *testing.T) {
 	if m.answerApproval(true) != nil {
 		t.Fatal("an action not shown in full must not be allowed")
 	}
+	m.snapshot.PendingApprovals[0].Summary, m.snapshot.PendingApprovals[0].Truncated = "id", true
+	if !strings.Contains(ansi.Strip(m.approvalView()), "it can only be blocked") || m.answerApproval(true) != nil {
+		t.Fatal("an action the engine cut short must not be allowed")
+	}
 	if m.answerApproval(false) == nil {
 		t.Fatal("an action not shown in full can still be blocked")
 	}
