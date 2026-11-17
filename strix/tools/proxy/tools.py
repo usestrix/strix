@@ -52,6 +52,7 @@ ScopeAction = Literal["get", "list", "create", "update", "delete"]
 # is not concurrency-safe (parallel calls raise "Transport is already
 # connected"). Serialize every host-side proxy call through this lock.
 _CAIDO_CALL_LOCK = asyncio.Lock()
+_CREDENTIAL_HEADER_RE = re.compile(r"authorization|cookie|token|api[-_]?key|secret|session", re.I)
 
 
 async def _ctx_client(ctx: RunContextWrapper) -> Client | None:
@@ -483,17 +484,29 @@ async def repeat_request(
         )
         sent_headers = caido_api.parse_raw_request(raw.decode("utf-8"))["headers"]
         body = modified["body"]
-        return (
-            connection,
-            raw,
-            {
-                "method": modified["method"].upper(),
-                "url": modified["url"],
-                "header_names": list(sent_headers),
-                "body": body[:4000],
-                "body_truncated": len(body) > 4000,
-            },
-        )
+        arguments: dict[str, Any] = {
+            "method": modified["method"].upper(),
+            "url": modified["url"],
+            "header_names": list(sent_headers),
+            "body": body[:4000],
+            "body_truncated": len(body) > 4000,
+        }
+        # Header values stay out of the check, so it is told when the captured
+        # request's own credentials would go to a host they were not captured from.
+        captured_host = str(original.host or "").lower()
+        captured = {name.lower(): value for name, value in components["headers"].items()}
+        carried = [
+            name
+            for name, value in sent_headers.items()
+            if _CREDENTIAL_HEADER_RE.search(name) and captured.get(name.lower()) == value
+        ]
+        if carried and captured_host and str(connection.host or "").lower() != captured_host:
+            arguments["captured_credentials_sent_to_another_host"] = {
+                "headers": carried,
+                "captured_from": captured_host,
+                "sent_to": str(connection.host or "").lower(),
+            }
+        return connection, raw, arguments
 
     try:
         started = asyncio.get_running_loop().time()

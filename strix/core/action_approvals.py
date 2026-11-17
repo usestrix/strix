@@ -216,12 +216,19 @@ def _summary(tool: str, args: dict[str, Any]) -> str:
     if tool == "exec_command":
         return str(args.get("cmd", ""))
     if tool == "write_stdin":
-        return str(args.get("chars", ""))
+        chars = str(args.get("chars", ""))
+        command = args.get("session_command")
+        return f"{chars}\n\nTyped into: {command}" if command else chars
     # A person approves what the summary says, so it carries the call's own input.
     if tool == "call_mcp":
         arguments = json.dumps(args.get("arguments") or {}, ensure_ascii=False, default=str)
         return f"{args.get('connection', '')}.{args.get('tool', '')} {arguments}"
     request = f"{args.get('method', '')} {args.get('url', '')}"
+    if forwarded := args.get("captured_credentials_sent_to_another_host"):
+        request += (
+            f"\nSends the {', '.join(forwarded['headers'])} captured from "
+            f"{forwarded['captured_from']} to {forwarded['sent_to']}"
+        )
     return f"{request}\n\n{args['body']}" if args.get("body") else request
 
 

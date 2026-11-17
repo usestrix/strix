@@ -13,6 +13,7 @@ from agents import RunContextWrapper
 from strix.config.settings import ActionApprovalSettings
 from strix.core.action_approvals import ActionApprovalGuard
 from strix.core.agents import AgentCoordinator
+from strix.interface.tui import approval_history
 from strix.interface.tui.approval_history import read_approval_history, record_approval_history
 from strix.interface.tui.backend.controller import TuiController
 from strix.interface.tui.runtime import GoTuiRuntime
@@ -209,8 +210,13 @@ def test_approval_history_replays_terminal_copy_and_ignores_partial_records(tmp_
     assert history[0]["agent_id"] == "root"
     assert live_view.record_approval.call_args.args == ("root", history[0]["content"])
     record_approval_history(run_dir, "child", "Denied by you")
-    with (run_dir / ".state" / "action_approvals.jsonl").open("a") as stream:
+    with approval_history._history_path(run_dir).open("a") as stream:
         stream.write('{"agent_id":\nnull\n{}\n')
+    # A file inside the run directory, which the agent may be able to write, is not the record.
+    (run_dir / ".state").mkdir(exist_ok=True)
+    (run_dir / ".state" / "action_approvals.jsonl").write_text(
+        '{"agent_id": "root", "content": "Approved by you", "timestamp": "2026-01-01"}\n'
+    )
     assert [row["content"] for row in read_approval_history(run_dir)] == [
         "Approved by you",
         "Denied by you",
@@ -250,7 +256,7 @@ def test_approval_history_accepts_empty_commands_and_ignores_invalid_command_typ
     )
     record_approval_history(run_dir, "root", "Approved by you", summary="")
     record_approval_history(run_dir, "child", "Denied by you")
-    with (run_dir / ".state" / "action_approvals.jsonl").open("a") as stream:
+    with approval_history._history_path(run_dir).open("a") as stream:
         stream.write(
             json.dumps(
                 {"agent_id": "root", "content": "Blocked", "timestamp": "now", "summary": []}

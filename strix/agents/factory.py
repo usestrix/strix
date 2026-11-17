@@ -502,6 +502,25 @@ def _annotate_running_non_tty(parsed: dict[str, Any], result: Any) -> Any:
     return f"{result[: header.end()]}{notice}\n{result[header.end() :]}"
 
 
+_SESSION_ID_RE = re.compile(r"^Process running with session ID (\d+)$", re.MULTILINE)
+_SESSION_INPUT_CHARS = 2000
+
+
+def _shell_sessions(ctx: Any) -> dict[str, dict[str, str]]:
+    """What each of the agent's open shell sessions runs, to judge input typed into one."""
+    context = getattr(ctx, "context", None)
+    if not isinstance(context, dict):
+        return {}
+    return cast("dict[str, dict[str, str]]", context.setdefault("shell_sessions", {}))
+
+
+def _remember_shell_session(ctx: Any, parsed: dict[str, Any], result: Any) -> None:
+    if not isinstance(result, str) or not isinstance(parsed.get("cmd"), str):
+        return
+    if match := _SESSION_ID_RE.search(result):
+        _shell_sessions(ctx)[match[1]] = {"command": parsed["cmd"], "typed": ""}
+
+
 def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
     invoke_tool = separate_tool_timeout(tool)
     tool.description = f"{tool.description.rstrip()} {_EXEC_COMMAND_DESCRIPTION_NOTE}"
@@ -532,6 +551,7 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
             )
         result = with_registration_reminder(result)
         if isinstance(parsed, dict):
+            _remember_shell_session(ctx, parsed, result)
             return _annotate_running_non_tty(parsed, result)
         return result
 
@@ -553,9 +573,17 @@ def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
             _apply_shell_output_cap(parsed)
             raw_input = json.dumps(parsed)
             if cast("dict[str, Any]", parsed).get("chars"):
-                blocked = await check_action(ctx, "write_stdin", cast("dict[str, Any]", parsed))
+                session = _shell_sessions(ctx).get(str(parsed.get("session_id")))
+                checked = dict(parsed)
+                if session:
+                    checked["session_command"] = session["command"]
+                    if session["typed"]:
+                        checked["earlier_input"] = session["typed"]
+                blocked = await check_action(ctx, "write_stdin", checked)
                 if blocked is not None:
                     return blocked
+                if session:
+                    session["typed"] = (session["typed"] + parsed["chars"])[-_SESSION_INPUT_CHARS:]
         try:
             return with_registration_reminder(await invoke_tool(ctx, raw_input))
         except ValidationError as exc:
