@@ -259,7 +259,8 @@ class TuiController:
                     )
                     for key in fields
                 },
-                "truncated": len(sanitize_terminal_text(str(item.get("summary") or ""))) > shown,
+                "truncated": bool(item.get("truncated"))
+                or len(sanitize_terminal_text(str(item.get("summary") or ""))) > shown,
             }
             for index, item in enumerate(guard.pending())
             for shown in (8 * 1024 if index == 0 else 512,)

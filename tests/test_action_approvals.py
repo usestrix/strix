@@ -715,6 +715,12 @@ async def test_input_typed_into_a_running_program_is_checked_with_that_program()
         await write.on_invoke_tool(ctx, json.dumps(forged))
         assert "session_command" not in requests[3]
         assert "earlier_input" not in requests[3]
+        # Another agent typing into the session is checked against the same record.
+        other = _ctx(ctx.context["coordinator"].action_approvals, "other")
+        other.context["coordinator"] = ctx.context["coordinator"]
+        results = iter(["ok"])
+        await write.on_invoke_tool(other, json.dumps({"session_id": 7, "chars": "q"}))
+        assert requests[-1]["session_command"] == "psql -f purge.sql"
         # Every spelling the tool accepts for a session finds that session's record.
         for spelling in ("07", " 7", 7.0):
             results = iter(["ok"])
@@ -848,7 +854,7 @@ async def test_replay_check_is_told_when_captured_credentials_go_to_another_host
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("body_length", [0, 4000, 4001])
+@pytest.mark.parametrize("body_length", [0, 4000, 65536])
 async def test_replay_judges_effective_delete_without_header_values(
     monkeypatch: pytest.MonkeyPatch, body_length: int
 ) -> None:
@@ -880,13 +886,58 @@ async def test_replay_judges_effective_delete_without_header_values(
         assert {"Host", "Authorization", "Cookie", "User-Agent"} <= set(judged["header_names"])
         if body_length:
             assert {"X-Test", "Content-Length"} <= set(judged["header_names"])
-        assert judged["body"] == "x" * min(body_length, 4000)
-        assert judged["body_truncated"] is (body_length > 4000)
+        assert judged["body"] == "x" * body_length
+        assert judged["body_truncated"] is False
         serialized = json.dumps(requests[0])
         for private_value in ("fixture-value", "fixture-cookie", "private-value"):
             assert private_value not in serialized
-        body = "x" * min(body_length, 4000)
+        body = "x" * body_length
         assert events[0]["summary"] == (f"DELETE {url}\n\n{body}" if body else f"DELETE {url}")
+        assert events[0]["truncated"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["auto", "ask"])
+async def test_a_replay_body_too_long_to_check_is_never_cleared_or_approved(
+    monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    events: list[dict[str, Any]] = []
+    with patch.object(LlmJudge, "evaluate", side_effect=AssertionError("not judged")):
+        guard = ActionApprovalGuard(
+            _settings(mode=mode, timeout_seconds=0.2, on_timeout="allow"),
+            event_sink=events.append,
+        )
+        ctx, sent = _replay_context(monkeypatch, guard)
+        args = {"request_id": "123", "modifications": {"body": "x" * 65537}}
+        task = asyncio.create_task(
+            invoke_function_tool(
+                function_tool=repeat_request, context=ctx, arguments=json.dumps(args)
+            )
+        )
+        if mode == "ask":
+            request = (await _pending(guard))[0]
+            assert request["truncated"] is True
+            assert request["summary"].endswith("[body cut here: the rest is sent but not shown]")
+            # It cannot be approved, and allow-on-timeout does not run it either.
+            assert not guard.resolve(request["approval_id"], approved=True)
+        result = await task
+        assert "Blocked by action approvals" in result
+        assert not sent
+        assert events[0]["reason"] == "The request body is too long to check in full."
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_after_the_deadline_still_blocks_when_timeouts_allow() -> None:
+    with patch.object(LlmJudge, "evaluate", return_value=_verdict()):
+        guard = ActionApprovalGuard(_settings(mode="ask", timeout_seconds=30, on_timeout="allow"))
+        task = asyncio.create_task(guard.check(_ctx(guard), "exec_command", {"cmd": "test"}))
+        request = (await _pending(guard))[0]
+        # The waiter has not fired yet, but the wall clock says the request expired.
+        guard._pending[request["approval_id"]].event["expires_at"] = "2000-01-01T00:00:00+00:00"
+        assert guard.resolve(request["approval_id"], approved=False, decided_by="reviewer")
+        result = await task
+        assert result is not None
+        assert "denied by a person" in result
 
 
 @pytest.mark.asyncio

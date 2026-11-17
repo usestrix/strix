@@ -244,7 +244,10 @@ def _action_text(tool: str, args: dict[str, Any]) -> str:
             f"\nSends the {', '.join(forwarded['headers'])} captured from "
             f"{forwarded['captured_from']} to {forwarded['sent_to']}"
         )
-    return f"{request}\n\n{args['body']}" if args.get("body") else request
+    if not args.get("body"):
+        return request
+    cut = "\n[body cut here: the rest is sent but not shown]" if args.get("body_truncated") else ""
+    return f"{request}\n\n{args['body']}{cut}"
 
 
 class ActionApprovalGuard:
@@ -261,6 +264,9 @@ class ActionApprovalGuard:
         self.judge = LlmJudge(settings, default_model=default_model)
         self.event_sink = event_sink
         self._pending: dict[str, _Approval] = {}
+        # What each shell session runs. The sandbox's sessions are shared by every agent in
+        # the scan, so the record is kept here and not with the agent that opened one.
+        self.shell_sessions: dict[str, dict[str, str]] = {}
         self._checks: dict[asyncio.Task[str | None], str] = {}
         self._stopped_agents: set[str] = set()
         self._closed = False
@@ -281,10 +287,16 @@ class ActionApprovalGuard:
         item = self._pending.get(approval_id)
         if item is None:
             return False
+        # A refusal counts for as long as the request is pending, and an action that was not
+        # shown whole is never approved. Only an approval can arrive too late.
+        if not approved:
+            return self._settle(approval_id, "denied", decided_by)
+        if item.event.get("truncated"):
+            return False
         if datetime.now(UTC) >= datetime.fromisoformat(item.event["expires_at"]):
             self._settle(approval_id, "timed_out", None)
             return False
-        return self._settle(approval_id, "approved" if approved else "denied", decided_by)
+        return self._settle(approval_id, "approved", decided_by)
 
     def _settle(self, approval_id: str, decision: str, decided_by: str | None) -> bool:
         item = self._pending.pop(approval_id, None)
@@ -292,9 +304,7 @@ class ActionApprovalGuard:
             return False
         item.future.set_result(decision)
         self._emit(item.event, "resolved", decision=decision, decided_by=decided_by)
-        allowed = decision == "approved" or (
-            decision == "timed_out" and self.settings.on_timeout == "allow"
-        )
+        allowed = self._allowed(decision, item.event)
         self._emit(
             item.event,
             "checked",
@@ -302,6 +312,14 @@ class ActionApprovalGuard:
             decided_by=decided_by,
         )
         return True
+
+    def _allowed(self, decision: str, event: dict[str, Any]) -> bool:
+        """A timeout runs an action only when the scan says so and all of it was checked."""
+        return decision == "approved" or (
+            decision == "timed_out"
+            and self.settings.on_timeout == "allow"
+            and not event.get("truncated")
+        )
 
     def resume_agent(self, agent_id: str) -> None:
         self._stopped_agents.discard(agent_id)
@@ -370,7 +388,13 @@ class ActionApprovalGuard:
                 state["files"] = files
         if owned := matching_test_objects(json.dumps([args, state.get("files")], default=str)):
             state["registered_test_objects"] = owned
-        risky, category, explanation = await self._evaluate(state)
+        # An action too long to hand over whole was not checked, so it is never cleared.
+        cut = bool(args.get("body_truncated"))
+        risky, category, explanation = (
+            (True, "changes_target", "The request body is too long to check in full.")
+            if cut
+            else await self._evaluate(state)
+        )
         event = {
             "type": "checked",
             "approval_id": None,
@@ -379,6 +403,7 @@ class ActionApprovalGuard:
             "tool": tool,
             "summary": _summary(tool, args),
             "arguments": args,
+            "truncated": cut,
             "risky": risky,
             "category": category,
             "reason": explanation,
@@ -419,10 +444,7 @@ class ActionApprovalGuard:
             except TimeoutError:
                 self._settle(approval_id, "timed_out", None)
                 decision = future.result()
-            allowed = decision == "approved" or (
-                decision == "timed_out" and self.settings.on_timeout == "allow"
-            )
-            if allowed:
+            if self._allowed(decision, event):
                 return None
             if decision == "denied":
                 return self._blocked(f"denied by a person; {reason}")

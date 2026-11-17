@@ -499,6 +499,26 @@ def test_run_data_requires_session(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         httpd.server_close()
 
 
+def test_no_other_page_may_frame_the_viewer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _make_run(tmp_path, "framed", status="running", end_time=None)
+    _bundle(tmp_path, monkeypatch)
+
+    httpd, url, _token = serve(run_dir, open_browser=False)
+    try:
+        for path in ("/", "/api/run"):
+            try:
+                headers = urllib.request.urlopen(url + path, timeout=5).headers  # noqa: S310
+            except urllib.error.HTTPError as exc:
+                headers = exc.headers
+            assert headers.get("X-Frame-Options") == "DENY", path
+            assert headers.get("Content-Security-Policy") == "frame-ancestors 'none'", path
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def test_auth_status_reflects_expiry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     run_dir = _make_run(tmp_path, "status", status="running", end_time=None)
     _bundle(tmp_path, monkeypatch)

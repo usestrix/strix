@@ -152,6 +152,12 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
     class ViewerHandler(BaseHTTPRequestHandler):
         server_version = "StrixViewer/1.0"
 
+        def end_headers(self) -> None:
+            # The viewer holds controls that act on a click, so no other page may frame it.
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+            super().end_headers()
+
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
             logger.debug("viewer %s - %s", self.address_string(), format % args)
 

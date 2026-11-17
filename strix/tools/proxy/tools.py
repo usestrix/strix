@@ -60,6 +60,9 @@ def _secrets(value: str) -> set[str]:
     return {part[0].strip('"') for part in parts if part and len(part[0]) >= 8}
 
 
+# The check and the approver get the body whole up to this size. A longer one is cut,
+# marked, and treated as unchecked: blocked, or shown to a person who can only deny it.
+_CHECKED_BODY_CHARS = 64 * 1024
 _CREDENTIAL_HEADER_RE = re.compile(r"authorization|cookie|token|api[-_]?key|secret|session", re.I)
 
 
@@ -496,8 +499,8 @@ async def repeat_request(
             "method": modified["method"].upper(),
             "url": modified["url"],
             "header_names": list(sent_headers),
-            "body": body[:4000],
-            "body_truncated": len(body) > 4000,
+            "body": body[:_CHECKED_BODY_CHARS],
+            "body_truncated": len(body) > _CHECKED_BODY_CHARS,
         }
         # Header values stay out of the check, so it is told when the captured
         # request's own credentials would go to a host they were not captured from.
