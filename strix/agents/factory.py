@@ -509,11 +509,11 @@ _SESSION_ID = TypeAdapter(int)
 
 
 def _shell_sessions(ctx: Any) -> dict[str, dict[str, str]]:
-    """What each of the agent's open shell sessions runs, to judge input typed into one."""
+    """What each of the scan's open shell sessions runs, to judge input typed into one."""
     context = getattr(ctx, "context", None)
-    if not isinstance(context, dict):
-        return {}
-    return cast("dict[str, dict[str, str]]", context.setdefault("shell_sessions", {}))
+    coordinator = context.get("coordinator") if isinstance(context, dict) else None
+    guard = getattr(coordinator, "action_approvals", None)
+    return cast("dict[str, dict[str, str]]", getattr(guard, "shell_sessions", {}))
 
 
 def _remember_shell_session(ctx: Any, parsed: dict[str, Any], result: Any) -> None:
