@@ -1,6 +1,6 @@
 [project]
 name = "strix-agent"
-version = "1.7.0"
+version = "1.7.1"
 description = "Open-source AI Hackers for your apps"
 readme = "README.md"
 license = "Apache-2.0"
@@ -72,6 +72,12 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+[tool.uv]
+# Supply-chain cooldown: resolve only distributions that have been on the index for
+# at least 5 days, so a poisoned release (litellm 1.107.0, 2026-10-21) is never
+# picked up by `uv lock` / `uv add` before it can be caught and yanked.
+exclude-newer = "5 days"
 
 [build-system]
 requires = ["hatchling"]

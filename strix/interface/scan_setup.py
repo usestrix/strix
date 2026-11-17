@@ -116,6 +116,7 @@ async def preflight_model_connection(
         model,
         model_name=model_name,
         extra_headers=resolved_settings.llm.extra_headers,
+        extra_body=resolved_settings.llm.extra_body,
         timeout=resolved_settings.llm.preflight_timeout,
         api_base_setting="LLM_API_BASE",
     )
@@ -126,6 +127,7 @@ async def preflight_request(
     *,
     model_name: str,
     extra_headers: dict[str, str] | None,
+    extra_body: dict[str, Any] | None,
     timeout: int,
     api_base_setting: str,
 ) -> None:
@@ -144,6 +146,7 @@ async def preflight_request(
         request_timeout=timeout,
         prompt_cache=False,
         extra_headers=extra_headers,
+        extra_body=extra_body,
         has_tools=False,
     )
     try:

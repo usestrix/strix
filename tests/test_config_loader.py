@@ -37,6 +37,12 @@ _LLM_ENV_KEYS = [
     "STRIX_RUNTIME_BACKEND",
     # TelemetrySettings
     "STRIX_TELEMETRY",
+    # JSON-object settings
+    "LLM_EXTRA_HEADERS",
+    "LLM_EXTRA_BODY",
+    "STRIX_DEDUPE_MODEL",
+    "DEDUPE_LLM_EXTRA_HEADERS",
+    "DEDUPE_LLM_EXTRA_BODY",
 ]
 
 
@@ -404,6 +410,57 @@ def test_persist_current_replaces_corrupt_file(
     loader.persist_current()
 
     assert json.loads(target.read_text(encoding="utf-8")) == {"env": {"STRIX_LLM": "env-model"}}
+
+
+@pytest.mark.parametrize(
+    ("env_var", "section", "field"),
+    [
+        ("LLM_EXTRA_HEADERS", "llm", "extra_headers"),
+        ("LLM_EXTRA_BODY", "llm", "extra_body"),
+        ("DEDUPE_LLM_EXTRA_HEADERS", "dedupe", "extra_headers"),
+        ("DEDUPE_LLM_EXTRA_BODY", "dedupe", "extra_body"),
+    ],
+)
+def test_persisted_json_object_setting_reloads_without_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, env_var: str, section: str, field: str
+) -> None:
+    loader.apply_config_override(tmp_path / "cli-config.json")
+    monkeypatch.setenv(env_var, '{"X-Tenant": "acme"}')
+    loader.load_settings()
+    loader.persist_current()
+    monkeypatch.delenv(env_var)
+    loader.apply_config_override(tmp_path / "cli-config.json")
+
+    settings = loader.load_settings()
+
+    assert getattr(getattr(settings, section), field) == {"X-Tenant": "acme"}
+
+
+def test_json_object_setting_saved_as_object_still_loads(tmp_path: Path) -> None:
+    target = tmp_path / "cli-config.json"
+    target.write_text(
+        json.dumps({"env": {"LLM_EXTRA_BODY": {"service_tier": "flex"}}}), encoding="utf-8"
+    )
+    loader.apply_config_override(target)
+
+    assert loader.load_settings().llm.extra_body == {"service_tier": "flex"}
+
+
+def test_invalid_saved_json_object_setting_is_rejected(tmp_path: Path) -> None:
+    target = tmp_path / "cli-config.json"
+    target.write_text(json.dumps({"env": {"LLM_EXTRA_BODY": "not json"}}), encoding="utf-8")
+    loader.apply_config_override(target)
+
+    with pytest.raises(ValidationError):
+        loader.load_settings()
+
+
+def test_saved_string_setting_is_not_json_decoded(tmp_path: Path) -> None:
+    target = tmp_path / "cli-config.json"
+    target.write_text(json.dumps({"env": {"STRIX_LLM": '{"not": "decoded"}'}}), encoding="utf-8")
+    loader.apply_config_override(target)
+
+    assert loader.load_settings().llm.model == '{"not": "decoded"}'
 
 
 def test_persist_current_sets_0600_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

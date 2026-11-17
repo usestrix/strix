@@ -314,6 +314,12 @@ def test_make_model_settings_disables_parallel_tool_calls_by_default() -> None:
     assert make_model_settings("none", model_name="gpt-4o").parallel_tool_calls is False
 
 
+def test_make_model_settings_enables_parallel_tool_calls_when_requested() -> None:
+    settings = make_model_settings("none", model_name="gpt-4o", parallel_tool_calls=True)
+
+    assert settings.parallel_tool_calls is True
+
+
 def test_make_model_settings_omits_parallel_tool_calls_without_tools() -> None:
     settings = make_model_settings("none", model_name="gpt-4o", has_tools=False)
 
@@ -359,6 +365,58 @@ def test_make_model_settings_extra_headers_survive_reasoning_resolve() -> None:
     )
 
     assert settings.extra_headers == {"X-Feature-Key": "svc"}
+
+
+def test_make_model_settings_sets_extra_body() -> None:
+    settings = make_model_settings(
+        "none",
+        model_name="openai/gpt-5",
+        extra_body={"service_tier": "flex", "safety_identifier": "user-hash"},
+    )
+
+    assert settings.extra_body == {"service_tier": "flex", "safety_identifier": "user-hash"}
+
+
+def test_make_model_settings_omits_extra_body_when_unset() -> None:
+    assert make_model_settings("none", model_name="gpt-4o").extra_body is None
+
+
+def test_make_model_settings_extra_body_survives_reasoning_resolve() -> None:
+    settings = make_model_settings(
+        "high",
+        model_name="openai/o3",
+        extra_body={"service_tier": "flex"},
+    )
+
+    assert settings.extra_body == {"service_tier": "flex"}
+
+
+def test_make_model_settings_extra_body_merges_with_max_reasoning_field() -> None:
+    settings = make_model_settings(
+        "max",
+        model_name="deepseek/deepseek-v4-flash",
+        extra_body={"safety_identifier": "user-hash"},
+    )
+
+    assert settings.extra_body == {"safety_identifier": "user-hash", "reasoning_effort": "max"}
+
+
+def test_make_model_settings_max_reasoning_overrides_extra_body_reasoning_field() -> None:
+    settings = make_model_settings(
+        "max",
+        model_name="deepseek/deepseek-v4-flash",
+        extra_body={"reasoning_effort": "low"},
+    )
+
+    assert settings.extra_body == {"reasoning_effort": "max"}
+
+
+def test_make_model_settings_does_not_mutate_caller_extra_body() -> None:
+    extra_body = {"safety_identifier": "user-hash"}
+
+    make_model_settings("max", model_name="deepseek/deepseek-v4-flash", extra_body=extra_body)
+
+    assert extra_body == {"safety_identifier": "user-hash"}
 
 
 def test_make_model_settings_timeout_survives_reasoning_resolve() -> None:
@@ -414,6 +472,11 @@ def test_openrouter_attribution_rides_on_the_request_headers() -> None:
         "X-Title": "Strix",
         "X-OpenRouter-Categories": "cli-agent",
     }
+
+
+def test_vercel_ai_gateway_attribution_rides_on_the_request_headers() -> None:
+    headers = make_model_settings(None, model_name="vercel_ai_gateway/zai/glm-5.3").extra_headers
+    assert headers == {"HTTP-Referer": "https://strix.ai", "X-Title": "Strix"}
 
 
 def test_openrouter_attribution_absent_for_other_providers() -> None:

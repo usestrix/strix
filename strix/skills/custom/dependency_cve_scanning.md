@@ -114,98 +114,103 @@ not just "upgrade <vulnerable pkg> to <fixed>".
 
 ### Usage / reachability analysis (required for every dependency CVE)
 
-For every CVE you are about to report, run a static usage analysis and record
-the result in the structured `reachability` + `reachability_evidence` fields.
-The level is an **evidence ladder, never an exploitability verdict** — claim
-only what you proved, and cite the proof. It never changes severity (that is
-`advisory_cvss` alone); it exists so the reader can prioritize.
+Every CVE you report carries a verdict in `reachability`, the proof in
+`reachability_evidence`, and every usage site in `code_locations` (see
+Reporting). The verdict answers one question for THIS advisory in THIS
+codebase: does the vulnerable code run here? There are three answers and no
+"unknown". The tool rejects a report without a verdict or without evidence,
+so finish the analysis before you file.
 
-**Go — use govulncheck (real call-graph analysis):**
+- **`reachable`** — the advisory's vulnerable code executes in this codebase:
+  application code, or a package it calls on the application's behalf, calls
+  the affected function, mode or feature. Evidence: the call site as
+  `file:line` and the source-to-sink trace (step 3).
+- **`not_reachable`** — the package is loaded by the shipped code, but this
+  CVE's vulnerable path does not execute here. Evidence: what you checked and
+  why the path is dead. Typical reasons: no caller of the affected API after
+  a complete search; the only call site is behind a condition that is false
+  here (a polyfill for an older runtime, a flag that is off, a dev-only
+  command); the parent package of a transitive dependency never references
+  the affected API; the flaw sits in a mode or option this code never uses;
+  the argument that triggers the flaw is a constant here.
+- **`not_applicable`** — the advisory does not apply to this codebase at all:
+  nothing the shipped code loads imports the package; it is build, test or
+  dev tooling the artifact never executes; the installed copy is a patched or
+  unaffected build; the flaw is specific to a platform this code does not run
+  on; or the only code that could use it cannot be inspected (a compiled
+  blob, a private bundle with no source) and nothing you can inspect reaches
+  it. Evidence: the search scope and the negative result.
 
-```bash
-# Symbol-level: reports only vulnerabilities whose vulnerable functions are
-# actually reachable from application code. Needs the Go toolchain + module
-# deps; if either is missing, fall back to the checks below rather than
-# claiming a level.
-if command -v govulncheck >/dev/null && go version >/dev/null 2>&1; then
-  govulncheck -format json ./... > "$ART/govulncheck.json" || true
-fi
-```
+The verdict is per CVE, not per package. Sibling CVEs on one package usually
+affect different symbols or modes (one hits a parser, another a header
+check): run the check against each advisory's own affected functions and
+never copy one CVE's verdict or evidence onto another. The import check
+(step 1) is the only step shared across a package's CVEs.
 
-- A finding with a call stack ⇒ `reachability=reachable_call_path`, put the
-  call-path excerpt (entrypoint → vulnerable function) in
-  `reachability_evidence`.
-- Listed as affecting a required module but with no reachable symbol ⇒ fall
-  back to the import/symbol checks below (`imported` / `not_imported`).
+`reachable` is not an exploit, and `not_reachable` / `not_applicable` are
+not proof of safety (dynamic `import()`, reflection and framework wiring
+evade static search). Say what you checked; never write "not exploitable".
 
-**All other ecosystems — import check, then symbol match:**
+**Procedure**
 
 1. **Import check.** Search application code (exclude lockfiles, vendored
-   deps, `node_modules`, build output) for imports of the vulnerable package:
-   `ast-grep`/`rg` for `import`/`require`/`from X import` of the package (and
-   its ecosystem import name, which may differ from the registry name, e.g.
-   `PyYAML` → `yaml`). No hits ⇒ `not_imported`, with the search scope stated
-   in `reachability_evidence`. For a **transitive** dependency, the check is
-   whether application code imports it directly; if not, it is reachable only
-   through the direct dependency — check whether the direct dep's usage can
-   hit it (if unclear, use `imported` when the direct dep is used at all).
-2. **Symbol match — per CVE, not per package.** Read each CVE's own advisory
-   (GHSA/NVD/OSV `affected[].ecosystem_specific.imports` or the advisory
-   text) for the affected functions/classes/APIs. Search application code for
-   those symbols (`ast-grep` pattern or `rg -n`). Hits ⇒
-   `vulnerable_symbol_used`, with repo-relative `file:line` of each hit (up
-   to a handful) in `reachability_evidence`. Imported but no affected-symbol
-   usage found (or the advisory names no symbols) ⇒ `imported`.
-   Different CVEs on the same package usually affect **different** symbols
-   (one hits a parser, another a header check) — never copy one CVE's
-   verdict/evidence onto its siblings; run the symbol search against each
-   CVE's own affected-symbol list. The import check (step 1) is the only
-   part shared across a package's CVEs.
-3. **Source-to-sink trace — do this whenever step 2 found a symbol hit.** A
-   symbol hit alone says the code calls the vulnerable API; it does not say
-   who can reach it. Start at the sink (the exact line that calls the
-   vulnerable function) and walk backwards hop by hop to the source: the
-   entry point that carries untrusted input (HTTP route, CLI argument, queue
-   or webhook payload, uploaded file, config value). Read each intermediate
-   function; when a hop is a thin wrapper, go one step deeper — never stop at
-   the first caller. Record what each hop enforces: authentication, a role
-   check, validation, a feature flag, a size or type limit, a default that is
-   off in production.
-   Write the chain into `reachability_evidence` as
-   `entry point -> intermediate call -> package call` with a
-   repository-relative `file:line` for every hop, and say who controls the
-   input. If no source reaches the sink, say that too — the level stays
-   `vulnerable_symbol_used` (the call is real), and the trace is what tells
-   the reader it is only reachable from, say, an operator CLI.
-4. If the analysis was not performed or is inconclusive (obfuscated code,
-   dynamic loading, unparsable sources) ⇒ `unknown` and say why in
-   `assumptions`.
+   deps, `node_modules`, build output) for imports of the vulnerable package
+   under its ecosystem import name (`PyYAML` → `yaml`): `ast-grep`/`rg` for
+   `import`/`require`/`from X import`. For a **transitive** dependency nothing
+   in application code imports it, so walk every introducing chain from the
+   lockfile (e.g. `express > body-parser > qs`) and inspect the code of the
+   package one hop above the vulnerable one on each chain (`body-parser`, not
+   just `express`; its installed sources, or the class references of its
+   jar). Nothing imports it and no chain loads it ⇒ `not_applicable`, citing
+   the scope you searched. Loaded ⇒ continue.
+2. **Affected-symbol check, per CVE.** Read the advisory (GHSA/NVD/OSV
+   `affected[].ecosystem_specific.imports`, the advisory text, the fix commit
+   when the text is vague) for the functions, classes, options or modes that
+   trigger the flaw. Search application code, and the parent package of a
+   transitive dependency, for them (`ast-grep` pattern or `rg -n`; sibling
+   CVEs can share one multi-pattern search per package). No caller after a
+   complete search ⇒ `not_reachable`, citing the symbols and the scope. A
+   caller ⇒ step 3. When the flaw is in code every use of the package runs
+   (the parser the package exists for), the import itself is the call site ⇒
+   step 3.
+3. **Source-to-sink trace.** Start at the sink (the exact line that calls the
+   affected function) and walk backwards hop by hop to the source: the entry
+   point that carries the input (HTTP route, CLI argument, queue or webhook
+   payload, uploaded file, config value). Read each intermediate function;
+   when a hop is a thin wrapper, go one step deeper — never stop at the first
+   caller. Read what reaches the function: a constant argument that cannot
+   contain the triggering pattern, a flag that is off, a runtime-version
+   gate, a path only a dev tool runs means the vulnerable path does not run
+   ⇒ `not_reachable`, citing the condition. Otherwise ⇒ `reachable`. Write
+   the chain into `reachability_evidence` as
+   `entry point -> intermediate call -> package call` with a repo-relative
+   `file:line` for every hop, what each hop enforces (authentication, a role
+   check, validation, a size or type limit), and who controls the input. A
+   trusted or operator-only source does not soften the verdict: the code
+   runs, so it is `reachable`, and the trace is what tells the reader who can
+   reach it; the contextual CVSS carries that.
+4. **Go — govulncheck first.** When the Go toolchain and module deps are
+   present, `govulncheck -format json ./... > "$ART/govulncheck.json"` gives a
+   real call graph: a finding with a call stack ⇒ `reachable`, with the call
+   path (entrypoint → vulnerable function) as the trace; an affected module
+   with no reachable symbol ⇒ `not_reachable` when application code imports
+   it (cite the govulncheck result and the import), `not_applicable` when
+   nothing imports it. When govulncheck cannot analyze the module (build
+   errors, missing deps), run steps 1–3 instead of guessing.
 
-Cheap-first budgeting: the import check is one search per package — always do
-it. Do the per-CVE symbol match for every CVE whose advisory names affected
-symbols (they can be batched into one multi-pattern search per package);
-prioritize `critical`/`high`/KEV when the budget is tight; a CVE whose symbol
-search was skipped may still be reported as `imported` (the import check is
-real evidence), but its `reachability_evidence` must state that the
-affected-symbol check was not performed, so a skipped search is never
-mistaken for a completed one with no hits. Never let this analysis stall
-reporting — `unknown` with a reason beats an unverified claim.
+Work in severity order (critical, high and KEV first) so that if time runs
+out the low tail is what is missing, and name that tail in the scan summary.
+A CVE whose analysis you did not finish is neither filed with a guessed
+verdict nor filed as `not_applicable`: finish it, or report the gap. Never let
+the usage analysis silently drop a CVE: every advisory the scanner matched is
+either filed with a verdict or named in the summary as not analyzed.
 
-Anti-overclaim rules:
+### Reachability is a verdict on the code path, not on severity
 
-- `not_imported` still does NOT mean safe (dynamic `import()`/reflection/
-  framework wiring evade static search) — never phrase it as "not exploitable".
-- `reachable_call_path` is reserved for call-graph tools (govulncheck); a
-  symbol grep hit is `vulnerable_symbol_used`, no matter how convinced you are.
-- The tool rejects any level other than `unknown` without
-  `reachability_evidence`.
-
-### Reachability is a confidence modifier, not a gate
-
-Do NOT suppress or downgrade a known CVE just because you could not prove the
-vulnerable code path is reachable. Report it, set `advisory_cvss` from the
-advisory, record the usage analysis in `reachability`/`reachability_evidence`,
-and use `assumptions` for anything softer. If you *can* actually trigger the
+Do NOT suppress or downgrade a known CVE because its vulnerable code path is
+not reached. Report it with its verdict, set `advisory_cvss` from the
+advisory, put what the analysis proved in `reachability_evidence`, and use
+`assumptions` for anything softer. If you *can* actually trigger the
 vulnerable path or chain it into a dynamic exploit, additionally report that
 as a normal dynamic finding with `create_vulnerability_report` (the standalone
 CVE stays in its own `create_dependency_report`).
@@ -220,8 +225,18 @@ findings and rejects empty PoC fields):
   GHSA, look up the mapped CVE; if there is genuinely no CVE, do not report it
   with this tool.
 - There are no PoC fields — `create_dependency_report` does not take
-  `poc_description` / `poc_script_code` / `code_locations`. The proof lives in
-  `description` and `technical_analysis` (scanner output + advisory).
+  `poc_description` / `poc_script_code`. The proof lives in `description` and
+  `technical_analysis` (scanner output + advisory).
+- **You MUST report usage sites in `code_locations`.** Add one entry for each
+  import of the package and each call of an affected symbol that your usage
+  analysis found. Every `file:line` you cite in `reachability_evidence` must
+  also be a `code_locations` entry. Also add the line in `manifest_path` that
+  pins the vulnerable version. Each entry needs the repo-relative `file`, the
+  exact `start_line` / `end_line`, the verbatim `snippet` at those lines, and a
+  short `label` (e.g. "imports js-yaml", "calls yaml.load on CLI input"). Read
+  the real file to confirm the lines; never guess. When the verdict is
+  `not_applicable`, the manifest line is the only entry. If an entry carries
+  `fix_before` / `fix_after`, also fill `fix_verification`.
 - **Always fill the structured dependency fields** (they power the dedicated
   dependency-report card; do not leave them only in free-text):
   - `package_name` — `PkgName` (required).
@@ -249,9 +264,8 @@ findings and rejects empty PoC fields):
 - Do NOT cap severity at LOW just because there is no dynamic reproduction — use
   the advisory score.
 - Set `reachability` + `reachability_evidence` from the usage analysis above —
-  the tool rejects a report with no evidence, so for `unknown` write what you
-  searched and why the result is inconclusive;
-  use `assumptions` for anything softer (confidence, caveats, analysis limits).
+  the tool rejects a report without a verdict or without evidence; use
+  `assumptions` for anything softer (confidence, caveats, analysis limits).
 - **Always set `contextual_cvss_breakdown` + `contextual_cvss_reasoning`.** Every
   dependency finding carries a contextual rating of the CVE in this codebase
   (see below). Start from the published metrics and change only what your
@@ -285,8 +299,8 @@ evidence proves is different in this codebase:
   deployment requires before the path is reachable.
 - `scope` `U`/`C` — whether exploitation here escapes the component boundary.
 - `confidentiality`/`integrity`/`availability` `N`/`L`/`H` — the impact in this
-  codebase. `not_imported` code the build still ships is usually `N` across all
-  three.
+  codebase. A `not_applicable` package the build still ships is usually `N`
+  across all three.
 
 Ground every metric in the **source-to-sink trace** from the usage analysis
 (step 3 above), not in a general impression of the package. Derive the metrics
@@ -297,7 +311,7 @@ preconditions the hops enforce; `confidentiality`, `integrity`, and
 
 When you have no source-to-sink trace, still rate the finding: copy the
 published metrics, change only the metrics the usage level itself proves, and
-say so in the reasoning. For example, for a `not_imported` package that the
+say so in the reasoning. For example, for a `not_applicable` package that the
 build still ships, keep the published metrics and lower `confidentiality`,
 `integrity`, and `availability` to `N`, because no code path reaches the
 vulnerable symbol. Never invent a hop you did not read.
@@ -333,8 +347,8 @@ hallucinate a CVE id.
 - Do not silently drop a known CVE because it lacks a dynamic PoC — that is the
   exact failure this skill prevents.
 - Do not downgrade advisory severity for lack of dynamic reproduction.
-- Do not claim a `reachability` level the evidence does not prove — `unknown`
-  with a reason is always acceptable; an overclaimed level never is.
+- Do not claim a `reachability` verdict the evidence does not prove, and do
+  not file a CVE whose analysis you did not finish — report the gap instead.
 - Do not send a report without `contextual_cvss_breakdown` and
   `contextual_cvss_reasoning` — the reader rates and ranks the finding with them.
 - Do not use the contextual breakdown to quietly de-rate a CVE you could not

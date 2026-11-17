@@ -542,6 +542,15 @@ func (m Model) sidebarView(width, height int) string {
 		BorderForeground(dark).
 		Padding(0, 1).
 		Render(m.viewerBox(width - 4))}
+	if targetsHeight := m.targetsBoxHeight(); targetsHeight > 0 {
+		parts = append(parts, lipgloss.NewStyle().
+			Width(width-2).
+			Height(targetsHeight-2).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(dark).
+			Padding(0, 1).
+			Render(m.targetsView(width-4, targetsHeight-2)))
+	}
 	agents := ""
 	if agentHeight > 1 {
 		agentRows := max(1, agentHeight-4)
@@ -592,6 +601,13 @@ func (m Model) sidebarView(width, height int) string {
 }
 
 func (m Model) sidebarHeights() (statsHeight, vulnHeight, mcpHeight, agentHeight int) {
+	_, statsHeight, vulnHeight, mcpHeight, agentHeight = m.sidebarLayout()
+	return
+}
+
+// sidebarLayout sizes the targets box and the panels. The targets box only
+// takes rows no panel needs, so it never squeezes the panels below it.
+func (m Model) sidebarLayout() (targetsHeight, statsHeight, vulnHeight, mcpHeight, agentHeight int) {
 	// Measure the stats panel the way its box will render it: a long model name
 	// wraps inside the sidebar, and counting only its newlines would size the
 	// box short and push the whole frame past the bottom of the terminal.
@@ -628,6 +644,14 @@ func (m Model) sidebarHeights() (statsHeight, vulnHeight, mcpHeight, agentHeight
 		}
 	}
 	spare := max(0, m.height-m.viewerHeight()-statsHeight-vulnHeight-mcpHeight-agentHeight)
+	// The box needs its border and two rows: the header and a target or the
+	// count of hidden ones. A zoomed panel keeps the whole sidebar.
+	if targets := m.targetsView(m.sidebarInnerWidth(), maxTargetRows); targets != "" && m.zoomedPanel == panelNone {
+		if fit := min(lipgloss.Height(targets)+2, spare); fit >= 4 {
+			targetsHeight = fit
+			spare -= fit
+		}
+	}
 	switch {
 	case m.zoomedPanel == panelFindings && vulnHeight > 1:
 		vulnHeight += spare
@@ -641,6 +665,17 @@ func (m Model) sidebarHeights() (statsHeight, vulnHeight, mcpHeight, agentHeight
 
 func (m Model) viewerHeight() int {
 	return strings.Count(m.viewerView(m.viewerContentWidth()), "\n") + 3
+}
+
+// sidebarTopHeight is the rows above the panels: the viewer box and, when the
+// run has targets, the targets box under it.
+func (m Model) sidebarTopHeight() int {
+	return m.viewerHeight() + m.targetsBoxHeight()
+}
+
+func (m Model) targetsBoxHeight() int {
+	targetsHeight, _, _, _, _ := m.sidebarLayout()
+	return targetsHeight
 }
 
 func (m Model) sidebarInnerWidth() int {

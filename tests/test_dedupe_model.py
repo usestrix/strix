@@ -148,3 +148,42 @@ def test_config_file_loads_dedupe_model(
     assert settings.dedupe.reasoning_effort == "minimal"
     # Main model stays independent of the dedupe override.
     assert settings.llm.model == "openai/root"
+
+
+def test_dedicated_dedupe_model_uses_own_body_fields_not_main(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_EXTRA_BODY", json.dumps({"safety_identifier": "main"}))
+    loader._cached = None
+    try:
+        dedupe = DedupeSettings(
+            STRIX_DEDUPE_MODEL="deepseek/cheap",
+            DEDUPE_LLM_EXTRA_BODY={"service_tier": "flex"},
+        )
+        settings = _dedupe_model_settings(dedupe, "deepseek/cheap", 300)
+        assert settings.extra_body == {"service_tier": "flex"}
+    finally:
+        loader._cached = None
+
+
+def test_dedicated_dedupe_model_gets_no_main_body_fields_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_EXTRA_BODY", json.dumps({"safety_identifier": "main"}))
+    loader._cached = None
+    try:
+        dedupe = DedupeSettings(STRIX_DEDUPE_MODEL="deepseek/cheap")
+        settings = _dedupe_model_settings(dedupe, "deepseek/cheap", 300)
+        assert settings.extra_body is None
+    finally:
+        loader._cached = None
+
+
+def test_fallback_dedupe_inherits_main_body_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_EXTRA_BODY", json.dumps({"safety_identifier": "main"}))
+    loader._cached = None
+    try:
+        settings = _dedupe_model_settings(DedupeSettings(), "openai/main-model", 300)
+        assert settings.extra_body == {"safety_identifier": "main"}
+    finally:
+        loader._cached = None

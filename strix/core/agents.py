@@ -75,6 +75,7 @@ class AgentCoordinator:
         self._budget_stopped = False
         self._reserve_stopped = False
         self._budget_paused = False
+        self._operator_paused = False
         self._resume_epoch = 0
         self._budget_policy: BudgetPolicy = "stop"
         self._extend_budget: Callable[[], None] | None = None
@@ -104,6 +105,10 @@ class AgentCoordinator:
     @property
     def budget_paused(self) -> bool:
         return self._budget_paused
+
+    @property
+    def operator_paused(self) -> bool:
+        return self._operator_paused
 
     @property
     def resume_epoch(self) -> int:
@@ -150,6 +155,7 @@ class AgentCoordinator:
         """
         async with self._lock:
             self._budget_paused = True
+            self._operator_paused = True
         logger.info("scan paused by the operator")
         await self._maybe_snapshot()
 
@@ -165,6 +171,7 @@ class AgentCoordinator:
             self._set_budget_limit(max_budget_usd)
         async with self._lock:
             self._budget_paused = False
+            self._operator_paused = False
             self._resume_epoch += 1
             woken = [aid for aid, status in self.statuses.items() if status == "budget_paused"]
             for aid in woken:
@@ -232,7 +239,7 @@ class AgentCoordinator:
             self._budget_stopped = budget_stopped
             self._reserve_stopped = reserve_stopped
             if not budget_paused:
-                self._budget_paused = False
+                self._budget_paused = self._operator_paused
                 for aid, status in self.statuses.items():
                     if status == "budget_paused":
                         self.statuses[aid] = "waiting"
@@ -424,7 +431,12 @@ class AgentCoordinator:
         unknown, or it is terminal and its loop does not park for wake-ups.
         """
         from_user = message.get("from") == "user"
-        if from_user and self._budget_paused and self._budget_policy != "pause":
+        if (
+            from_user
+            and self._budget_paused
+            and not self._operator_paused
+            and self._budget_policy != "pause"
+        ):
             await self.resume_from_budget_pause(exclude=target_agent_id)
         async with self._lock:
             if target_agent_id not in self.statuses:
@@ -447,7 +459,9 @@ class AgentCoordinator:
                 self.recovery_counts.pop(target_agent_id, None)
                 self.idle_resume_counts.pop(target_agent_id, None)
                 self._parent_notified.discard(target_agent_id)
-                self.statuses[target_agent_id] = "waiting"
+                held = self._operator_paused and self.statuses[target_agent_id] == "budget_paused"
+                if not held:
+                    self.statuses[target_agent_id] = "waiting"
             runtime.wake.set()
             stream = runtime.stream
             interrupt_on_message = runtime.interrupt_on_message
@@ -640,6 +654,7 @@ class AgentCoordinator:
                 "budget_stopped": self._budget_stopped,
                 "reserve_stopped": self._reserve_stopped,
                 "budget_paused": self._budget_paused,
+                "operator_paused": self._operator_paused,
             }
 
     async def restore(self, snap: dict[str, Any]) -> None:
@@ -662,6 +677,7 @@ class AgentCoordinator:
             self._budget_stopped = bool(snap.get("budget_stopped", False))
             self._reserve_stopped = bool(snap.get("reserve_stopped", False))
             self._budget_paused = bool(snap.get("budget_paused", False))
+            self._operator_paused = bool(snap.get("operator_paused", False))
             for aid in self.statuses:
                 self.runtimes.setdefault(aid, AgentRuntime())
 

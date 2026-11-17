@@ -10,12 +10,11 @@ from openai.types.shared import Reasoning
 
 from strix.config.models import (
     DEFAULT_MODEL_RETRY,
-    OPENROUTER_ATTRIBUTION_HEADERS,
+    attribution_headers,
     bedrock_route_supports_prompt_caching,
     is_bedrock_route,
     is_claude_model,
     is_known_openai_bare_model,
-    is_openrouter_model,
     model_supports_reasoning,
     request_timeout_extra_args,
     routes_through_litellm,
@@ -247,25 +246,30 @@ def make_model_settings(
     *,
     model_name: str,
     force_required_tool_choice: bool = False,
+    parallel_tool_calls: bool = False,
     request_timeout: float | None = None,
     prompt_cache: bool = True,
     extra_headers: dict[str, str] | None = None,
+    extra_body: dict[str, Any] | None = None,
     has_tools: bool = True,
 ) -> ModelSettings:
     headers = _request_headers(model_name, extra_headers)
     model_settings = ModelSettings(
-        parallel_tool_calls=False if has_tools else None,
+        parallel_tool_calls=parallel_tool_calls if has_tools else None,
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
         extra_args=request_timeout_extra_args(request_timeout),
         extra_headers=headers,
+        extra_body=dict(extra_body) if extra_body else None,
     )
     if (
         reasoning_effort is not None
         and reasoning_effort != "none"
         and model_supports_reasoning(model_name)
     ):
-        model_settings = model_settings.resolve(_reasoning_settings(reasoning_effort))
+        model_settings = model_settings.resolve(
+            _reasoning_settings(reasoning_effort, extra_body),
+        )
     if force_required_tool_choice and _accepts_required_tool_choice(model_name):
         model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
 
@@ -282,15 +286,15 @@ def make_model_settings(
 def _request_headers(
     model_name: str, extra_headers: dict[str, str] | None
 ) -> dict[str, str] | None:
-    headers: dict[str, str] = {}
-    if is_openrouter_model(model_name):
-        headers.update(OPENROUTER_ATTRIBUTION_HEADERS)
+    headers: dict[str, str] = dict(attribution_headers(model_name))
     if extra_headers:
         headers.update(extra_headers)
     return headers or None
 
 
-def _reasoning_settings(effort: ReasoningEffort) -> ModelSettings:
+def _reasoning_settings(
+    effort: ReasoningEffort, extra_body: dict[str, Any] | None = None
+) -> ModelSettings:
     """``max`` is not in the OpenAI SDK's ``Reasoning.effort`` enum, so send it as
     a raw body field instead — also keeping it clear of LiteLLM's DeepSeek mapping,
     which collapses every ``reasoning_effort`` level to plain thinking-enabled.
@@ -298,11 +302,13 @@ def _reasoning_settings(effort: ReasoningEffort) -> ModelSettings:
 
     It goes in ``extra_body``, the field every model implementation forwards as the
     request's ``extra_body``; the same value under ``extra_args`` collides with that
-    keyword and raises before a request is ever sent.
+    keyword and raises before a request is ever sent. ``resolve`` replaces
+    ``extra_body`` wholesale, so the user's ``LLM_EXTRA_BODY`` fields are carried
+    over, with ``reasoning_effort`` taking precedence.
     """
     if effort != "max":
         return ModelSettings(reasoning=Reasoning(effort=effort))
-    return ModelSettings(extra_body={"reasoning_effort": "max"})
+    return ModelSettings(extra_body={**(extra_body or {}), "reasoning_effort": "max"})
 
 
 def _prompt_cache_extra_args(model_name: str) -> dict[str, Any] | None:

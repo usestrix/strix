@@ -47,7 +47,7 @@ If unsure and the user has (or will create) an app.strix.ai account, prefer **Cl
    ```
 3. **LLM configured** — two environment variables:
    ```bash
-   export STRIX_LLM="openai/gpt-5.4"      # any LiteLLM model id (openai/..., anthropic/..., openrouter/...)
+   export STRIX_LLM="openrouter/z-ai/glm-5.3"      # any LiteLLM model id (openai/..., anthropic/..., openrouter/...)
    export LLM_API_KEY="<provider api key>"
    ```
    Ask the user for these if unset. Never hardcode or commit keys.

@@ -38,11 +38,26 @@ async def _roundtrip(
 
 
 _STRING = {"todos": {"type": "string"}}
+
+
+@pytest.mark.asyncio
+async def test_truncated_arguments_short_circuit_with_a_reissue_message() -> None:
+    captured: dict[str, str] = {}
+    wrapped = factory._with_coerced_arguments(_capturing_tool(captured, _STRING))
+
+    result = await wrapped.on_invoke_tool(cast("Any", None), '{"todos": "a, b')
+
+    assert "not executed" in result
+    assert "Re-issue the call" in result
+    assert "raw_input" not in captured
+
+
 _ARRAY = {"tags": {"type": "array", "items": {"type": "string"}}}
 _NULLABLE_ARRAY = {
     "tags": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "null"}]}
 }
 _OBJECT = {"modifications": {"type": "object"}}
+OVER_NESTED = '{"a":' + "[" * 100_000
 
 
 @pytest.mark.asyncio
@@ -136,12 +151,15 @@ async def test_unknown_and_null_arguments_are_untouched() -> None:
 
 
 @pytest.mark.asyncio
-async def test_non_object_payloads_pass_through_unchanged() -> None:
+@pytest.mark.parametrize("arguments", ["not json", '{"n": NaN}', OVER_NESTED])
+async def test_non_object_payloads_are_reported_instead_of_invoked(arguments: str) -> None:
     captured: dict[str, str] = {}
     wrapped = factory._with_coerced_arguments(_capturing_tool(captured, _ARRAY))
 
-    assert await wrapped.on_invoke_tool(cast("Any", None), "not json") == "ok"
-    assert captured["raw_input"] == "not json"
+    result = await wrapped.on_invoke_tool(cast("Any", None), arguments)
+
+    assert result.startswith("probe: the tool call was not executed")
+    assert "raw_input" not in captured
 
 
 @pytest.mark.asyncio
