@@ -247,14 +247,22 @@ class TuiController:
             "reason",
             "expires_at",
         )
+        # The prompt shows the first request. It gets as much of the action as a screen can
+        # hold, and is told when its copy was cut so it offers only Block.
         return [
             {
-                key: item.get(key)
-                if full_summary and key == "summary"
-                else terminal_projection(item.get(key), max_string=512)
-                for key in fields
+                **{
+                    key: item.get(key)
+                    if full_summary and key == "summary"
+                    else terminal_projection(
+                        item.get(key), max_string=shown if key == "summary" else 512
+                    )
+                    for key in fields
+                },
+                "truncated": len(sanitize_terminal_text(str(item.get("summary") or ""))) > shown,
             }
-            for item in guard.pending()
+            for index, item in enumerate(guard.pending())
+            for shown in (8 * 1024 if index == 0 else 512,)
         ]
 
     def collection(self, name: str) -> list[dict[str, Any]]:

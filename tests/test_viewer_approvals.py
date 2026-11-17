@@ -161,10 +161,10 @@ async def test_viewer_uses_terminal_controller_decision_path(
     )
     try:
         await asyncio.wait_for(requested.wait(), 1)
-        terminal_summary = controller.snapshot()["pending_approvals"][0]["summary"]
-        if len(summary) > 512:
-            assert terminal_summary != summary
-            assert len(terminal_summary) < 650
+        terminal = controller.snapshot()["pending_approvals"][0]
+        assert terminal["truncated"] == (len(summary) > 8 * 1024)
+        if not terminal["truncated"]:
+            assert summary in terminal["summary"]
         result = await controller.handle("viewer.open", {})
         assert result["status"] == "running"
         parts = urlsplit(result["url"])

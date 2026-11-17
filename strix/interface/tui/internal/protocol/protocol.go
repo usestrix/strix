@@ -64,6 +64,7 @@ type Approval struct {
 	AgentName string `json:"agent_name"`
 	Tool      string `json:"tool"`
 	Summary   string `json:"summary"`
+	Truncated bool   `json:"truncated"`
 	Risky     bool   `json:"risky"`
 	Category  string `json:"category"`
 	ExpiresAt string `json:"expires_at"`
