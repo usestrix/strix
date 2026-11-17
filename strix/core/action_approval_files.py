@@ -53,6 +53,16 @@ def _without_heredocs(command: str) -> str:
     return "".join(result)
 
 
+_INTERPRETER_RE = re.compile(r"(?:python(?:\d+(?:\.\d+)*)?|bash|sh|zsh|dash|node|ruby|perl)")
+
+
+def _interpreter(tokens: list[str]) -> int | None:
+    return next(
+        (i for i, t in enumerate(tokens) if _INTERPRETER_RE.fullmatch(posixpath.basename(t))),
+        None,
+    )
+
+
 _MAX_PATHS = 8
 _NAMED_FILE_RE = re.compile(r"(?:^~?\.{0,2}/|/|\.[A-Za-z0-9]{1,5}$)")
 
@@ -104,8 +114,10 @@ def script_paths(command: str, workdir: str = ".", *, _depth: int = 0) -> list[s
         if executable in {".", "source"}:
             if args:
                 paths.append(posixpath.normpath(posixpath.join(cwd, args[0])))
-        elif re.fullmatch(r"(?:python(?:\d+(?:\.\d+)*)?|bash|sh|zsh|dash|node|ruby|perl)", name):
-            paths.extend(_script_argument(name, args, cwd))
+        elif (at := _interpreter(segment_tokens)) is not None:
+            # The interpreter can sit behind any wrapper: sudo, env, timeout, a prefix assignment.
+            name = posixpath.basename(segment_tokens[at])
+            paths.extend(_script_argument(name, segment_tokens[at + 1 :], cwd))
         else:
             path = executable if executable.startswith(("./", "../", "/")) else ""
             if path:
