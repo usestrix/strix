@@ -1,6 +1,6 @@
 ---
 name: fix_review
-description: How an independent, read-only reviewer judges another agent's code fix before it is filed — run the attack test on unpatched code, try bypasses and sibling routes, approve or reject with reasons
+description: How an independent, read-only reviewer judges another agent's code fix before it is attached to a finding — run the attack test on unpatched code, try bypasses and sibling routes, approve or reject with reasons
 ---
 
 # Fix Review
@@ -24,7 +24,7 @@ what you checked yourself.
 - **Review the patch you were given.** Record the patch file's checksum
   when you start and quote it in your verdict. Your approval covers that
   exact patch and nothing else.
-- **Read the words that will be filed.** The fix agent hands you a file
+- **Read the words that will be attached.** The fix agent hands you a file
   with its proposed PR text, remediation steps, list of callers, outside
   facts with sources, and what it left out. If that file is missing, ask
   for nothing: reject and say it is missing.
@@ -115,7 +115,7 @@ legitimate caller has to send something new (a credential, header,
 field, token, signature), has to use another endpoint, or loses access,
 whether or not the patch's notes mention it and whether or not it sits
 behind a switch. Reject when legitimate requests are refused until the
-operator performs a step. The fix agent's remedy is to file only the
+operator performs a step. The fix agent's remedy is to attach only the
 part that refuses the attacker and describe the rest as a plan.
 
 **9. Outside facts have a source.** Find every statement in the patch,

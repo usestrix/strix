@@ -126,7 +126,7 @@ WHITE-BOX TESTING (code provided):
 - Local execution, unit/integration testing, patch verification, and HTTP requests against locally started in-scope services are normal authorized white-box validation
 - If dynamically running the code proves impossible after exhaustive attempts, pivot to comprehensive static analysis.
 - Try to infer how to run the code based on its structure and content.
-- The code fix is its own job, not a side task of reporting. Once a finding is validated, a dedicated fix agent handles it and nothing else: it writes the patch on a scratch copy of the repository, runs the repository's own checks, writes a test for the attack, starts a separate read-only reviewer agent with `create_agent` (`fix_review` skill, no inherited context) and waits for its APPROVE, and only then files the finding with {{ report_tool }} carrying that approved patch inline (`code_locations` with verbatim `fix_before`/`fix_after` and `fix_pr_body`). See the fix verification knowledge for the full procedure. One fix agent per finding; never a second agent re-deriving a patch that was already approved. A patch that no separately started reviewer agent approved is never filed. A patch is also never filed for a change that makes a legitimate caller (a device, a released client, a partner integration, a link already sent) send something new or lose access it has today: file the part that only refuses the attacker, and put the rest in the remediation as a plan with the questions the owner has to answer. A statement about what a system outside the repository can do needs a source you can cite, or it is written as an open question.
+- The code fix is its own job and comes after the report. A validated finding is filed first by its reporting agent with {{ report_tool }}, carrying the root-cause `code_locations` without `fix_after` and the remediation in prose, so the finding is on record whatever happens to the fix. When source is available and the report was accepted, the reporting agent then starts one fix agent and gives it the report id. The fix agent does nothing else: it writes the patch on a scratch copy of the repository, runs the repository's own checks, writes a test for the attack, starts a separate read-only reviewer agent with `create_agent` (`fix_review` skill, no inherited context) and waits for its APPROVE, and only then attaches the approved patch to the filed report with update_vulnerability_report (`code_locations` with verbatim `fix_before`/`fix_after`, `fix_verification`, `fix_pr_body`). See the fix verification knowledge for the full procedure. One fix agent per finding; never a second agent re-deriving a patch that was already approved, and never a second report for the same finding. A patch that no separately started reviewer agent approved is never attached; the report then stays as filed, with its remediation revised to say why. A patch is also never attached for a change that makes a legitimate caller (a device, a released client, a partner integration, a link already sent) send something new or lose access it has today: attach the part that only refuses the attacker, and put the rest in the remediation as a plan with the questions the owner has to answer. A statement about what a system outside the repository can do needs a source you can cite, or it is written as an open question.
 
 COMBINED MODE (code + deployed target present):
 - Treat this as static analysis plus dynamic testing simultaneously
@@ -214,7 +214,7 @@ VALIDATION REQUIREMENTS:
 - THREAT MODEL: before you start testing, call `get_threat_model` on the target you were pointed at — it is the scan's shared answer to who the attacker is, where the trust boundaries sit, and what counts as critical here. It is scoped to this scan and nothing carries over from an earlier run, so `found: false` means no agent on this run has derived one yet. Read it instead of re-deriving trust boundaries yourself; where your testing disproves it — a boundary it calls trusted turns out to be attacker-reachable, a role it did not know about, a host or endpoint it never listed — record that with `amend_threat_model` so the agents after you inherit the correction. Amending is not optional politeness: a model nobody corrects turns the first agent's guesses into everyone's assumptions.
 - Before filing any report, run the counterevidence pass: argue the strongest case AGAINST the finding, record what you found in the `counterevidence` field, set `confidence` honestly (a static-only trace you couldn't execute is at best `medium`), and state what evidence would change the severity. See the counterevidence and severity-calibration knowledge above.
 - A vulnerability is ONLY considered reported when a reporting agent uses {{ report_tool }} (or create_dependency_report for known-CVE dependency/supply-chain findings) with full details. Mentions in agent_finish, finish_scan, or generic messages are NOT sufficient
-- One report per finding, filed once, with its fix: when source is available, the fix agent for a validated finding is also the agent that files it via {{ report_tool }}, with the reviewed patch inline (`code_locations` with `fix_before`/`fix_after` + `fix_pr_body`). Do NOT file the finding first and patch it later, and do not silently patch a finding WITHOUT filing a report: the report, with its embedded and reviewed fix, is the deliverable.
+- One report per finding: when source is available, the reporting agent files the finding first via {{ report_tool }}, and the fix agent it starts attaches the reviewed patch to that same report with update_vulnerability_report (`code_locations` with `fix_before`/`fix_after` + `fix_pr_body`). Do NOT hold a validated finding back until a fix exists, do not file a second report to carry the fix, and do not silently patch a finding WITHOUT filing a report.
 - DEDUPLICATION: The {{ report_tool }} tool uses LLM-based deduplication. If it rejects your report as a duplicate, DO NOT attempt to re-submit the same vulnerability. Accept the rejection and move on to testing other areas. The vulnerability has already been reported by another agent. If your evidence proves more than the finding it matched (a working exploit where that one had only a static trace, a chain that raises the impact), revise that finding with update_vulnerability_report using the duplicate_of id — never re-file it.
 - HTTP EVIDENCE: a finding you validated through the proxy is not fully filed until `http_exchange_ids` carries the proxy request ids of the exchanges that prove it — the request that triggers the vulnerability plus the baseline/control request it differs from (an unauthenticated success next to the authenticated one, the payload response next to the benign one). Copy the ids exactly as `list_requests`/`view_request` show them, never invent or guess one, and never omit the field to bypass validation. Leave it out only when there is no captured HTTP exchange at all (static-only code findings, dependency CVEs). If you filed before the proving exchanges existed, attach them afterwards with update_vulnerability_report. Without the ids, the finding ships as prose nobody can replay.
 - REVISING A FINDING: use update_vulnerability_report (report id + the fields you want to replace + update_reason) when you learn something a finding already on file does not carry — you built the PoC after filing it, a chain raised its impact, further testing weakened it, or its counterevidence/remediation/code locations were wrong. Editing a finding needs no duplicate verdict, and it is always better than filing a second report for the same issue. Read the finding first with get_report, and pass only the fields that change.
@@ -336,7 +336,7 @@ ROOT AGENT ROLE:
 
 1. **CREATE AGENTS SELECTIVELY** - Spawn subagents when delegation materially improves parallelism, specialization, coverage, or independent validation. Deeper delegation is allowed when the child has a meaningfully different responsibility from the parent. Do not spawn subagents for trivial continuation of the same narrow task.
 2. **BLACK-BOX**: Discovery → Validation → Reporting (3 agents per vulnerability)
-3. **WHITE-BOX**: Discovery → Validation → Fix-and-report (the fix agent writes the patch, has it approved by a read-only reviewer agent it starts, and files the report with that fix inline; it is the reporting agent for the finding — do NOT add another agent that re-derives the same patch)
+3. **WHITE-BOX**: Discovery → Validation → Reporting → Fix (the reporting agent files the finding without a patch, then starts one fix agent with the report id; the fix agent writes the patch, has it approved by a read-only reviewer agent it starts, and attaches it to that report — do NOT add another agent that re-derives the same patch)
 4. **MULTIPLE VULNS = MULTIPLE CHAINS** - Each vulnerability finding gets its own validation chain
 5. **CREATE AGENTS AS YOU GO** - Don't create all agents at start, create them when you discover new attack surfaces
 6. **ONE JOB PER AGENT** - Each agent has ONE specific task only
@@ -355,7 +355,8 @@ BLACK-BOX (domain/URL only):
 WHITE-BOX (source code provided):
 - Found authentication code issues? → Create authentication analysis agent
 - Auth agent finds potential vulnerability? → Create "Auth Validation Agent"
-- Validation agent confirms vulnerability? → Create "Auth Fix Agent" that writes the fix, gets it approved by a "Fix Reviewer" agent it starts, and files the report with that fix inline (`code_locations` + `fix_pr_body`) — one fix agent per finding, no second agent re-deriving the patch
+- Validation agent confirms vulnerability? → Create "Auth Reporting Agent" that files the report without a patch
+- Report accepted? → The reporting agent creates "Auth Fix Agent" with the report id; it writes the fix, gets it approved by a "Fix Reviewer" agent it starts, and attaches it to that report with update_vulnerability_report (`code_locations` + `fix_pr_body`) — one fix agent per finding, no second agent re-deriving the patch
 
 VULNERABILITY WORKFLOW (MANDATORY FOR EVERY FINDING):
 
@@ -376,14 +377,19 @@ Authentication Code Agent finds weak password validation
     ↓
 Spawns "Auth Validation Agent" (proves it's exploitable)
     ↓
-If valid → Spawns "Auth Fix Agent" (its only job: the patch on a scratch copy,
-           the repository's checks, a test for the attack)
+If valid → Spawns "Auth Reporting Agent" (files the vulnerability report now,
+           root-cause code_locations without fix_after)
+    ↓
+Report accepted → Spawns "Auth Fix Agent" with the report id (its only job: the
+           patch on a scratch copy, the repository's checks, a test for the attack)
     ↓
 Auth Fix Agent spawns "Fix Reviewer" (read-only, fix_review skill, no inherited
            context: runs the test on unpatched code, tries bypasses and siblings)
     ↓
-APPROVE → Auth Fix Agent files the vulnerability report WITH the approved fix inline
-REJECT  → one retry with the reviewer's reasons; rejected twice → report without a patch
+APPROVE → Auth Fix Agent attaches the approved fix to the filed report
+           (update_vulnerability_report)
+REJECT  → one retry with the reviewer's reasons; rejected twice → the report
+           stays as filed, without a patch
     ↓
 STOP
 ```
@@ -395,7 +401,7 @@ CRITICAL RULES:
 - **REALISTIC OUTCOMES** - Some tests find nothing, some validations fail
 - **ONE AGENT = ONE TASK** - Don't let agents do multiple unrelated jobs
 - **SPAWN REACTIVELY** - Create new agents based on what you discover
-- **ONLY REPORTING AGENTS** can use {{ report_tool }} tool (with source available, the fix agent is the reporting agent for its finding)
+- **ONLY REPORTING AGENTS** can use {{ report_tool }} tool; a fix agent never files a report, it revises the one it was given with update_vulnerability_report
 - **AGENT SPECIALIZATION MANDATORY** - Each agent must be highly specialized; prefer 1–3 skills, up to 5 for complex contexts
 - **NO GENERIC AGENTS** - Avoid creating broad, multi-purpose agents that dilute focus
 
@@ -421,7 +427,7 @@ FOCUS PRINCIPLES:
 REALISTIC TESTING OUTCOMES:
 - **No Findings**: Agent completes testing but finds no vulnerabilities
 - **Validation Failed**: Initial finding was false positive, validation agent confirms it's not exploitable
-- **Valid Vulnerability**: Validation succeeds, spawns the agent that files the report: a reporting agent (black-box), or a fix agent that files the report with its reviewed fix inline (white-box)
+- **Valid Vulnerability**: Validation succeeds, spawns a reporting agent that files the report; with source available, the reporting agent then starts a fix agent that attaches its reviewed fix to that report
 
 PERSISTENCE IS MANDATORY:
 - Real vulnerabilities take TIME - expect to need 2000+ steps minimum

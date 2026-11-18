@@ -103,14 +103,14 @@ exact request it sends today get the answer it gets today?
 ## What the Fix Asks of Others
 
 Classify the change from that list. The class, not your confidence,
-decides whether a patch is filed.
+decides whether a patch is attached to the finding.
 
 - **Refuses only the attacker.** Every legitimate caller sends what it
   sends today and gets what it gets today. Only the attack changes. This
-  is a patch you can file.
+  is a patch you can attach.
 - **Needs a step from the operator.** Legitimate requests are untouched,
   but the patch needs something done once: a configuration value set, a
-  new migration or backfill run, a credential rotated. File the patch,
+  new migration or backfill run, a credential rotated. Attach the patch,
   and make the step the first line of `fix_pr_body` with exactly what
   happens while it has not been done. If legitimate requests are refused
   until the step is done, this is the next class, not this one.
@@ -118,14 +118,14 @@ decides whether a patch is filed.
   it does not send today (a credential, header, field, token or
   signature), has to call a different endpoint, or loses access it has
   today. You cannot ship the other side of that change and you cannot
-  know when it is deployed. Do not file a patch for it. Putting it behind
+  know when it is deployed. Do not attach a patch for it. Putting it behind
   a switch does not help: off, the finding is still open; on, every
   caller that was not updated stops working.
 
 When a legitimate caller would have to change:
 
-1. Look for the part of the fix that refuses only the attacker and file
-   that part alone. There usually is one: scope a write to the records
+1. Look for the part of the fix that refuses only the attacker and
+   attach that part alone. There usually is one: scope a write to the records
    that belong to the identity the request already carries, stop
    returning data the caller has no claim to, reject an identifier that
    was never issued.
@@ -250,18 +250,31 @@ followed by the new test. Ship it even when you could not execute it, and
 say that it was not executed.
 
 **Feed the results back into the patch.** Every failure a check reports on
-your change is fixed in `fix_after` before you file, and the checks are
-run again. File only when what ran is clean.
+your change is fixed in `fix_after` before you attach it, and the checks
+are run again. Attach only when what ran is clean.
 
 ## The Fix Is Its Own Job
 
 A fix written as an afterthought while filing a report is the fix that
-misses the sibling route. Once a finding is validated, the work of fixing
-it belongs to one agent that does nothing else: a fix agent, started for
-this finding, whose task is the patch, its test and the report that
-carries them. If you are that agent, do not look for other
-vulnerabilities and do not re-validate the finding; spend your turns on
-the code around the bug.
+misses the sibling route. The two are separate steps, in this order:
+
+1. **The finding is filed first, without a patch.** The reporting agent
+   files the validated finding with its root-cause `code_locations` (no
+   `fix_after`) and the remediation in prose. From then on the finding is
+   on record whatever happens to the fix.
+2. **The fix is attached afterwards.** When the report was accepted, the
+   reporting agent starts one fix agent for it and gives it the report id
+   (`vuln-NNNN`). The fix agent's task is the patch, its test and the
+   review. When the reviewer approves, it attaches the patch to that
+   report with `update_vulnerability_report`. It never files a second
+   report.
+
+A report rejected as a duplicate gets no fix agent: the finding it
+matched has its own. If you are the fix agent, read the filed report
+with `get_report` first, do not look for other vulnerabilities and do
+not re-validate the finding; spend your turns on the code around the
+bug. If you end without an approved patch, the report stays as filed and
+nothing has to be undone.
 
 Rules that hold for every fix:
 
@@ -279,14 +292,14 @@ Rules that hold for every fix:
 - A limit, lockout or stricter rule that ordinary users can hit is a
   behaviour change. Name it for the owner.
 
-## Independent Review Before You File
+## Independent Review Before You Attach the Patch
 
 "The reviewer" here always means a separate agent that you start with
 `create_agent`. Nothing else counts: not your own second read and not a
 review you expect to happen later. If no agent you started has answered
-`APPROVE` for the exact patch you are about to file, you are not allowed
-to file it with `fix_after`. A patch filed without that verdict is the single failure
-this procedure exists to prevent.
+`APPROVE` for the exact patch you are about to attach, you are not
+allowed to put a `fix_after` on the report. A patch attached without that
+verdict is the single failure this procedure exists to prevent.
 
 The unpatched workspace stays unpatched from start to finish. The
 reviewer needs it to see the attack test fail, and the report's
@@ -295,15 +308,16 @@ copy; if you edited the workspace by mistake, restore it before anything
 else.
 
 Begin `fix_verification` with one line the reader can audit:
-`Independent review: APPROVE by agent <id>, patch sha256 <checksum>`, or
-`Independent review: REJECTED twice, no patch attached`.
+`Independent review: APPROVE by agent <id>, patch sha256 <checksum>`.
+When no patch is attached, begin the revised `remediation_steps` with
+`No patch attached:` and the reason in one line.
 
 You do not approve your own fix. When the patch is ready in the scratch
 copy and your checks are clean:
 
 1. Write the patch to a file next to the scratch copy
    (`git diff` against the unpatched tree) and note its checksum.
-2. Write the words you intend to file to a second file next to it: the
+2. Write the words you intend to attach to a second file next to it: the
    proposed `fix_pr_body`, the `remediation_steps`, your list of
    legitimate callers and the class of the change, every outside fact
    the patch depends on with its source, and what you left out or left
@@ -314,16 +328,20 @@ copy and your checks are clean:
    the path of the unpatched workspace, the path of your scratch copy,
    the path and checksum of the patch file, the path of the file with
    your intended words, and the commands you ran with their results.
-4. Wait for its verdict. Do not file while it is working.
-5. On `APPROVE` for the checksum you sent: file the report with exactly
-   that patch and the words the reviewer read. If you changed the patch
+4. Wait for its verdict. Do not touch the report while it is working.
+5. On `APPROVE` for the checksum you sent: attach exactly that patch
+   and the words the reviewer read to the filed report with
+   `update_vulnerability_report` (`code_locations` with `fix_before` /
+   `fix_after`, `fix_verification`, `fix_pr_body`, and
+   `remediation_steps` when the plan changed). If you changed the patch
    or those words after the review, it is not what was approved; send it
    back.
 6. On `REJECT`: fix every blocking problem it lists, re-run your checks,
    and send the new patch to a fresh reviewer once. You get one retry.
-7. Rejected twice: file the finding without `fix_after`, put the
-   remediation in prose, and record the reviewer's unresolved problems in
-   `fix_verification`. No fix is better than one that was rejected.
+7. Rejected twice: attach no patch. The report stays as it was filed.
+   Revise only its `remediation_steps` with `update_vulnerability_report`:
+   what you would change, the reviewer's unresolved problems, and what
+   the owner has to decide. No fix is better than one that was rejected.
 
 Record the reviewer's verdict, what it executed and the checksum in
 `fix_verification`.
@@ -362,11 +380,11 @@ Record the reviewer's verdict, what it executed and the checksum in
 ## Withholding the Fix
 
 If you cannot pass the gates, that is a legitimate outcome — say so
-rather than shipping a guess. Drop `fix_after` from the location, leave
-it informational, and put the remediation in prose in
-`remediation_steps` instead. State in `fix_verification` exactly which
-gate you could not clear and what was missing: the command that failed,
-the service you could not start, the decision that needs a human.
+rather than shipping a guess. Attach no `fix_after`: the report keeps the
+informational locations it was filed with, and the remediation goes in
+prose in `remediation_steps`. State there exactly which gate you could
+not clear and what was missing: the command that failed, the service you
+could not start, the decision that needs a human.
 
 Withhold and explain when:
 
