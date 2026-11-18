@@ -33,7 +33,7 @@ sqlmap -u "https://example.com/page?id=1"
 
 ```bash
 # Fast SAST triage
-semgrep --config auto ./src
+opengrep scan --config /opt/opengrep-rules ./src
 
 # Structural AST search
 sg scan ./src

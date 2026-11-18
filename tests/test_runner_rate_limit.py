@@ -39,12 +39,14 @@ async def test_persistent_rate_limit_stops_gracefully(
             model="openai/gpt-4o",
             reasoning_effort="high",
             force_required_tool_choice=False,
+            parallel_tool_calls=False,
             timeout=300,
             prompt_cache=True,
             extra_headers=None,
             extra_body=None,
         ),
         runtime=types.SimpleNamespace(max_context_images=3),
+        telemetry=types.SimpleNamespace(run_record_timings=False),
     )
     monkeypatch.setattr(runner, "load_settings", lambda: settings)
     monkeypatch.setattr(runner, "configure_sdk_model_defaults", lambda _settings: None)

@@ -53,10 +53,12 @@ Object-level authorization failures (BOLA/IDOR) lead to cross-account data expos
 
 **Enumeration Techniques**
 - Alternate types: `{"id":123}` vs `{"id":"123"}`, arrays vs scalars, objects vs scalars
-- Edge values: null/empty/0/-1/MAX_INT, scientific notation, overflows
-- Duplicate keys/parameter pollution: `id=1&id=2`, JSON duplicate keys `{"id":1,"id":2}` (parser precedence)
+- Edge and numeric boundaries: null, empty, 0, -1, MAX_INT, and exact and adjacent values around each runtime's safe-integer and overflow limits, including decimal and exponent forms
+- Duplicate keys/parameter pollution: send raw query strings such as `id=1&id=2` and raw JSON such as `{"id":1,"id":2}` so serializers cannot collapse duplicates. Use conflicting values in both orders to determine parser precedence
 - Case/aliasing: userId vs userid vs USER_ID; alt names like resourceId, targetId, account
 - Path traversal-like in virtual file systems: `/files/user_123/../../user_456/report.csv`
+
+For gateways, workers, and multi-service APIs, treat authorization as an identity invariant: the object authorized must equal the object read, changed, or exported. Run the representation and duplicate-member matrix even after one variant succeeds. Compare response identity/content, not status alone.
 
 **UUID/Opaque ID Sources**
 - Logs, exports, JS bundles, analytics endpoints, emails, public activity

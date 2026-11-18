@@ -63,7 +63,7 @@ jobs:
           fi
 ```
 
-Then tell the user to add two repository secrets: `STRIX_LLM` (model id, for example `openai/gpt-5.4`) and `LLM_API_KEY` (the provider key). Do not create these values yourself.
+Then tell the user to add two repository secrets: `STRIX_LLM` (model id, for example `openrouter/z-ai/glm-5.3`) and `LLM_API_KEY` (the provider key). Do not create these values yourself.
 
 Notes:
 - In CI/headless runs Strix automatically scopes to the PR's changed files (`--scope-mode auto`). If diff resolution fails, keep `fetch-depth: 0` or set `--diff-base` to the PR's actual base branch — use `origin/${{ github.base_ref }}` in GitHub Actions rather than a hard-coded `origin/main`, since repos use different default branches.

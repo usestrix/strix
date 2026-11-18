@@ -1,14 +1,27 @@
 name: Workflows
 
 on:
-  workflow_call:
+  pull_request:
+    paths:
+      - .github/**
+  push:
+    branches:
+      - main
+    paths:
+      - .github/**
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   actionlint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       ACTIONLINT_VERSION: 1.7.12
       ACTIONLINT_SCRIPT_REF: 914e7df21a07ef503a81201c76d2b11c789d3fca  # v1.7.12
@@ -27,6 +40,7 @@ jobs:
 
   zizmor:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:

@@ -24,6 +24,8 @@ from openai import (
 
 from strix.config import codex
 from strix.core.hooks import (
+    SUBAGENT_TURN_LIMITS_KEY,
+    TURN_LIMIT_KEY,
     BudgetExceededError,
     BudgetPausedError,
     SubagentBudgetReservedError,
@@ -39,6 +41,7 @@ from strix.core.sessions import (
 )
 from strix.llm import request_log
 from strix.llm.compaction import is_context_overflow, maybe_compact
+from strix.skills import skill_turn_limit
 
 
 if TYPE_CHECKING:
@@ -427,6 +430,7 @@ async def spawn_child_agent(
         name=name,
         parent_id=parent_id,
         task=task,
+        skills=skills,
         initial_input=child_initial_input(
             name=name,
             child_id=child_id,
@@ -510,6 +514,7 @@ async def respawn_subagents(
                 name=name,
                 parent_id=parent_id,
                 task=str(md.get("task", "")),
+                skills=child_skills,
                 initial_input=[],
                 start_parked=start_parked,
                 event_sink=event_sink,
@@ -599,7 +604,7 @@ async def _run_until_lifecycle(
                     hooks=hooks,
                 )
         except BudgetPausedError as exc:
-            if coordinator.budget_policy != "pause":
+            if coordinator.budget_policy != "pause" and not exc.operator_pause:
                 raise
             # The agent parked right before an LLM call; everything up to that
             # point is already in its session. Once resumed, the same call goes
@@ -612,6 +617,7 @@ async def _run_until_lifecycle(
                 # Stopped while parked (operator stop or a parent's stop_agent).
                 await coordinator.reset_recovery(agent_id)
                 return result
+            await coordinator.consume_pending(agent_id)
             if session is not None:
                 input_data = []
             continue
@@ -831,7 +837,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 await coordinator.detach_stream(agent_id, stream)
         except BudgetPausedError as exc:
             logger.info("agent %s paused at the scan budget limit: %s", agent_id, exc)
-            if coordinator.budget_policy == "pause":
+            if coordinator.budget_policy == "pause" or exc.operator_pause:
                 await coordinator.park_for_budget(agent_id)
             else:
                 await coordinator.pause_for_budget(agent_id)
@@ -1003,7 +1009,7 @@ async def _append_tool_required_message(
         message = (
             "Your previous message ended a turn without a tool call. Plain text never ends "
             "execution and never hands control to the user: it is shown to the user, and the "
-            "run continues. Continue immediately and call exactly one tool. "
+            "run continues. Continue immediately and call a tool. "
             "If you have nothing to do until the user replies, call wait_for_user; your "
             "text already reached them, so do not repeat it. "
             "If you are blocked waiting for another agent, call wait_for_agents. "
@@ -1015,7 +1021,7 @@ async def _append_tool_required_message(
         message = (
             "Your previous response ended the autonomous run without a lifecycle tool "
             "call. That is invalid in non-interactive mode; plain text final answers are "
-            "ignored. Continue immediately and call exactly one tool. "
+            "ignored. Continue immediately and call a tool. "
             f"If your work is complete, call {finish_tool}. "
             "If you are blocked waiting for another agent, call wait_for_agents. "
             "Otherwise use the appropriate execution or planning tool. "
@@ -1160,6 +1166,7 @@ async def _start_child_runner(
     name: str,
     parent_id: str | None,
     task: str,
+    skills: list[str],
     initial_input: Any,
     start_parked: bool = False,
     event_sink: StreamEventSink | None = None,
@@ -1173,6 +1180,9 @@ async def _start_child_runner(
     child_ctx["agent_id"] = child_id
     child_ctx["parent_id"] = parent_id
     child_ctx["task"] = task
+    child_ctx[TURN_LIMIT_KEY] = skill_turn_limit(
+        skills, parent_ctx.get(SUBAGENT_TURN_LIMITS_KEY) or {}
+    )
 
     async def _child_loop() -> None:
         # A budget stop is a clean scan-wide shutdown, not a child failure: the

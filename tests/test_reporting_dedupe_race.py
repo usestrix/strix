@@ -121,7 +121,11 @@ def _dependency() -> dict[str, Any]:
         "advisory_cvss": 7.5,
         "technical_analysis": "The package is present in the lockfile.",
         "fix_effort": "low",
-        "reachability_evidence": "The package is installed; call sites have not been traced.",
+        "reachability": "reachable",
+        "reachability_evidence": (
+            "Fixture call path: app.js:12 passes request.query.value to "
+            "example-package.parse(), reaching the advisory's affected parser."
+        ),
         "contextual_cvss_breakdown": _CVSS,
         "contextual_cvss_reasoning": "The fixture retains the advisory impact assumptions.",
     }

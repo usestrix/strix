@@ -98,6 +98,7 @@ Ensure per-type authorization is enforced inside resolvers. Verify connection fi
 **Mutation Bypass**
 - Probe mutations for partial updates bypassing validation (JSON Merge Patch semantics)
 - Test mutations that accept extra fields passed to downstream logic
+- Trace controlled security fields into non-GraphQL consumers such as recovery, invitations, jobs, exports, or authorization. Probe candidate action routes with their plausible HTTP verbs and body formats. A GET 404 alone does not close the chain
 
 ### Batching & Alias Abuse
 

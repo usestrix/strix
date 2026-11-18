@@ -13,6 +13,7 @@ from agents.agent import ToolsToFinalOutputResult
 from agents.sandbox import SandboxAgent
 from agents.sandbox.capabilities import Filesystem, Shell
 from agents.sandbox.errors import InvalidManifestPathError
+from agents.sandbox.session.pty_types import PTY_YIELD_TIME_MS_MAX
 from agents.tool import CustomTool, FunctionTool, Tool
 from pydantic import ValidationError
 
@@ -441,8 +442,47 @@ def _apply_shell_output_cap(parsed: dict[str, Any]) -> None:
     )
 
 
+_EXEC_YIELD_CAP_S = PTY_YIELD_TIME_MS_MAX // 1000
+
+_EXEC_COMMAND_DESCRIPTION_NOTE = (
+    f"The wait for output is capped at {_EXEC_YIELD_CAP_S} s whatever yield_time_ms says. "
+    "A non-TTY command still running at the yield cannot be read later (write_stdin fails "
+    "on it and its output is lost): run anything longer in the background with its output "
+    "redirected to a file (`cmd > /tmp/out.log 2>&1 &`, then read the log), or start it with "
+    'tty=true and poll with write_stdin(session_id=<id>, chars="").'
+)
+
+_RUNNING_NON_TTY_NOTICE = (
+    "Note: this non-TTY process cannot be polled and its later output is lost. Rerun it in "
+    "the background (`cmd > /tmp/out.log 2>&1 &`, then read the log) or with tty=true."
+)
+
+_PROCESS_RUNNING_RE = re.compile(r"^Process running with session ID \d+$", re.MULTILINE)
+_OUTPUT_HEADER_RE = re.compile(r"^Output:\n", re.MULTILINE)
+
+
+def _annotate_running_non_tty(parsed: dict[str, Any], result: Any) -> Any:
+    if parsed.get("tty") or not isinstance(result, str):
+        return result
+    header = _OUTPUT_HEADER_RE.search(result)
+    head_end = len(result) if header is None else header.start()
+    if _PROCESS_RUNNING_RE.search(result, 0, head_end) is None:
+        return result
+    notice = _RUNNING_NON_TTY_NOTICE
+    requested = parsed.get("yield_time_ms")
+    if isinstance(requested, int | float) and requested > PTY_YIELD_TIME_MS_MAX:
+        notice = (
+            f"Note: yield_time_ms={int(requested)} was capped at {PTY_YIELD_TIME_MS_MAX} "
+            f"({_EXEC_YIELD_CAP_S} s). " + notice.removeprefix("Note: ")
+        )
+    if header is None:
+        return f"{result}\n{notice}"
+    return f"{result[: header.end()]}{notice}\n{result[header.end() :]}"
+
+
 def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
+    tool.description = f"{tool.description.rstrip()} {_EXEC_COMMAND_DESCRIPTION_NOTE}"
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
         try:
@@ -455,7 +495,7 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
             _apply_shell_output_cap(parsed)
             raw_input = json.dumps(parsed)
         try:
-            return await invoke_tool(ctx, raw_input)
+            result = await invoke_tool(ctx, raw_input)
         except ValidationError as exc:
             return _format_validation_error(tool.name, exc)
         except InvalidManifestPathError as exc:
@@ -465,6 +505,9 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
                 "(or omitted to use the turn's cwd). "
                 f"Got: {rel!r}."
             )
+        if isinstance(parsed, dict):
+            return _annotate_running_non_tty(parsed, result)
+        return result
 
     tool.on_invoke_tool = invoke
     return tool
@@ -576,6 +619,17 @@ def _finish_tool_use_behavior(
     return ToolsToFinalOutputResult(is_final_output=False, final_output=None)
 
 
+_COVERAGE_TOOLS: tuple[Tool, ...] = (record_coverage, update_coverage, list_coverage)
+_FINISH_SCAN_COVERAGE_STEP = re.compile(
+    r"\n5\. \*\*Coverage reconciliation\.\*\*.*?(?=\n\n)", re.DOTALL
+)
+
+
+def _without_coverage_step(tool: FunctionTool) -> FunctionTool:
+    description = _FINISH_SCAN_COVERAGE_STEP.sub("", tool.description)
+    return dataclasses.replace(tool, description=description)
+
+
 _BASE_TOOLS: tuple[Tool, ...] = (
     think,
     load_skill,
@@ -674,6 +728,7 @@ def build_strix_agent(
     is_whitebox: bool = False,
     is_diff_scoped: bool = False,
     interactive: bool = False,
+    parallel_tool_calls: bool = False,
     chat_completions_tools: bool = False,
     strict_tool_schemas: bool = True,
     system_prompt_context: dict[str, Any] | None = None,
@@ -681,6 +736,8 @@ def build_strix_agent(
     instructions_override: str | None = None,
     supports_images: bool = True,
     finish_tool: Tool = finish_scan,
+    report_tool: Tool = create_vulnerability_report,
+    coverage_tools: bool = True,
 ) -> SandboxAgent[Any]:
     """Build a SandboxAgent for either root or child use.
 
@@ -694,6 +751,10 @@ def build_strix_agent(
         instructions_override: Use this verbatim as the system prompt instead
             of rendering the built-in scan prompt.
         finish_tool: The tool that ends the run, given to the root agent.
+        report_tool: The tool every agent files findings with, in place of
+            ``create_vulnerability_report``.
+        coverage_tools: Give the agent the coverage ledger tools and the
+            prompt rules for them.
     """
     if instructions_override is not None:
         instructions = instructions_override
@@ -705,18 +766,26 @@ def build_strix_agent(
             is_root=is_root,
             is_diff_scoped=is_diff_scoped,
             interactive=interactive,
+            parallel_tool_calls=parallel_tool_calls,
             system_prompt_context=system_prompt_context,
             supports_images=supports_images,
+            report_tool=report_tool.name,
+            coverage_tools=coverage_tools,
         )
 
     agent_tools = [*_EXTRA_TOOLS, *(extra_tools or [])]
     if interactive:
         # Yielding to the user is only meaningful when one is attached.
         agent_tools.append(wait_for_user)
+    base_tools = [report_tool if t is create_vulnerability_report else t for t in _BASE_TOOLS]
+    if not coverage_tools:
+        base_tools = [t for t in base_tools if t not in _COVERAGE_TOOLS]
+        if finish_tool is finish_scan:
+            finish_tool = _without_coverage_step(finish_scan)
     if is_root:
-        tools: list[Tool] = [*_BASE_TOOLS, *agent_tools, finish_tool]
+        tools: list[Tool] = [*base_tools, *agent_tools, finish_tool]
     else:
-        tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
+        tools = [*base_tools, *agent_tools, agent_finish]
     _ensure_unique_tool_names(tools)
     tools = [
         _with_bounded_result(_with_strictness(_with_coerced_arguments(tool), strict_tool_schemas))
@@ -765,10 +834,13 @@ def make_child_factory(
     is_whitebox: bool = False,
     is_diff_scoped: bool = False,
     interactive: bool = False,
+    parallel_tool_calls: bool = False,
     chat_completions_tools: bool = False,
     strict_tool_schemas: bool = True,
     system_prompt_context: dict[str, Any] | None = None,
     supports_images: bool = True,
+    report_tool: Tool = create_vulnerability_report,
+    coverage_tools: bool = True,
 ) -> Any:
     """Return the runner-owned builder used by ``spawn_child_agent``.
 
@@ -786,10 +858,13 @@ def make_child_factory(
             is_whitebox=is_whitebox,
             is_diff_scoped=is_diff_scoped,
             interactive=interactive,
+            parallel_tool_calls=parallel_tool_calls,
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=system_prompt_context,
             supports_images=supports_images,
+            report_tool=report_tool,
+            coverage_tools=coverage_tools,
         )
 
     return _factory

@@ -69,6 +69,15 @@ async def _call[T](client: Client, fn: Callable[[Client], Awaitable[T]]) -> T:
         return await fn(client)
 
 
+_REQUEST_EXISTS_QUERY = "query RequestExists($id: ID!) { request(id: $id) { id } }"
+_REQUEST_EXISTS_ATTEMPTS = 2
+
+
+async def _request_exists(client: Client, request_id: str) -> bool:
+    data = await client.graphql.query(_REQUEST_EXISTS_QUERY, {"id": request_id})
+    return bool(data) and data.get("request") is not None
+
+
 async def existing_request_ids(
     ctx: RunContextWrapper,
     request_ids: list[str],
@@ -81,16 +90,24 @@ async def existing_request_ids(
     if client is None:
         raise RuntimeError("Caido client is not available")
 
-    # Request IDs are not an HTTPQL field. Resolve each ID through the same
-    # project-bound lookup as view_request rather than constructing a filter.
+    # Request IDs are not an HTTPQL field, so each one is resolved by id. Only
+    # the id is selected: pulling the raw request and response bodies just to
+    # learn whether a row exists is what made this time out on busy projects.
     existing: set[str] = set()
     for request_id in request_ids:
-        result = await _call(
-            client,
-            functools.partial(caido_api.get_request_with_client, request_id=request_id),
-        )
-        if result is not None:
-            existing.add(str(result.request.id))
+        for attempt in range(1, _REQUEST_EXISTS_ATTEMPTS + 1):
+            try:
+                exists = await _call(
+                    client,
+                    functools.partial(_request_exists, request_id=request_id),
+                )
+            except Exception:
+                if attempt == _REQUEST_EXISTS_ATTEMPTS:
+                    raise
+                continue
+            if exists:
+                existing.add(request_id)
+            break
     return existing
 
 
@@ -147,43 +164,64 @@ async def list_requests(
     sort_order: SortOrder = "desc",
     scope_id: str | None = None,
 ) -> str:
-    """List captured HTTP requests from the Caido proxy with HTTPQL filtering.
+    r"""List captured HTTP requests from the Caido proxy, filtered with HTTPQL.
 
-    Caido HTTPQL syntax (operators differ by field type):
+    HTTPQL grammar: a clause is ``namespace.field.operator:value`` with no
+    whitespace inside the clause. Clauses combine with ``AND`` / ``OR``
+    (case-insensitive) and parentheses. There is no ``NOT``, ``&&`` or
+    ``||``; negate with ``ne``, ``ncont``, ``nlike``, ``nregex``.
 
-    - **Integer fields** (``resp.code``, ``req.port``, ``id``,
-      ``roundtrip``) — ``eq``, ``gt``, ``gte``, ``lt``, ``lte``, ``ne``.
-      Examples: ``resp.code.eq:200``, ``resp.code.gte:400``,
-      ``req.port.eq:443``.
-    - **Text/byte fields** (``req.method``, ``req.host``, ``req.path``,
-      ``req.query``, ``req.ext``, ``req.raw``) — ``regex``, ``cont``
-      (substring), ``eq``. Examples: ``req.method.eq:"POST"``,
-      ``req.path.cont:"/api/"``, ``req.host.regex:".*\\.example\\.com"``.
-    - **Date fields** (``req.created_at``) — ``gt``, ``lt`` with ISO
-      timestamps: ``req.created_at.gt:"2024-01-01T00:00:00Z"``.
-    - **Combine** with ``AND`` / ``OR``: ``req.method.eq:"POST" AND
-      resp.code.gte:400``.
-    - **Special**: ``source:intercept`` (only intercepted requests),
-      ``preset:"name"``.
+    Fields:
 
-    For sitemap-style tree traversal use HTTPQL filters: drill into a
-    host with ``req.host.eq:"example.com"`` then narrow paths with
-    ``req.path.cont:"/api/"``.
+    - ``req``: ``method``, ``host``, ``path``, ``query``, ``ext``, ``raw``
+      (string); ``port``, ``len`` (integer); ``created_at`` (date);
+      ``tls`` (boolean).
+    - ``resp``: ``code``, ``len``, ``roundtrip`` (integer); ``raw``
+      (string).
+    - ``row.id`` (integer).
+    - No other field exists in the bundled Caido: no ``req.url``,
+      ``resp.status``, ``req.header`` or ``req.body``. Match headers and
+      bodies through ``req.raw`` / ``resp.raw``.
+
+    Operators and values:
+
+    - Integer: ``eq``, ``ne``, ``gt``, ``gte``, ``lt``, ``lte`` with a bare
+      number: ``resp.code.eq:200``, ``resp.len.gt:1000``, ``row.id.eq:413``.
+    - String: ``eq``, ``ne``, ``cont``, ``ncont``, ``like``, ``nlike``,
+      ``regex``, ``nregex`` with a double-quoted value:
+      ``req.method.eq:"POST"``, ``req.path.cont:"/api/"``,
+      ``req.ext.nlike:"%.js"``. ``cont`` is case-insensitive; ``eq`` and
+      ``like`` are case-sensitive; ``like`` uses SQLite ``%`` / ``_``
+      wildcards. ``req.ext`` includes the dot: ``req.ext.eq:".js"``.
+    - Regex: write the pattern between slashes, escaping ``/``:
+      ``req.host.regex:/.*\.example\.com/``,
+      ``req.path.regex:/\/api\/v\d+/``. In a double-quoted regex every
+      backslash is doubled (JSON escaping): ``req.host.regex:"\\.example\\.com"``.
+      Rust regex syntax, no lookaround.
+    - Date (``req.created_at``): ``gt`` / ``lt`` only, with a quoted
+      ISO 8601 / RFC 3339 value: ``req.created_at.gt:"2024-01-01T00:00:00Z"``.
+    - Boolean (``req.tls``): ``eq`` / ``ne`` with bare ``true`` / ``false``.
+    - ``source:"intercept"`` (also ``"replay"``, ``"automate"``,
+      ``"workflow"``, ``"plugin"``) and ``preset:"name"`` take a quoted value.
+    - A bare quoted string searches ``req.raw`` and ``resp.raw``:
+      ``"password" OR "api_key"``.
+
+    Examples: ``req.host.eq:"example.com" AND req.path.cont:"/api/"``;
+    ``req.method.eq:"POST" AND resp.code.gte:400``;
+    ``req.path.ncont:"/static"``;
+    ``(req.ext.eq:".js" OR req.ext.eq:".map") AND resp.code.eq:200``.
+
+    Caido answers a malformed filter with ``Invalid HTTPQL query`` and
+    returns no requests. Fix the clause and call again. Usual causes: a
+    quoted integer (``resp.code.eq:"200"``), an unquoted string
+    (``req.method.eq:POST``), single quotes, ``NOT``, ``&&``, a field that
+    does not exist, or ``gte`` / ``lte`` on ``created_at``.
+
+    For sitemap-style tree traversal, drill into a host with
+    ``req.host.eq:"example.com"`` then narrow with ``req.path.cont:"/api/"``.
 
     Pagination is cursor-based. Pass the ``end_cursor`` from the
     ``page_info`` of one call as ``after`` to the next.
-
-    Notes:
-
-    - HTTPQL has **no ``NOT`` operator**. Use the negated form of the
-      operator instead: ``ne``, ``ncont``, ``nlike``, ``nregex``
-      (e.g. ``req.path.ncont:"/static"`` to exclude static paths).
-    - String values **must be quoted**; integer values **must not**.
-      ``resp.code.eq:200`` is right; ``resp.code.eq:"200"`` is a parse
-      error. Same rule for ``cont`` / ``regex`` strings.
-    - A bare quoted string searches both ``req.raw`` and ``resp.raw``,
-      handy for sensitive-data sweeps:
-      ``"password" OR "secret" OR "api_key"``.
 
     Args:
         httpql_filter: Caido HTTPQL query (optional).

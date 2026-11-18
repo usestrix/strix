@@ -8,7 +8,7 @@ import io
 import json
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -36,7 +36,12 @@ from strix.core.execution import (
 from strix.core.execution import (
     spawn_child_agent as start_child_agent,
 )
-from strix.core.hooks import BudgetExceededError, ReportUsageHooks, recomputed_budget_flags
+from strix.core.hooks import (
+    SUBAGENT_TURN_LIMITS_KEY,
+    BudgetExceededError,
+    ReportUsageHooks,
+    recomputed_budget_flags,
+)
 from strix.core.inputs import (
     build_root_task,
     build_scan_targets,
@@ -54,6 +59,7 @@ from strix.tools.output_store import (
     WORKSPACE_SPILL_DIR,
     configure_spill_writer,
 )
+from strix.tools.reporting.tool import create_vulnerability_report
 
 
 if TYPE_CHECKING:
@@ -170,11 +176,17 @@ def _compose_root_instructions_override(
     is_whitebox: bool,
     is_diff_scoped: bool,
     interactive: bool,
+    parallel_tool_calls: bool,
     system_prompt_context: dict[str, Any],
     supports_images: bool,
+    report_tool: str,
+    coverage_tools: bool,
+    replace_scan_prompt: bool = False,
 ) -> str | None:
     if root_instructions_override is None:
         return None
+    if replace_scan_prompt:
+        return f"{root_instructions_override}\n\n{render_scope_prompt(system_prompt_context)}"
 
     base_instructions = render_system_prompt(
         skills=skills,
@@ -183,9 +195,12 @@ def _compose_root_instructions_override(
         is_root=True,
         is_diff_scoped=is_diff_scoped,
         interactive=interactive,
+        parallel_tool_calls=parallel_tool_calls,
         system_prompt_context=system_prompt_context,
         include_scope=False,
         supports_images=supports_images,
+        report_tool=report_tool,
+        coverage_tools=coverage_tools,
     )
     return (
         f"{base_instructions}\n\n"
@@ -213,16 +228,22 @@ async def run_strix_scan(
     cleanup_on_exit: bool = True,
     event_sink: StreamEventSink | None = None,
     root_instructions_override: str | None = None,
+    replace_root_scan_prompt: bool = False,
     extra_system_prompt_context: dict[str, Any] | None = None,
     status_sink: StatusSink | None = None,
     mcp_connection_requests: list[McpConnectionRequest] | None = None,
     mcp_status_sink: McpStatusSink | None = None,
     root_finish_tool: Tool = finish_scan,
+    report_tool: Tool = create_vulnerability_report,
+    coverage_tools: bool = True,
+    subagent_turn_limits: Mapping[str, int] | None = None,
 ) -> RunResultBase | None:
     """Run or resume one Strix scan against a sandbox.
 
     ``root_instructions_override`` adds root scan instructions to the rendered
     root prompt without replacing the system-verified scope block.
+    ``replace_root_scan_prompt=True`` makes it the root's whole prompt, followed
+    by the scope, instead of adding it to the rendered scan prompt.
     ``extra_files`` entries (``{"workspace_path", "content"}``) are placed into
     the sandbox workspace at session bring-up; see
     :func:`strix.runtime.session_manager.create_or_reuse`.
@@ -241,6 +262,13 @@ async def run_strix_scan(
     way the engine does the connecting, so the caller passes inert configs plus
     metadata and never live sessions.
     ``root_finish_tool`` is the tool the root agent ends the run with.
+    ``report_tool`` is the tool every agent files findings with, in place of
+    ``create_vulnerability_report``.
+    ``coverage_tools=False`` drops the coverage ledger tools and their prompt
+    rules from every agent.
+    ``subagent_turn_limits`` maps a skill name to a soft turn limit for sub-agents
+    spawned with that skill (the largest applies). Agents are warned 10 turns
+    before it and reminded past it, but never stopped.
     """
 
     def report(phase: str) -> None:
@@ -398,6 +426,7 @@ async def run_strix_scan(
             settings.llm.reasoning_effort,
             model_name=resolved_model,
             force_required_tool_choice=settings.llm.force_required_tool_choice,
+            parallel_tool_calls=settings.llm.parallel_tool_calls,
             request_timeout=settings.llm.timeout,
             prompt_cache=settings.llm.prompt_cache,
             extra_headers=settings.llm.extra_headers,
@@ -419,6 +448,7 @@ async def run_strix_scan(
             max_turns=max_turns,
             interactive=interactive,
             budget_policy=budget_policy,
+            record_tool_timings=settings.telemetry.run_record_timings,
         )
         coordinator.set_budget_limit_setter(hooks.set_max_budget_usd)
         if interactive and budget_policy != "pause":
@@ -492,8 +522,12 @@ async def run_strix_scan(
             is_whitebox=is_whitebox,
             is_diff_scoped=is_diff_scoped,
             interactive=interactive,
+            parallel_tool_calls=settings.llm.parallel_tool_calls,
             system_prompt_context=root_context,
             supports_images=supports_images,
+            report_tool=report_tool.name,
+            coverage_tools=coverage_tools,
+            replace_scan_prompt=replace_root_scan_prompt,
         )
 
         root_agent = build_strix_agent(
@@ -504,12 +538,15 @@ async def run_strix_scan(
             is_whitebox=is_whitebox,
             is_diff_scoped=is_diff_scoped,
             interactive=interactive,
+            parallel_tool_calls=settings.llm.parallel_tool_calls,
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=root_context,
             instructions_override=root_instructions,
             supports_images=supports_images,
             finish_tool=root_finish_tool,
+            report_tool=report_tool,
+            coverage_tools=coverage_tools,
         )
 
         if not is_resume:
@@ -526,10 +563,13 @@ async def run_strix_scan(
             is_whitebox=is_whitebox,
             is_diff_scoped=is_diff_scoped,
             interactive=interactive,
+            parallel_tool_calls=settings.llm.parallel_tool_calls,
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=scope_context,
             supports_images=supports_images,
+            report_tool=report_tool,
+            coverage_tools=coverage_tools,
         )
 
         async def spawn_child_agent(**kwargs: Any) -> dict[str, Any]:
@@ -558,6 +598,8 @@ async def run_strix_scan(
             "scan_targets": build_scan_targets(scan_config),
             "max_context_images": settings.runtime.max_context_images,
             "supports_images": supports_images,
+            "coverage_tools": coverage_tools,
+            SUBAGENT_TURN_LIMITS_KEY: dict(subagent_turn_limits or {}),
         }
 
         root_session = open_agent_session(root_id, agents_db)

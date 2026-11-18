@@ -15,38 +15,107 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  python:
-    uses: ./.github/workflows/ci-python.yml
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-python-env
+      - run: uv lock --check
+      - run: uv run --frozen ruff check .
+      - run: uv run --frozen ruff format --check .
+      - run: uv run --frozen mypy strix/
+      - run: uv run --frozen bandit -r strix/ -c pyproject.toml
+
+  pytest:
+    name: pytest (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12', '3.14']
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-python-env
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: uv run --frozen pytest -q
 
   tui:
-    uses: ./.github/workflows/ci-tui.yml
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: strix/interface/tui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00  # v6.0.0
+        with:
+          go-version-file: strix/interface/tui/go.mod
+          cache-dependency-path: strix/interface/tui/go.sum
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: CGO_ENABLED=0 go build -trimpath -o /dev/null ./cmd/strix-tui
+      - run: go test -race ./...
 
   viewer:
-    uses: ./.github/workflows/ci-viewer.yml
-
-  package:
-    uses: ./.github/workflows/ci-package.yml
-
-  workflows:
-    uses: ./.github/workflows/ci-workflows.yml
-
-  ci-passed:
-    name: ci-passed
-    if: always()
-    needs:
-      - python
-      - tui
-      - viewer
-      - package
-      - workflows
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: strix/interface/viewer/frontend
     steps:
-      - name: Every job succeeded
-        env:
-          NEEDS: ${{ toJSON(needs) }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: strix/interface/viewer/frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - name: Committed viewer bundle matches the build
+        run: git -C "$GITHUB_WORKSPACE" diff --exit-code --stat -- strix/interface/viewer/static && test -z "$(git -C "$GITHUB_WORKSPACE" status --porcelain -- strix/interface/viewer/static)"
+
+  wheel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00  # v6.0.0
+        with:
+          go-version-file: strix/interface/tui/go.mod
+          cache-dependency-path: strix/interface/tui/go.sum
+      - uses: ./.github/actions/setup-python-env
+      - run: uv build --wheel
+      - name: Wheel ships the TUI sidecar and the viewer bundle
         run: |
-          failing=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<< "$NEEDS")
-          if [ -n "$failing" ]; then
-            echo "$failing"
-            exit 1
-          fi
+          uv run --frozen python - <<'PY'
+          import glob, zipfile
+          (wheel,) = glob.glob("dist/*.whl")
+          names = zipfile.ZipFile(wheel).namelist()
+          assert "strix/bin/strix-tui" in names, names
+          assert "strix/interface/viewer/static/index.html" in names, names
+          assert not any(name.startswith("strix/interface/viewer/frontend/") for name in names)
+          assert not any(name.startswith("strix/interface/tui/cmd/") for name in names)
+          PY
+      - name: Install into a clean environment and run the CLI
+        env:
+          UV_EXCLUDE_NEWER: 5 days
+        run: |
+          uv venv --python 3.12 /tmp/strix-smoke
+          uv pip install --python /tmp/strix-smoke/bin/python dist/*.whl
+          /tmp/strix-smoke/bin/strix --version
+          /tmp/strix-smoke/bin/strix --help >/dev/null
+      - name: Vertex AI and Bedrock dependencies install with the wheel
+        run: /tmp/strix-smoke/bin/python -c "import google.auth.transport.requests, boto3"

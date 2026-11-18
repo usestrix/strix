@@ -551,14 +551,19 @@ async def save_threat_model(ctx: RunContextWrapper, target: str, content: str) -
     published API spec, an engagement scope — build on it rather than
     inventing a competing story.
 
-    Structure the content in Markdown with these sections:
+    Structure the content in Markdown. Title it ``# Threat model:``
+    followed by the target and nothing else (no date, mode, or run
+    label), then use these sections:
 
     - **Overview** — what the target actually is, its real-world usage,
       and which parts are product/runtime versus tooling or
-      non-production.
+      non-production. One short paragraph, then the main components as
+      a list, one line each: the component, then what it does.
     - **Trust Boundaries and Assumptions** — the boundaries, the actors
-      on either side, and the invariants that must hold. Separate
-      attacker-controlled, operator-controlled, and
+      on either side, and the invariants that must hold. Give each
+      boundary its own item in one shape: what trusts what, then
+      ``Enforcement:`` and the control that holds it, or that nothing
+      does. Separate attacker-controlled, operator-controlled, and
       developer-controlled inputs explicitly. Black-box, this is the
       role, tenant, and privilege model: who can reach what before
       authenticating, as a low-privilege user, and across tenants.
@@ -566,11 +571,54 @@ async def save_threat_model(ctx: RunContextWrapper, target: str, content: str) -
       (hosts, endpoints, parameters, integrations, or the code-level
       entrypoints and sinks), the mitigations already present that
       materially change severity or reach, realistic attacker stories,
-      and the stories that are *not* realistic here and why.
+      and the stories that are *not* realistic here and why. Put the
+      realistic stories in a table (who, starting access, path,
+      impact) and the unrealistic ones in a short list with the
+      reason.
     - **Severity Calibration** — what critical / high / medium / low
       look like for *this* target, with a concrete example at each
-      level. Where a vulnerability class needs attacker control that
-      does not exist in real usage, say so here.
+      level, as a table with one row per level. Where a vulnerability
+      class needs attacker control that does not exist in real usage,
+      say so here.
+
+    **Write it to be read.** A person opens this document after the
+    scan to learn how the target was understood, and an agent reads it
+    before every decision, so both need to find one fact quickly. Use
+    plain, complete sentences and say each thing once.
+
+    - One point per list item, in a sentence or two. When an item
+      needs more than that, give the topic a ``###`` sub-heading under
+      its section and break it into short items there.
+    - Put anything enumerable in a Markdown table instead of a
+      sentence: hosts, endpoints, roles and what each can reach,
+      entrypoints and their sinks, files and the control each one
+      holds. One row per thing, with a column for why it matters.
+      Never run a chain of identifiers through a sentence or a
+      bracket.
+    - Use code formatting only for literal identifiers the reader may
+      search for (a path, a route, a function, a claim name), and bold
+      only for the term an item defines. A line that is mostly code
+      spans and bold reads as noise.
+    - Mark every fact you inferred rather than observed with
+      ``(inferred)`` on that item or row, and nowhere else, so a reader
+      can tell at a glance and the final review can find what is still
+      unconfirmed.
+    - Keep the four section headings above exactly, so agents can find
+      them.
+
+    Readable does not mean thinner. Keep every file, route, role, and
+    control that grounds a claim; move it into a table or a diagram
+    rather than dropping it.
+
+    **Draw it where a picture is clearer than prose.** People read this
+    document too, and fenced ``mermaid`` blocks render as diagrams. Under
+    Trust Boundaries, include a ``flowchart`` of the actors and
+    components with one ``subgraph`` per trust zone and each edge
+    labelled with what crosses it (credential, token, untrusted
+    content). Where one attacker story carries the model, add a
+    ``sequenceDiagram`` of it. Draw only what the prose states — a
+    diagram is a view of the model, not a place for new claims — and
+    keep it small enough to read: a dozen nodes, short labels.
 
     Args:
         target: What the model describes — a host or URL
