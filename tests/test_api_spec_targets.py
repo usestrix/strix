@@ -15,6 +15,7 @@ from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.interface.cli_args import parse_arguments
 from strix.interface.scan_setup import build_targets_info, prepare_run
 from strix.interface.utils import infer_target_type, stage_api_specs
+from strix.report.writer import read_run_record, write_run_record
 from strix.runtime.session_manager import build_bind_mounts, build_manifest_entries
 
 
@@ -145,12 +146,18 @@ def test_resume_restores_staged_api_specs(tmp_path: Path, monkeypatch: pytest.Mo
     monkeypatch.setattr(sys, "argv", ["strix", "-n", "-t", str(first), "-t", str(second)])
     original = parse_arguments()
     prepare_run(original)
-    state_dir = runtime_state_dir(run_dir_for(original.run_name))
+    run_dir = run_dir_for(original.run_name)
+    state_dir = runtime_state_dir(run_dir)
     state_dir.mkdir(parents=True)
     (state_dir / "agents.json").write_text("{}", encoding="utf-8")
     # Resume must use the staged snapshot, even if its inputs change or disappear.
     first.write_text("changed after the scan started", encoding="utf-8")
     second.unlink()
+    # Drop the recorded spec paths, so only restaging on resume can supply them.
+    record = read_run_record(run_dir)
+    for target in record["targets_info"]:
+        del target["details"]["workspace_path"]
+    write_run_record(run_dir, record)
     monkeypatch.setattr(sys, "argv", ["strix", "-n", "--resume", original.run_name])
 
     resumed = parse_arguments()
@@ -162,6 +169,10 @@ def test_resume_restores_staged_api_specs(tmp_path: Path, monkeypatch: pytest.Mo
     staging = Path(resumed.local_sources[0]["source_path"])
     for name in ("openapi.json", "openapi-2.json"):
         assert json.loads((staging / name).read_text(encoding="utf-8")) == OPENAPI
+    assert [t["details"]["workspace_path"] for t in resumed.targets_info] == [
+        "/workspace/api-specs/openapi.json",
+        "/workspace/api-specs/openapi-2.json",
+    ]
     assert resumed.targets_info == original.targets_info
 
 
