@@ -1,6 +1,7 @@
 ---
 name: counterevidence
 description: Closure discipline for security findings — what counts as proof of safety, what does not, and how to record an unresolved candidate instead of silently dropping it
+template: jinja
 ---
 
 # Counterevidence and Closure Discipline
@@ -32,8 +33,12 @@ that sentence, you are not in `ruled_out`.
 
 **3. `open_proof_gap`** — the candidate is plausible, you could not
 confirm it, and you also could not name a control that rules it out. This
+{% if coverage_tools %}
 is a legitimate, expected outcome. Record it with
 `record_coverage(outcome="needs_follow_up")`, carry it up in
+{% else %}
+is a legitimate, expected outcome. Carry it up in
+{% endif %}
 `agent_finish(open_items=[...])`, and reflect it in `counterevidence` /
 `confidence_rationale` if you file a related report. Do **not** convert
 it to `ruled_out` to tidy up your worklist.
@@ -97,6 +102,7 @@ What ships and what is reachable is what matters.
 reduces severity — it does not make the finding unreal. Downgrade it;
 do not delete it.
 
+{% if coverage_tools %}
 ## Recording Closure
 
 Closure is only useful if it is written down. Every surface you assess
@@ -125,6 +131,7 @@ named control does not cover the path you just found goes back to
 previous state is kept as history, so correcting the record costs
 nothing and leaving it wrong costs a finding.
 
+{% endif %}
 ## What DOES Rule Out a Candidate
 
 - You executed the attack and it demonstrably failed, and you understand

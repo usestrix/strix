@@ -713,7 +713,7 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     if codex.subscription_model(llm.model):
         return
     _configure_litellm_compatibility()
-    _configure_openrouter_attribution(llm.model)
+    _configure_attribution(llm.model)
     if llm.api_key:
         set_default_openai_key(llm.api_key, use_for_tracing=False)
         _configure_litellm_default("api_key", llm.api_key)
@@ -884,9 +884,13 @@ def _openrouter_error_type(error: object) -> object:
     return None
 
 
-OPENROUTER_ATTRIBUTION_HEADERS = {
+APP_ATTRIBUTION_HEADERS = {
     "HTTP-Referer": "https://strix.ai",
     "X-Title": "Strix",
+}
+
+OPENROUTER_ATTRIBUTION_HEADERS = {
+    **APP_ATTRIBUTION_HEADERS,
     "X-OpenRouter-Categories": "cli-agent",
 }
 
@@ -895,20 +899,25 @@ def is_openrouter_model(model_name: str | None) -> bool:
     return bool(model_name) and "openrouter/" in (model_name or "").strip().lower()
 
 
-def _configure_openrouter_attribution(model_name: str | None) -> None:
+def is_vercel_ai_gateway_model(model_name: str | None) -> bool:
+    return (model_name or "").strip().lower().startswith("vercel_ai_gateway/")
+
+
+def attribution_headers(model_name: str | None) -> dict[str, str]:
+    if is_openrouter_model(model_name):
+        return OPENROUTER_ATTRIBUTION_HEADERS
+    if is_vercel_ai_gateway_model(model_name):
+        return APP_ATTRIBUTION_HEADERS
+    return {}
+
+
+def _configure_attribution(model_name: str | None) -> None:
     import litellm
 
     current: object = litellm.headers
     existing: dict[str, str] = current if isinstance(current, dict) else {}
-    if not is_openrouter_model(model_name):
-        if any(key in existing for key in OPENROUTER_ATTRIBUTION_HEADERS):
-            remaining = {
-                k: v for k, v in existing.items() if k not in OPENROUTER_ATTRIBUTION_HEADERS
-            }
-            litellm.headers = remaining or None  # type: ignore[assignment]
-        return
-
-    litellm.headers = {**existing, **OPENROUTER_ATTRIBUTION_HEADERS}  # type: ignore[assignment]
+    remaining = {k: v for k, v in existing.items() if k not in OPENROUTER_ATTRIBUTION_HEADERS}
+    litellm.headers = {**remaining, **attribution_headers(model_name)} or None  # type: ignore[assignment]
 
 
 def _configure_extra_headers(llm: LlmSettings) -> None:

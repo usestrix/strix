@@ -25,6 +25,11 @@ logger = logging.getLogger(__name__)
 
 
 LLM_TURN_KEY = "llm_turn"
+# ``run_strix_scan(subagent_turn_limits=...)``, and the limit it gives one sub-agent.
+SUBAGENT_TURN_LIMITS_KEY = "subagent_turn_limits"
+TURN_LIMIT_KEY = "turn_limit"
+_TURN_LIMIT_WARN_BEFORE = 10
+_TURN_LIMIT_REPEAT = 5
 
 # ``BudgetPolicy`` decides what happens when the accumulated LLM cost reaches
 # ``max_budget_usd``.
@@ -38,6 +43,8 @@ LLM_TURN_KEY = "llm_turn"
 # same call when the operator raises the limit or resumes.
 __all__ = [
     "LLM_TURN_KEY",
+    "SUBAGENT_TURN_LIMITS_KEY",
+    "TURN_LIMIT_KEY",
     "BudgetExceededError",
     "BudgetPausedError",
     "BudgetPolicy",
@@ -213,6 +220,7 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         context.context[LLM_TURN_KEY] = int(context.context.get(LLM_TURN_KEY, 0)) + 1
         try:
             self._maybe_warn_turns(context, input_items)
+            self._maybe_warn_soft_turn_limit(context, input_items)
             self._maybe_warn_budget(context, input_items)
         except Exception:
             logger.exception("budget/turn warning injection failed")
@@ -273,6 +281,40 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
             f"[{_urgency(stage)}] Turn budget: {turns_used}/{self._max_turns} used ({pct}%). "
             f"About {remaining} turn(s) remain before this agent is force-stopped and any "
             f"in-progress work is discarded. {_wrapup_directive(context, stage)}"
+        )
+        input_items.append({"role": "user", "content": content})
+
+    def _maybe_warn_soft_turn_limit(
+        self,
+        context: RunContextWrapper[dict[str, Any]],
+        input_items: list[TResponseInputItem],
+    ) -> None:
+        """A soft limit, never a stop: warn 10 turns before it, then every few turns past it."""
+        limit = context.context.get(TURN_LIMIT_KEY)
+        requests = getattr(getattr(context, "usage", None), "requests", None)
+        if not isinstance(limit, int) or not isinstance(requests, int):
+            return
+        turns_used = requests + 1
+        if turns_used == limit - _TURN_LIMIT_WARN_BEFORE:
+            content = (
+                f"[NOTICE] You have used {turns_used} of your {limit}-turn limit. Start "
+                "wrapping up: take only the steps you still need to answer your task, then "
+                "call agent_finish. You may go past the limit only while you are still "
+                "making real progress."
+            )
+        elif turns_used >= limit and (turns_used - limit) % _TURN_LIMIT_REPEAT == 0:
+            content = (
+                f"[NOTICE] You have used {turns_used} turns, past your {limit}-turn limit. "
+                "Call agent_finish now with what you have, listing anything unresolved in "
+                "open_items, unless your next steps are clearly making progress on your task."
+            )
+        else:
+            return
+        logger.info(
+            "Turn-limit notice for agent %s: turn %d, limit %d",
+            context.context.get("agent_id"),
+            turns_used,
+            limit,
         )
         input_items.append({"role": "user", "content": content})
 

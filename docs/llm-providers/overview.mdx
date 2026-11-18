@@ -9,19 +9,33 @@ Strix uses [LiteLLM](https://docs.litellm.ai/docs/providers) for model compatibi
 
 Set your model and API key:
 
-| Model                | Provider          | Configuration                    |
-| -------------------- | ----------------- | -------------------------------- |
-| GLM-5.3 (default)    | Z.ai (OpenRouter) | `openrouter/z-ai/glm-5.3`        |
-| GPT-5.4              | OpenAI            | `openai/gpt-5.4`                 |
-| Claude Sonnet 4.6    | Anthropic         | `anthropic/claude-sonnet-4-6`    |
-| Gemini 3 Pro         | Google Vertex     | `vertex_ai/gemini-3-pro-preview` |
-| DeepSeek V4 Pro      | DeepSeek          | `deepseek/deepseek-v4-pro`       |
-| Kimi K3              | Moonshot          | `moonshot/kimi-k3`               |
+| Model                 | Provider                  | Configuration                    |
+| --------------------- | ------------------------- | -------------------------------- |
+| GLM-5.3 (recommended) | Vercel AI Gateway         | `vercel_ai_gateway/zai/glm-5.3`  |
+| GLM-5.3 (recommended) | OpenRouter                | `openrouter/z-ai/glm-5.3`        |
+| GPT-6.1 Sol           | OpenAI                    | `openai/gpt-6.1-sol`             |
+| Claude Opus 5.5       | Anthropic                 | `anthropic/claude-opus-5-5`      |
+| Claude Sonnet 5.5     | Anthropic                 | `anthropic/claude-sonnet-5-5`    |
+| Gemini 4 Argon        | Google Vertex             | `vertex_ai/gemini-4-argon`       |
+| DeepSeek V4.1 Flash   | DeepSeek                  | `deepseek/deepseek-flash`        |
+| DeepSeek V4 Pro       | DeepSeek                  | `deepseek/deepseek-v4-pro`       |
+| Kimi K3.1 Pro         | Moonshot                  | `moonshot/kimi-k3.1-pro`         |
 
-```bash
+<Note>
+Frontier OpenAI, Anthropic and Gemini models need a cyber access program for security testing: [Daybreak](https://openai.com/daybreak/) for OpenAI, the [Cyber Verification Program](https://support.claude.com/en/articles/14604842-cyber-verification-program) for Anthropic, and the [Fairwind Program](https://deepmind.google/fairwind-program/) for Gemini.
+</Note>
+
+<CodeGroup>
+```bash Vercel AI Gateway
+export STRIX_LLM="vercel_ai_gateway/zai/glm-5.3"
+export LLM_API_KEY="your-api-key"
+```
+
+```bash OpenRouter
 export STRIX_LLM="openrouter/z-ai/glm-5.3"
 export LLM_API_KEY="your-api-key"
 ```
+</CodeGroup>
 
 ## Local Models
 
@@ -47,7 +61,7 @@ See the [Local Models guide](/llm-providers/local) for setup instructions and re
     Access 100+ models through a single API.
   </Card>
   <Card title="Vercel AI Gateway" href="/llm-providers/vercel-ai-gateway">
-    Access models from multiple providers through one endpoint.
+    Access 100+ models through one OpenAI-compatible endpoint.
   </Card>
   <Card title="Google Vertex AI" href="/llm-providers/vertex">
     Gemini 3 models via Google Cloud.
@@ -69,9 +83,9 @@ Use LiteLLM's `provider/model-name` format:
 
 ```
 openrouter/z-ai/glm-5.3
-openai/gpt-5.4
-anthropic/claude-sonnet-4-6
-vertex_ai/gemini-3-pro-preview
-bedrock/anthropic.claude-4-5-sonnet-20251022-v1:0
+openai/gpt-6.1-sol
+anthropic/claude-sonnet-5-5
+vertex_ai/gemini-4-argon
+bedrock/us.anthropic.claude-sonnet-5-5
 ollama/llama4
 ```

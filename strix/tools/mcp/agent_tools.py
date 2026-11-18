@@ -176,6 +176,8 @@ async def search_mcp_tools(
     The first search lazily connects the provider and caches its catalog. Results
     contain only names, short descriptions, and whether each tool is in the
     scan's active set. Call ``get_mcp_tool_schema`` for the selected tool.
+    Catalogs that fit the limit include non-matching tools after matches. When
+    nothing matches, results fall back to active tools first, then name order.
 
     Args:
         connection: The connection name exactly as reported by ``list_mcps``.
@@ -198,10 +200,11 @@ async def search_mcp_tools(
         (score, tool)
         for tool in tools
         if (score := _search_score(tool, terms, tool.name in entry.active_tools))[0] >= 0
+        or len(tools) <= bounded_limit
     ]
-    if not ranked:
+    if not ranked or all(score[0] < 0 for score, _ in ranked):
         ranked = [
-            ((100, tool.name.lower()), tool) for tool in tools if tool.name in entry.active_tools
+            (_search_score(tool, [], tool.name in entry.active_tools), tool) for tool in tools
         ]
     ranked.sort(key=lambda item: (-item[0][0], item[0][1]))
     return {
