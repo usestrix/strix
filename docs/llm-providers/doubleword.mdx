@@ -33,6 +33,7 @@ Flex costs less than realtime in exchange for slower responses, which suits unat
 
 ```bash
 export LLM_EXTRA_BODY='{"service_tier":"flex"}'
+export LLM_PREFLIGHT_TIMEOUT=120
 export LLM_TIMEOUT=900
 export LLM_STREAM_FIRST_EVENT_TIMEOUT=600
 export LLM_STREAM_TOTAL_TIMEOUT=1200
