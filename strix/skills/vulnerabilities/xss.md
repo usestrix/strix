@@ -1,6 +1,6 @@
 ---
 name: xss
-description: XSS testing covering reflected, stored, and DOM-based vectors with CSP bypass techniques
+description: XSS and HTML injection testing covering reflected, stored, DOM-based, and normalization-dependent vectors
 ---
 
 # XSS
@@ -11,6 +11,7 @@ Cross-site scripting persists because context, parser, and framework edges are c
 
 **Types**
 - Reflected, stored, and DOM-based XSS across web/mobile/desktop shells
+- Scriptless HTML injection and second-order render paths
 
 **Contexts**
 - HTML, attribute, URL, JS, CSS, SVG/MathML, Markdown, PDF
@@ -20,6 +21,7 @@ Cross-site scripting persists because context, parser, and framework edges are c
 
 **Defenses to Bypass**
 - CSP/Trusted Types, DOMPurify, framework auto-escaping
+- Decode, normalization, sanitization, and encoding order
 
 ## Injection Points
 
@@ -56,6 +58,24 @@ Cross-site scripting persists because context, parser, and framework edges are c
 ### DOMPurify Live-Node Sanitization
 
 Distinguish HTML-string input from live DOM objects sanitized with `IN_PLACE`. Resolve the deployed DOMPurify build and check relevant upstream advisories; a controlled observable `nodeName` is one live-node bypass mechanism. Trace same-origin foreign nodes or `adoptNode()` into this mode before selecting the bypass ([example advisory](https://github.com/cure53/DOMPurify/security/advisories/GHSA-x4vx-rjvf-j5p4)).
+
+### Scriptless HTML Injection
+
+Do not require JavaScript execution before you report HTML injection. Prove that the browser creates attacker-controlled markup and a concrete security effect.
+
+Test base or form target changes, external requests, deceptive content, DOM clobbering through `id` or `name`, and dangling markup. Report XSS only when you prove a script-capable execution path. Do not dismiss HTML injection only because CSP blocks scripts.
+
+### Unicode Normalization
+
+Test normalization only when the target performs it. NFKC can fold fullwidth delimiters such as `＜` and `＞` into HTML syntax.
+
+Map validation, normalization, sanitization, encoding, and parsing in order. Start with the harmless canary `＜h1 id="strix-nfkc"＞marker＜/h1＞`.
+
+Report a bypass only when normalization creates dangerous syntax that reaches an unprotected sink. Load `semantic_confusion` when components interpret the value differently.
+
+### Second-Order Rendering
+
+Follow stored values into previews, administrative pages, email, exports, and hydration. Record which stage transforms and parses the value.
 
 ### DOM XSS
 
@@ -166,7 +186,7 @@ Keep a compact set tuned per context:
 ## Testing Methodology
 
 1. **Identify sources** - URL/query/hash/referrer, postMessage, storage, WebSocket, server JSON
-2. **Trace to sinks** - Map data flow from source to sink
+2. **Trace transformations and sinks** - Record decoding, normalization, sanitization, reparsing, and the final sink
 3. **Classify context** - HTML node, attribute, URL, script block, event handler, JS eval-like, CSS, SVG
 4. **Assess defenses** - Output encoding, sanitizer, CSP, Trusted Types, DOMPurify config
 5. **Craft payloads** - Minimal payloads per context with encoding/whitespace/casing variants
@@ -175,9 +195,11 @@ Keep a compact set tuned per context:
 ## Validation
 
 1. Provide minimal payload and context (sink type) with before/after DOM or network evidence
-2. Demonstrate cross-browser execution where relevant or explain parser-specific behavior
-3. Show bypass of stated defenses (sanitizer settings, CSP/Trusted Types) with proof
-4. Quantify impact beyond alert: data accessed, action performed, persistence achieved
+2. Record the original and transformed value when decoding or normalization affects the result
+3. Demonstrate cross-browser execution where relevant or explain parser-specific behavior
+4. Show bypass of stated defenses (sanitizer settings, CSP/Trusted Types) with proof
+5. Separate HTML injection from XSS and state the proven capability
+6. Quantify impact beyond alert: data accessed, action performed, persistence achieved
 
 ## False Positives
 
@@ -185,6 +207,8 @@ Keep a compact set tuned per context:
 - CSP with nonces/hashes and no inline/event handlers
 - Trusted Types enforced on sinks; DOMPurify in strict mode with URI allowlists
 - Scriptable contexts disabled (no HTML pass-through, safe URL schemes enforced)
+- The target does not perform the claimed normalization or decode
+- A normalized value is safely encoded before the final sink
 
 ## Impact
 
@@ -207,4 +231,4 @@ Keep a compact set tuned per context:
 
 ## Summary
 
-Context + sink decide execution. Encode for the exact context, verify at runtime with CSP/Trusted Types, and validate every alternative render path. Small payloads with strong evidence beat payload catalogs.
+Context, transformation order, and sink decide whether input becomes text, markup, or executable code. Prove HTML injection separately from XSS, and validate every render path. Encode for the exact context and verify at runtime with CSP/Trusted Types. Small payloads with strong evidence beat payload catalogs.

@@ -25,15 +25,22 @@ description: "Install Strix and run your first security scan"
 
 ## Configuration
 
-Set your LLM provider:
+Set your LLM provider. We recommend GLM-5.3 through [Vercel AI Gateway](/llm-providers/vercel-ai-gateway) or [OpenRouter](/llm-providers/openrouter):
 
-```bash
-export STRIX_LLM="openrouter/z-ai/glm-5.3"
+<CodeGroup>
+```bash Vercel AI Gateway
+export STRIX_LLM="vercel_ai_gateway/zai/glm-5.3"
 export LLM_API_KEY="your-api-key"
 ```
 
+```bash OpenRouter
+export STRIX_LLM="openrouter/z-ai/glm-5.3"
+export LLM_API_KEY="your-api-key"
+```
+</CodeGroup>
+
 <Tip>
-For best results, use `openrouter/z-ai/glm-5.3` (the default pick), `openai/gpt-5.4`, `anthropic/claude-opus-4-6`, or `openai/gpt-5.2`.
+For best results, use `zai/glm-5.3`, `deepseek/deepseek-v4.1-flash-1017`, `anthropic/claude-opus-5-5` (needs [CVP](https://support.claude.com/en/articles/14604842-cyber-verification-program) access), or `openai/gpt-6.1-sol` (needs [Daybreak](https://openai.com/daybreak/) access).
 </Tip>
 
 ## Run Your First Scan

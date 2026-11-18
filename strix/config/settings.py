@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -55,10 +55,28 @@ class LlmSettings(BaseSettings):
         alias="LLM_EXTRA_HEADERS",
         repr=False,
     )
+    extra_body: dict[str, Any] | None = Field(
+        default=None,
+        alias="LLM_EXTRA_BODY",
+        repr=False,
+    )
     reasoning_effort: ReasoningEffort = Field(default="high", alias="STRIX_REASONING_EFFORT")
+    input_cost_per_mtok: float | None = Field(
+        default=None, ge=0, allow_inf_nan=False, alias="STRIX_LLM_INPUT_COST_PER_MTOK"
+    )
+    output_cost_per_mtok: float | None = Field(
+        default=None, ge=0, allow_inf_nan=False, alias="STRIX_LLM_OUTPUT_COST_PER_MTOK"
+    )
+    cached_input_cost_per_mtok: float | None = Field(
+        default=None, ge=0, allow_inf_nan=False, alias="STRIX_LLM_CACHED_INPUT_COST_PER_MTOK"
+    )
     force_required_tool_choice: bool = Field(
         default=False,
         alias="STRIX_FORCE_REQUIRED_TOOL_CHOICE",
+    )
+    parallel_tool_calls: bool = Field(
+        default=False,
+        alias="STRIX_PARALLEL_TOOL_CALLS",
     )
     prompt_cache: bool = Field(
         default=True,
@@ -110,6 +128,11 @@ class DedupeSettings(BaseSettings):
         alias="DEDUPE_LLM_EXTRA_HEADERS",
         repr=False,
     )
+    extra_body: dict[str, Any] | None = Field(
+        default=None,
+        alias="DEDUPE_LLM_EXTRA_BODY",
+        repr=False,
+    )
 
     @field_validator("reasoning_effort", mode="before")
     @classmethod
@@ -141,7 +164,7 @@ class RuntimeSettings(BaseSettings):
     model_config = _BASE_CONFIG
 
     image: str = Field(
-        default="ghcr.io/usestrix/strix-sandbox:1.3.0",
+        default="ghcr.io/usestrix/strix-sandbox:1.4.1",
         alias="STRIX_IMAGE",
     )
     backend: str = Field(default="docker", alias="STRIX_RUNTIME_BACKEND")
@@ -153,6 +176,7 @@ class TelemetrySettings(BaseSettings):
     model_config = _BASE_CONFIG
 
     enabled: bool = Field(default=True, alias="STRIX_TELEMETRY")
+    run_record_timings: bool = Field(default=False, alias="STRIX_RUN_RECORD_TIMINGS")
 
 
 WebSearchProvider = Literal["auto", "perplexity", "exa"]

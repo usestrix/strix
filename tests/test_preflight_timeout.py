@@ -60,6 +60,7 @@ def test_preflight_request_fails_after_its_own_timeout_with_a_clear_message() ->
                 model,  # type: ignore[arg-type]
                 model_name="openai/gpt-4o",
                 extra_headers=None,
+                extra_body=None,
                 timeout=1,
                 api_base_setting="DEDUPE_LLM_API_BASE",
             )
@@ -130,3 +131,52 @@ def test_warm_up_checks_the_dedupe_model_with_its_own_headers_and_the_preflight_
         "DEDUPE_LLM_API_BASE",
     ]
     assert calls[1][0] is dedupe_model
+
+
+def test_warm_up_checks_each_model_with_its_own_body_fields(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("STRIX_LLM", "openai/gpt-4o")
+    monkeypatch.setenv("LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("LLM_EXTRA_BODY", '{"safety_identifier": "main"}')
+    monkeypatch.setenv("STRIX_DEDUPE_MODEL", "anthropic/claude-sonnet-4-5")
+    monkeypatch.setenv("DEDUPE_LLM_EXTRA_BODY", '{"service_tier": "flex"}')
+    _fresh_settings(monkeypatch, tmp_path)
+
+    calls: list[dict[str, Any]] = []
+
+    async def record(_model: Any, **kwargs: Any) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr(scan_setup, "preflight_request", record)
+    monkeypatch.setattr(cli_main, "preflight_request", record)
+    monkeypatch.setattr("strix.config.models.configure_sdk_model_defaults", lambda _settings: None)
+    monkeypatch.setattr("strix.report.dedupe.resolve_dedupe_model", lambda _dedupe, _name: object())
+
+    asyncio.run(cli_main.warm_up_llm())
+
+    assert [kwargs["extra_body"] for kwargs in calls] == [
+        {"safety_identifier": "main"},
+        {"service_tier": "flex"},
+    ]
+
+
+def test_preflight_request_sends_the_extra_body() -> None:
+    seen: list[Any] = []
+
+    class _Recorder:
+        async def get_response(self, *, model_settings: Any, **_: Any) -> None:
+            seen.append(model_settings.extra_body)
+
+    asyncio.run(
+        preflight_request(
+            _Recorder(),  # type: ignore[arg-type]
+            model_name="openai/gpt-4o",
+            extra_headers=None,
+            extra_body={"safety_identifier": "main"},
+            timeout=5,
+            api_base_setting="LLM_API_BASE",
+        )
+    )
+
+    assert seen == [{"safety_identifier": "main"}]

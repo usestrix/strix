@@ -263,7 +263,11 @@ def test_narrow_terminals_never_wrap_a_row() -> None:
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX key reader")
 def test_posix_key_reader_handles_multibyte_and_arrows() -> None:
+    tty = pytest.importorskip("tty")
     master, slave = os.openpty()
+    # Without this the pty echoes the writes into an output queue nobody reads,
+    # and read_raw_key's TCSADRAIN restore blocks forever on macOS.
+    tty.setcbreak(slave)
     try:
         with os.fdopen(slave, "r+b", buffering=0) as stream:
             os.write(master, "\u00e9".encode())

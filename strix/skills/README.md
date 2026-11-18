@@ -40,7 +40,7 @@ The skills are dynamically injected into the agent's system prompt, allowing it 
 
 Notable source-aware skills:
 - `source_aware_whitebox` (coordination): white-box orchestration playbook
-- `source_aware_sast` (custom): semgrep/AST/secrets/supply-chain static triage workflow
+- `source_aware_sast` (custom): opengrep/AST/secrets/supply-chain static triage workflow
 - `dependency_cve_scanning` (custom): trivy-based SCA workflow for reporting known dependency CVEs via `create_dependency_report`
 - `npx_confusion` (custom): npx/npm exec/bunx fallback and adjacent package-runner identity confusion, with runner-specific registry and reporting gates
 - `semantic_confusion` (vulnerabilities): cross-boundary parser, normalization, and representation mismatch analysis

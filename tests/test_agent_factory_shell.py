@@ -80,6 +80,94 @@ async def test_wrap_exec_command_preserves_explicit_shell(shell: str) -> None:
     assert json.loads(captured["raw_input"])["shell"] == shell
 
 
+def _running_exec_tool(result: str) -> FunctionTool:
+    async def invoke(_ctx: Any, _raw_input: str) -> str:
+        return result
+
+    return FunctionTool(
+        name="exec_command",
+        description="Runs a command.",
+        params_json_schema={"type": "object", "properties": {}},
+        on_invoke_tool=invoke,
+    )
+
+
+_RUNNING_RESULT = (
+    "Chunk ID: abc123\nWall time: 30.0012 seconds\nProcess running with session ID 7\nOutput:\n"
+)
+
+
+def test_wrap_exec_command_describes_the_yield_cap() -> None:
+    wrapped = factory._wrap_exec_command(_running_exec_tool("ok"))
+
+    assert wrapped.description.startswith("Runs a command. The wait for output is capped at 30 s")
+    assert "cannot be read later" in wrapped.description
+    assert "tty=true" in wrapped.description
+
+
+@pytest.mark.asyncio
+async def test_wrap_exec_command_flags_a_running_non_tty_process() -> None:
+    wrapped = factory._wrap_exec_command(_running_exec_tool(_RUNNING_RESULT))
+
+    result = await wrapped.on_invoke_tool(
+        cast("Any", None), json.dumps({"cmd": "sleep 60; curl x", "yield_time_ms": 90000})
+    )
+
+    assert result == (
+        "Chunk ID: abc123\nWall time: 30.0012 seconds\n"
+        "Process running with session ID 7\nOutput:\n"
+        "Note: yield_time_ms=90000 was capped at 30000 (30 s). this non-TTY process cannot be "
+        "polled and its later output is lost. Rerun it in the background "
+        "(`cmd > /tmp/out.log 2>&1 &`, then read the log) or with tty=true.\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_wrap_exec_command_flags_a_running_non_tty_process_within_the_cap() -> None:
+    wrapped = factory._wrap_exec_command(_running_exec_tool(_RUNNING_RESULT))
+
+    result = await wrapped.on_invoke_tool(cast("Any", None), json.dumps({"cmd": "sleep 60"}))
+
+    assert "Note: this non-TTY process cannot be polled" in result
+    assert "was capped" not in result
+
+
+@pytest.mark.asyncio
+async def test_wrap_exec_command_leaves_a_running_tty_process_alone() -> None:
+    wrapped = factory._wrap_exec_command(_running_exec_tool(_RUNNING_RESULT))
+
+    result = await wrapped.on_invoke_tool(
+        cast("Any", None), json.dumps({"cmd": "python3 -m http.server", "tty": True})
+    )
+
+    assert result == _RUNNING_RESULT
+
+
+@pytest.mark.asyncio
+async def test_wrap_exec_command_leaves_an_exited_process_alone() -> None:
+    exited = "Chunk ID: abc123\nWall time: 0.1 seconds\nProcess exited with code 0\nOutput:\nhi"
+    wrapped = factory._wrap_exec_command(_running_exec_tool(exited))
+
+    result = await wrapped.on_invoke_tool(cast("Any", None), json.dumps({"cmd": "echo hi"}))
+
+    assert result == exited
+
+
+@pytest.mark.asyncio
+async def test_wrap_exec_command_ignores_the_running_marker_inside_command_output() -> None:
+    exited = (
+        "Chunk ID: abc123\nWall time: 0.2 seconds\nProcess exited with code 0\nOutput:\n"
+        "Process running with session ID 7\nOutput:\n"
+    )
+    wrapped = factory._wrap_exec_command(_running_exec_tool(exited))
+
+    result = await wrapped.on_invoke_tool(
+        cast("Any", None), json.dumps({"cmd": "cat transcript.txt"})
+    )
+
+    assert result == exited
+
+
 @pytest.mark.asyncio
 async def test_responses_filesystem_custom_tool_output_is_bounded() -> None:
     async def invoke(_ctx: Any, _inp: str) -> str:

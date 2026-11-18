@@ -83,9 +83,12 @@ def render_system_prompt(
     is_root: bool = False,
     is_diff_scoped: bool = False,
     interactive: bool = False,
+    parallel_tool_calls: bool = False,
     system_prompt_context: dict[str, Any] | None = None,
     include_scope: bool = True,
     supports_images: bool = True,
+    report_tool: str = "create_vulnerability_report",
+    coverage_tools: bool = True,
 ) -> str:
     """Render the system prompt. Returns empty string on template failure.
 
@@ -120,7 +123,9 @@ def render_system_prompt(
             is_root=is_root,
             is_diff_scoped=is_diff_scoped,
         )
-        skill_content = load_skills(skills_to_load, supports_images=supports_images)
+        skill_content = load_skills(
+            skills_to_load, supports_images=supports_images, coverage_tools=coverage_tools
+        )
         env.globals["get_skill"] = lambda name: skill_content.get(name, "")
 
         # Skills every agent of this kind loads come first, so siblings share them
@@ -130,9 +135,12 @@ def render_system_prompt(
             requested_skill_names=[name for name in skill_content if name not in shared],
             available_skills=get_available_skills(),
             interactive=interactive,
+            parallel_tool_calls=parallel_tool_calls,
             is_root=is_root,
             system_prompt_context=system_prompt_context or {},
             include_scope=include_scope,
+            report_tool=report_tool,
+            coverage_tools=coverage_tools,
             **skill_content,
         )
     except Exception:

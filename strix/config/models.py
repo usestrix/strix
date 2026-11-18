@@ -41,6 +41,7 @@ from openai.types.shared import Reasoning
 from strix.agents.prompt import CACHE_POINT
 from strix.config import codex
 from strix.config.loader import load_settings
+from strix.config.tool_call_arguments import repair_input
 from strix.config.tool_call_ids import TurnCallIdRewriter, dedupe_input
 from strix.config.tool_call_limits import TurnToolCallLimiter
 from strix.llm import request_log
@@ -255,6 +256,12 @@ class _TurnGuardModel(Model):
     Ids that collide with the history are rewritten before the turn is
     recorded, and already-corrupted histories are repaired on the way out.
 
+    Tool-call arguments: a turn whose ``arguments`` are not valid JSON fails
+    that one call with a parse error, but the raw string is recorded and
+    strict providers then reject every request that replays it. Such
+    arguments are rewritten to a valid JSON object on the way out (see
+    :mod:`strix.config.tool_call_arguments`).
+
     Tool-call volume: a degenerate response can queue hundreds of calls that
     the run loop then honours one by one. Only the first
     ``LLM_MAX_TOOL_CALLS_PER_TURN`` calls of a response are kept.
@@ -313,7 +320,7 @@ class _TurnGuardModel(Model):
         conversation_id: str | None,
         prompt: ResponsePromptParam | None,
     ) -> ModelResponse:
-        sanitized = dedupe_input(input)
+        sanitized = _sanitize_input(input)
         rewriter = TurnCallIdRewriter(sanitized)
         system_instructions, sanitized = _split_cached_prefix(
             system_instructions, sanitized, model_settings
@@ -349,7 +356,7 @@ class _TurnGuardModel(Model):
         conversation_id: str | None,
         prompt: ResponsePromptParam | None,
     ) -> AsyncIterator[TResponseStreamEvent]:
-        sanitized = dedupe_input(input)
+        sanitized = _sanitize_input(input)
         rewriter = TurnCallIdRewriter(sanitized)
         system_instructions, sanitized = _split_cached_prefix(
             system_instructions, sanitized, model_settings
@@ -377,6 +384,10 @@ class _TurnGuardModel(Model):
             if guarded is not None:
                 yield guarded
         self._log_dropped(limiter)
+
+
+def _sanitize_input(model_input: str | list[TResponseInputItem]) -> str | list[Any]:
+    return repair_input(dedupe_input(model_input))
 
 
 def _split_cached_prefix(
@@ -694,11 +705,15 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     """Apply Strix config to SDK-native defaults."""
     llm = settings.llm
     set_tracing_disabled(True)
+    from strix.report.state import record_llm_request
+
     request_log.install()
+    if settings.telemetry.run_record_timings:
+        request_log.register_sink(record_llm_request)
     if codex.subscription_model(llm.model):
         return
     _configure_litellm_compatibility()
-    _configure_openrouter_attribution(llm.model)
+    _configure_attribution(llm.model)
     if llm.api_key:
         set_default_openai_key(llm.api_key, use_for_tracing=False)
         _configure_litellm_default("api_key", llm.api_key)
@@ -869,9 +884,13 @@ def _openrouter_error_type(error: object) -> object:
     return None
 
 
-OPENROUTER_ATTRIBUTION_HEADERS = {
+APP_ATTRIBUTION_HEADERS = {
     "HTTP-Referer": "https://strix.ai",
     "X-Title": "Strix",
+}
+
+OPENROUTER_ATTRIBUTION_HEADERS = {
+    **APP_ATTRIBUTION_HEADERS,
     "X-OpenRouter-Categories": "cli-agent",
 }
 
@@ -880,20 +899,25 @@ def is_openrouter_model(model_name: str | None) -> bool:
     return bool(model_name) and "openrouter/" in (model_name or "").strip().lower()
 
 
-def _configure_openrouter_attribution(model_name: str | None) -> None:
+def is_vercel_ai_gateway_model(model_name: str | None) -> bool:
+    return (model_name or "").strip().lower().startswith("vercel_ai_gateway/")
+
+
+def attribution_headers(model_name: str | None) -> dict[str, str]:
+    if is_openrouter_model(model_name):
+        return OPENROUTER_ATTRIBUTION_HEADERS
+    if is_vercel_ai_gateway_model(model_name):
+        return APP_ATTRIBUTION_HEADERS
+    return {}
+
+
+def _configure_attribution(model_name: str | None) -> None:
     import litellm
 
     current: object = litellm.headers
     existing: dict[str, str] = current if isinstance(current, dict) else {}
-    if not is_openrouter_model(model_name):
-        if any(key in existing for key in OPENROUTER_ATTRIBUTION_HEADERS):
-            remaining = {
-                k: v for k, v in existing.items() if k not in OPENROUTER_ATTRIBUTION_HEADERS
-            }
-            litellm.headers = remaining or None  # type: ignore[assignment]
-        return
-
-    litellm.headers = {**existing, **OPENROUTER_ATTRIBUTION_HEADERS}  # type: ignore[assignment]
+    remaining = {k: v for k, v in existing.items() if k not in OPENROUTER_ATTRIBUTION_HEADERS}
+    litellm.headers = {**remaining, **attribution_headers(model_name)} or None  # type: ignore[assignment]
 
 
 def _configure_extra_headers(llm: LlmSettings) -> None:
