@@ -30,4 +30,34 @@ Strix agents use specialized tools to test your applications like a real penetra
 | File Editor    | Read and modify source code              |
 | Web Search     | Real-time OSINT with Exa or Perplexity   |
 | Notes          | Document findings during the scan        |
-| Reporting      | Generate vulnerability reports with PoCs |
+| Reporting      | Report dynamic vulnerabilities and dependency CVEs |
+| Threat Model   | Record the target, trust boundaries, and attacker stories |
+
+## Threat Model
+
+The agent is instructed to maintain a threat model for each target.
+The model describes the target in four sections:
+
+- **Overview** — the target and its main components.
+- **Trust Boundaries and Assumptions** — actors, boundaries, enforcement controls, and a Mermaid flowchart of trust zones.
+- **Attack Surface and Attacker Stories** — exposed surfaces, realistic attacker stories in a table, and reasons to exclude unrealistic stories.
+- **Severity Calibration** — a table with target-specific examples for critical, high, medium, and low severity.
+
+The agent is instructed to use the title `# Threat model: <target>`, short items, and tables for lists of components or surfaces.
+The agent is instructed to mark unverified facts with `(inferred)` and add a Mermaid sequence diagram when it clarifies an attacker story.
+After all agents stop, the root agent is instructed to review the model before `finish_scan`.
+The root agent is instructed to correct the saved body and fold in amendments when needed.
+These instructions do not guarantee that every scan produces the exact format or completes the final review.
+
+## Dependency Reports
+
+Dynamic findings require exploit validation. Dependency-CVE findings can instead use a verified advisory and an affected installed version without a live PoC.
+Each dependency finding requires evidence and one reachability verdict:
+
+| Verdict | Meaning |
+| ------- | ------- |
+| `reachable` | The advisory's vulnerable code executes in this codebase. |
+| `not_reachable` | The package loads, but the advisory's vulnerable code does not execute here. |
+| `not_applicable` | The code does not load the vulnerable package, or the installed copy or platform is unaffected. |
+
+Reachability guides prioritization. It does not change severity or suppress a finding.
