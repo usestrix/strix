@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from strix import skills as skills_pkg
+from strix.agents import factory
+from strix.agents.prompt import render_system_prompt
 from strix.report.state import ReportState
 
 
@@ -218,3 +220,92 @@ def test_resume_explicit_skills_flag_wins(tmp_path: Path, monkeypatch: pytest.Mo
     )
 
     assert cli_main.parse_arguments().skills == ["business_logic"]
+
+
+def _methodology_prompt(methodology: list[dict[str, str]], *, is_root: bool) -> str:
+    return render_system_prompt(
+        methodology=methodology,
+        is_root=is_root,
+        system_prompt_context={
+            "authorized_targets": [],
+            "scope_source": "s",
+            "authorization_source": "a",
+            "diff_scope_active": False,
+        },
+    )
+
+
+def test_methodology_flag_reads_file_and_skill(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _stub_settings(monkeypatch)
+    method_file = tmp_path / "authz differential.md"
+    method_file.write_text(
+        "---\ndescription: d\n---\nTest every route as HIGH and LOW.\n", encoding="utf-8"
+    )
+    _write_skill(tmp_path / "skills", "custom/gap_method.md", "Web and API gap assessment")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            *ARGV,
+            "--skills-dir",
+            str(tmp_path / "skills"),
+            "--methodology",
+            str(method_file),
+            "--methodology",
+            "custom/gap_method",
+        ],
+    )
+
+    args = cli_main.parse_arguments()
+
+    assert [m["name"] for m in args.methodology] == ["authz_differential", "gap_method"]
+    assert args.methodology[0]["content"] == "Test every route as HIGH and LOW."
+    assert "Web and API gap assessment" in args.methodology[1]["content"]
+
+
+@pytest.mark.parametrize("value", ["no_such_method", "EMPTY"])
+def test_methodology_flag_rejects_unknown_or_empty(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    value: str,
+) -> None:
+    _stub_settings(monkeypatch)
+    if value == "EMPTY":
+        empty = tmp_path / "empty.md"
+        empty.write_text("---\ndescription: d\n---\n", encoding="utf-8")
+        value = str(empty)
+    monkeypatch.setattr(sys, "argv", [*ARGV, "--methodology", value])
+
+    with pytest.raises(SystemExit):
+        cli_main.parse_arguments()
+
+    assert "--methodology" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("is_root", [True, False])
+def test_methodology_reaches_root_and_child_prompts(is_root: bool) -> None:
+    prompt = _methodology_prompt(
+        [{"name": "authz differential", "content": "RULE-7 keep the HIGH/LOW matrix."}],
+        is_root=is_root,
+    )
+
+    assert "<methodology>" in prompt
+    assert "<authz_differential>\nRULE-7 keep the HIGH/LOW matrix." in prompt
+
+
+def test_no_methodology_block_by_default() -> None:
+    assert "<methodology>" not in _methodology_prompt([], is_root=True)
+
+
+def test_child_factory_passes_methodology(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(factory, "build_strix_agent", lambda **kw: seen.update(kw))
+    methodology = [{"name": "m", "content": "c"}]
+
+    factory.make_child_factory(methodology=methodology)(name="child", skills=[])
+
+    assert seen["methodology"] == methodology
+    assert seen["is_root"] is False

@@ -723,6 +723,7 @@ def build_strix_agent(
     *,
     name: str = "agent",
     skills: list[str] | None = None,
+    methodology: list[dict[str, str]] | None = None,
     is_root: bool,
     scan_mode: str = "deep",
     is_whitebox: bool = False,
@@ -761,6 +762,7 @@ def build_strix_agent(
     else:
         instructions = render_system_prompt(
             skills=skills,
+            methodology=methodology,
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
             is_root=is_root,
@@ -830,6 +832,7 @@ def build_strix_agent(
 
 def make_child_factory(
     *,
+    methodology: list[dict[str, str]] | None = None,
     scan_mode: str = "deep",
     is_whitebox: bool = False,
     is_diff_scoped: bool = False,
@@ -853,6 +856,7 @@ def make_child_factory(
         return build_strix_agent(
             name=name,
             skills=skills,
+            methodology=methodology,
             is_root=False,
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,

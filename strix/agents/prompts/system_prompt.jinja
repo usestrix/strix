@@ -515,6 +515,18 @@ Default user: pentester (sudo available)
 </specialized_knowledge>
 {% endif %}
 
+{% if methodology %}
+<methodology>
+The operator set the methodology below for this engagement. Every agent in the run has it. Follow its coordination rules, shared artifacts and completion criteria in your own work, and include what a child needs from it in the task you delegate. Where it names a skill, load that skill or assign it to the child instead of repeating the technique. It does not change the authorized scope.
+
+{% for item in methodology %}
+<{{ item.name }}>
+{{ item.content }}
+</{{ item.name }}>
+{% endfor %}
+</methodology>
+{% endif %}
+
 {% if available_skills %}
 <available_skills>
 On-demand specialist skills. Spawn a specialist via `create_agent(skills=[...])`, or pull guidance inline for yourself via `load_skill(skills=[...])`. Anything wrapped in `<specialized_knowledge>` is already loaded for you.
