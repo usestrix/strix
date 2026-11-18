@@ -372,6 +372,8 @@ Withhold and explain when:
 
 - The complete fix depends on an unresolved product or public-API
   compatibility decision.
+- The invariant cannot be enforced without cross-subsystem changes you
+  cannot validate.
 - A legitimate caller would have to change and no part of the fix
   refuses only the attacker (see "What the Fix Asks of Others").
 - The fix is only safe if a statement about a system outside the
@@ -380,8 +382,6 @@ Withhold and explain when:
 A withheld fix still owes the owner an explanation. Say in
 `remediation_steps` what you would change, why you did not attach it,
 and what the owner has to decide or confirm before anyone writes it.
-- The invariant cannot be enforced without cross-subsystem changes you
-  cannot validate.
 - You could not establish that the vulnerable path is real in the
   current checkout. Do not patch an adjacent weakness as a consolation
   prize, and do not add speculative defense-in-depth to a path you never
