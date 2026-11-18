@@ -378,14 +378,14 @@ Withhold and explain when:
   refuses only the attacker (see "What the Fix Asks of Others").
 - The fix is only safe if a statement about a system outside the
   repository is true and you have no source for it.
-
-A withheld fix still owes the owner an explanation. Say in
-`remediation_steps` what you would change, why you did not attach it,
-and what the owner has to decide or confirm before anyone writes it.
 - You could not establish that the vulnerable path is real in the
   current checkout. Do not patch an adjacent weakness as a consolation
   prize, and do not add speculative defense-in-depth to a path you never
   proved was reachable.
+
+A withheld fix still owes the owner an explanation. Say in
+`remediation_steps` what you would change, why you did not attach it,
+and what the owner has to decide or confirm before anyone writes it.
 
 ## Guards You Rely On
 
