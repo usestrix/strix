@@ -172,9 +172,9 @@ Test: send a type id (`{"payload":{"@class":"<class name>"}}`) outside the inten
 
 ## Tooling
 
-The sandbox ships `semgrep`, `ripgrep`, `httpx`, `trivy`, `interactsh-client`, and Caido. Use static review first and confirm each lead over HTTP or OAST.
+The sandbox ships `opengrep`, `ripgrep`, `httpx`, `trivy`, `interactsh-client`, and Caido. Use static review first and confirm each lead over HTTP or OAST.
 
-- **semgrep** (preinstalled) — `semgrep scan --config p/java --metrics=off --quiet .`; the ruleset is fetched on first use, so it returns nothing without network access
+- **opengrep** (preinstalled) with the bundled Java and Spring rules, no network needed — `opengrep scan --config /opt/opengrep-rules/java .`
 - **ripgrep** (preinstalled) — `rg -n 'csrf\.disable|@PreAuthorize|HttpInvokerServiceExporter|activateDefaultTyping|JsonTypeInfo'`
 - **httpx** (preinstalled) — `httpx -l hosts.txt -path /actuator/env,/actuator/heapdump,/v3/api-docs -mc 200,401,403`
 - **Caido** (preinstalled) — replay requests under two principals for authorization and session tests
