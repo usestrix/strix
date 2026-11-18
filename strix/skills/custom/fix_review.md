@@ -24,6 +24,10 @@ what you checked yourself.
 - **Review the patch you were given.** Record the patch file's checksum
   when you start and quote it in your verdict. Your approval covers that
   exact patch and nothing else.
+- **Read the words that will be filed.** The fix agent hands you a file
+  with its proposed PR text, remediation steps, list of callers, outside
+  facts with sources, and what it left out. If that file is missing, ask
+  for nothing: reject and say it is missing.
 
 ## What to Check, in Order
 
