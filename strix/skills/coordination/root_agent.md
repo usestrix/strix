@@ -91,7 +91,7 @@ Before creating agents:
 Complex findings warrant specialized subagents:
 - Discovery agent finds potential vulnerability
 - Validation agent confirms exploitability
-- Reporting agent documents with reproduction steps AND supplies the fix inline (the report tool carries the patch via `code_locations`/`fix_pr_body`) — do not add a separate fix agent that re-derives the same patch
+- For a validated finding with source available, a dedicated fix agent writes and tests the patch, gets it approved by an independent read-only reviewer agent (`fix_review` skill), and files the report with reproduction steps and that approved fix inline (`code_locations`/`fix_pr_body`). One fix agent per finding
 
 **Resource Efficiency**
 
