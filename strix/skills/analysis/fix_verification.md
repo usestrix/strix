@@ -283,9 +283,9 @@ Rules that hold for every fix:
 
 "The reviewer" here always means a separate agent that you start with
 `create_agent`. Nothing else counts: not your own second read and not a
-review you expect to happen later. If no agent you started has answered `APPROVE` for the
-exact patch you are about to file, you are not allowed to file it with
-`fix_after`. A patch filed without that verdict is the single failure
+review you expect to happen later. If no agent you started has answered
+`APPROVE` for the exact patch you are about to file, you are not allowed
+to file it with `fix_after`. A patch filed without that verdict is the single failure
 this procedure exists to prevent.
 
 The unpatched workspace stays unpatched from start to finish. The
@@ -303,20 +303,25 @@ copy and your checks are clean:
 
 1. Write the patch to a file next to the scratch copy
    (`git diff` against the unpatched tree) and note its checksum.
-2. Start a reviewer with `create_agent`: name it "Fix Reviewer", give it
+2. Write the words you intend to file to a second file next to it: the
+   proposed `fix_pr_body`, the `remediation_steps`, your list of
+   legitimate callers and the class of the change, every outside fact
+   the patch depends on with its source, and what you left out or left
+   open and why. State these plainly. Do not argue for the patch.
+3. Start a reviewer with `create_agent`: name it "Fix Reviewer", give it
    the `fix_review` skill, and set `inherit_context` to false so it does
    not see your reasoning. Its task carries only: the finding as written,
    the path of the unpatched workspace, the path of your scratch copy,
-   the path and checksum of the patch file, the commands you ran, and
-   your list of what you left out. Do not argue for the patch in the
-   task.
-3. Wait for its verdict. Do not file while it is working.
-4. On `APPROVE` for the checksum you sent: file the report with exactly
-   that patch. If you changed anything after the review, it is not the
-   patch that was approved; send it back.
-5. On `REJECT`: fix every blocking problem it lists, re-run your checks,
+   the path and checksum of the patch file, the path of the file with
+   your intended words, and the commands you ran with their results.
+4. Wait for its verdict. Do not file while it is working.
+5. On `APPROVE` for the checksum you sent: file the report with exactly
+   that patch and the words the reviewer read. If you changed the patch
+   or those words after the review, it is not what was approved; send it
+   back.
+6. On `REJECT`: fix every blocking problem it lists, re-run your checks,
    and send the new patch to a fresh reviewer once. You get one retry.
-6. Rejected twice: file the finding without `fix_after`, put the
+7. Rejected twice: file the finding without `fix_after`, put the
    remediation in prose, and record the reviewer's unresolved problems in
    `fix_verification`. No fix is better than one that was rejected.
 
