@@ -110,6 +110,9 @@ def _validate_code_locations(locations: list[dict[str, Any]]) -> list[str]:
     return errors
 
 
+_NO_CVE_PLACEHOLDERS = frozenset({"n/a", "na", "-", "unknown", "not applicable"})
+
+
 def _extract_cve(cve: str) -> str:
     match = re.search(r"CVE-\d{4}-\d{4,}", cve)
     return match.group(0) if match else cve.strip()
@@ -287,6 +290,13 @@ def _validate_identifiers(
 ) -> tuple[str | None, str | None, list[str]]:
     """Normalize and validate the optional CVE / CWE identifiers."""
     errors: list[str] = []
+    cve, cwe = clean_optional(cve), clean_optional(cwe)
+    if cve and re.fullmatch(r"CWE-\d+", cve.strip(), re.IGNORECASE):
+        # A weakness id in the CVE slot: keep it as the CWE unless one was given.
+        cwe = cwe or cve.strip().upper()
+        cve = None
+    if cve and cve.strip().lower() in _NO_CVE_PLACEHOLDERS:
+        cve = None
     if cve:
         cve = _extract_cve(cve)
         cve_err = _validate_cve(cve)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from agents import RunContextWrapper, function_tool
 
-from strix.skills import load_skills, validate_requested_skills
+from strix.skills import load_skills, resolve_requested_skills, validate_requested_skills
 
 
 @function_tool(timeout=10)
@@ -24,7 +24,7 @@ async def load_skill(ctx: RunContextWrapper, skills: list[str]) -> str:
             Max 5. Names match the bare files under
             ``strix/skills/<category>/<name>.md``.
     """
-    requested = list(skills or [])
+    requested = resolve_requested_skills(list(skills or []))
     err = validate_requested_skills(requested)
     if err:
         return f"load_skill: {err}"

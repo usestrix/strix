@@ -91,11 +91,18 @@ async def bootstrap_caido(
     from caido_sdk_client import Client, TokenAuthOptions
     from caido_sdk_client.types import CreateProjectOptions
 
+    from strix.tools.proxy import caido_api
+
     logger.info("Bootstrapping Caido client (host=%s, container=%s)", host_url, container_url)
 
     access_token = await _login_as_guest(session, container_url=container_url)
 
-    client = Client(host_url, auth=TokenAuthOptions(token=access_token))
+    client = Client(
+        host_url,
+        auth=TokenAuthOptions(token=access_token),
+        timeout_ms=caido_api.GRAPHQL_TIMEOUT_SECONDS * 1000,
+    )
+    caido_api.extend_graphql_timeout(client)
     try:
         # connect() is inside the guard as well: a cancellation there (scan
         # teardown while the bootstrap is still in flight) would otherwise

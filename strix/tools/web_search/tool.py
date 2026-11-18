@@ -141,9 +141,45 @@ def _normalize_url(url: str) -> str:
     )
 
 
+class _NoPageContentError(Exception):
+    """Exa answered, but fetched none of the requested pages."""
+
+    def __init__(self, reasons: dict[str, str]) -> None:
+        super().__init__("Exa returned no page contents")
+        self.reasons = reasons
+
+
+# Crawl failures that a second attempt will not change.
+_PERMANENT_CRAWL_TAGS = frozenset({"CRAWL_NOT_FOUND", "SOURCE_NOT_AVAILABLE", "UNSUPPORTED_URL"})
+
+
+def _exa_failure_reasons(body: dict[str, Any]) -> dict[str, str]:
+    """Per-URL failure reason from the ``statuses`` list of an Exa contents response."""
+    reasons: dict[str, str] = {}
+    statuses: list[Any] = body.get("statuses") or []
+    for entry in statuses:
+        if not isinstance(entry, dict) or entry.get("status") != "error":
+            continue
+        error = entry.get("error")
+        detail = cast("dict[str, Any]", error) if isinstance(error, dict) else {}
+        reason = str(detail.get("tag") or "unknown error")
+        if detail.get("httpStatusCode"):
+            reason += f" (HTTP {detail['httpStatusCode']})"
+        reasons[str(entry.get("id") or "")] = reason
+    return reasons
+
+
 def _exa_page_text(api_key: str, urls: list[str]) -> tuple[str, set[str]]:
     """Fetch page text and report which of the requested URLs Exa returned."""
-    body = _exa_post(api_key, "https://api.exa.ai/contents", {"urls": urls, "text": True})
+    body: dict[str, Any] = {}
+    for _ in range(2):
+        body = _exa_post(api_key, "https://api.exa.ai/contents", {"urls": urls, "text": True})
+        reasons = _exa_failure_reasons(body)
+        permanent = reasons and all(
+            reason.split(" ")[0] in _PERMANENT_CRAWL_TAGS for reason in reasons.values()
+        )
+        if body.get("results") or permanent:
+            break
     blocks: list[str] = []
     fetched: set[str] = set()
     results: list[Any] = body.get("results") or []
@@ -157,7 +193,7 @@ def _exa_page_text(api_key: str, urls: list[str]) -> tuple[str, set[str]]:
         blocks.append(block)
         fetched.add(_normalize_url(str(page.get("url") or page.get("id") or "")))
     if not blocks:
-        raise ValueError("Exa returned no page contents")
+        raise _NoPageContentError(_exa_failure_reasons(body))
     return "\n\n".join(blocks), fetched
 
 
@@ -289,10 +325,29 @@ def _do_get_contents(urls: list[str]) -> dict[str, Any]:
         }
 
     logger.info("web_get_contents urls=%d", len(cleaned))
+
+    def fetch() -> tuple[str, set[str]] | dict[str, Any]:
+        try:
+            return _exa_page_text(api_key, cleaned)
+        except _NoPageContentError as exc:
+            logger.warning("web_get_contents fetched none of %d pages", len(cleaned))
+            detail = "; ".join(f"{url}: {reason}" for url, reason in exc.reasons.items())
+            return {
+                "success": False,
+                "error": (
+                    "The fetch service could not read any of these pages"
+                    + (f" ({detail})" if detail else "")
+                    + ". Calling again with the same URLs will not help. Pages that need "
+                    "login, block crawlers, or are not public cannot be fetched this way: "
+                    "fetch them from the sandbox instead (curl or the browser)"
+                ),
+                "failed_urls": cleaned,
+            }
+
     outcome = _guarded_call(
         "Page fetch",
         "Page fetch was rejected. Check the URLs are complete, public, and correctly formed",
-        lambda: _exa_page_text(api_key, cleaned),
+        fetch,
     )
     if isinstance(outcome, dict):
         return outcome

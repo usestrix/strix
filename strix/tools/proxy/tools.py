@@ -66,6 +66,7 @@ async def _ctx_client(ctx: RunContextWrapper) -> Client | None:
 async def _call[T](client: Client, fn: Callable[[Client], Awaitable[T]]) -> T:
     """Run ``fn`` against the shared client, serialized under ``_CAIDO_CALL_LOCK``."""
     async with _CAIDO_CALL_LOCK:
+        caido_api.extend_graphql_timeout(client)
         return await fn(client)
 
 
@@ -133,12 +134,43 @@ def _to_tool_json(value: Any) -> Any:
     return str(value)
 
 
+def _iso(epoch_ms: float) -> str:
+    # Same local-time rendering as the SDK's own request mapping.
+    return datetime.fromtimestamp(epoch_ms / 1000.0).isoformat()  # noqa: DTZ006
+
+
 def _no_client() -> str:
     return json.dumps(
         {"success": False, "error": "Caido client not available in run context"},
         ensure_ascii=False,
         default=str,
     )
+
+
+def _is_timeout(exc: BaseException | None) -> bool:
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        if isinstance(exc, TimeoutError):
+            return True
+        seen.add(id(exc))
+        exc = getattr(exc, "source", None) or exc.__cause__
+    return False
+
+
+def _describe(exc: Exception) -> str:
+    """Error text for the model; never empty, and explicit about timeouts."""
+    if _is_timeout(exc):
+        return (
+            f"the proxy did not answer within {caido_api.GRAPHQL_TIMEOUT_SECONDS}s. "
+            "The request is valid: call again, with a narrower filter or a smaller page "
+            "if it repeats."
+        )
+    text = str(exc).strip()
+    source = getattr(exc, "source", None)
+    if source is not None and not str(source).strip():
+        # A wrapped exception with no message renders as a bare "Source:".
+        text = f"{text.removesuffix('Source:').strip()} ({type(source).__name__})".strip()
+    return text or type(exc).__name__
 
 
 def _err(name: str, exc: Exception) -> str:
@@ -148,7 +180,7 @@ def _err(name: str, exc: Exception) -> str:
     else:
         logger.exception("%s failed", name)
     return json.dumps(
-        {"success": False, "error": f"{name} failed: {exc}"},
+        {"success": False, "error": f"{name} failed: {_describe(exc)}"},
         ensure_ascii=False,
         default=str,
     )
@@ -244,7 +276,7 @@ async def list_requests(
     try:
         connection = await _call(
             client,
-            lambda client: caido_api.list_requests_with_client(
+            lambda client: caido_api.list_request_summaries_with_client(
                 client,
                 httpql_filter=httpql_filter,
                 first=first,
@@ -256,50 +288,51 @@ async def list_requests(
         )
 
         entries = []
-        for edge in connection.edges:
-            req = edge.node.request
-            resp = edge.node.response
+        for edge in connection.get("edges") or []:
+            req = edge["node"]
+            resp = req.get("response")
             response_payload: dict[str, Any] | None = None
             if resp is not None:
                 response_payload = {
-                    "id": resp.id,
-                    "status_code": resp.status_code,
-                    "length": resp.length,
-                    "created_at": resp.created_at.isoformat(),
+                    "id": resp["id"],
+                    "status_code": resp["statusCode"],
+                    "length": resp["length"],
+                    "created_at": _iso(resp["createdAt"]),
                 }
                 # Caido populates ``roundtripTime`` for some traffic sources
                 # and leaves it as ``0`` for others (notably proxy captures
                 # of upstream env-routed traffic). Surface the value only
                 # when it's actually measured so the model doesn't waste
                 # tokens reading a zero field on every entry.
-                if resp.roundtrip_time:
-                    response_payload["roundtrip_ms"] = resp.roundtrip_time
+                if resp.get("roundtripTime"):
+                    response_payload["roundtrip_ms"] = resp["roundtripTime"]
             entries.append(
                 {
-                    "cursor": edge.cursor,
+                    "cursor": edge["cursor"],
                     "request": {
-                        "id": req.id,
-                        "host": req.host,
-                        "port": req.port,
-                        "method": req.method,
-                        "path": req.path,
-                        "query": req.query,
-                        "is_tls": req.is_tls,
-                        "created_at": req.created_at.isoformat(),
+                        "id": req["id"],
+                        "host": req["host"],
+                        "port": req["port"],
+                        "method": req["method"],
+                        "path": req["path"],
+                        "query": req["query"],
+                        "is_tls": req["isTls"],
+                        "created_at": _iso(req["createdAt"]),
                     },
                     "response": response_payload,
                 },
             )
+        page_info = connection.get("pageInfo") or {}
 
         return json.dumps(
             {
                 "success": True,
                 "entries": entries,
                 "page_info": {
-                    "has_next_page": connection.page_info.has_next_page,
-                    "has_previous_page": connection.page_info.has_previous_page,
-                    "start_cursor": connection.page_info.start_cursor,
-                    "end_cursor": connection.page_info.end_cursor,
+                    "has_next_page": bool(page_info.get("hasNextPage")),
+                    "has_previous_page": bool(page_info.get("hasPreviousPage")),
+                    "start_cursor": page_info.get("startCursor"),
+                    "end_cursor": page_info.get("endCursor"),
                 },
             },
             ensure_ascii=False,

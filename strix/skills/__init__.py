@@ -1,3 +1,4 @@
+import difflib
 import logging
 import re
 from collections import Counter
@@ -220,6 +221,43 @@ def get_available_skills() -> dict[str, list[dict[str, str]]]:
         description = " ".join(metadata.get("description", "").split())
         grouped.setdefault(category, []).append({"name": name, "description": description})
     return grouped
+
+
+_MIN_FUZZY_SKILL_NAME = 6
+
+
+def resolve_requested_skills(skill_list: list[str]) -> list[str]:
+    """Map near-miss skill names onto real ones; leave the rest untouched.
+
+    Models often guess the category (``technologies/nextjs`` for
+    ``frameworks/nextjs``) or misspell a name (``tooling/nuklei``). A guess is
+    replaced only when exactly one skill matches, so an unknown or ambiguous
+    name still reaches :func:`validate_requested_skills` and is rejected there.
+    """
+    names = get_all_skill_names()
+    keys = _get_all_skill_keys()
+    ambiguous = _get_ambiguous_skill_names()
+    resolved: list[str] = []
+    for requested in skill_list:
+        skill = requested.strip()
+        if skill in keys or (skill in names and skill not in ambiguous):
+            resolved.append(skill)
+            continue
+        base = skill.rsplit("/", 1)[-1]
+        if "/" in skill and base in names and base not in ambiguous:
+            resolved.append(base)
+            continue
+        # Typos only: short names are too close to each other (curl / hurl).
+        close = (
+            difflib.get_close_matches(base, sorted(names), 2, 0.8)
+            if len(base) >= _MIN_FUZZY_SKILL_NAME
+            else []
+        )
+        if len(close) == 1 and close[0] not in ambiguous:
+            resolved.append(close[0])
+        else:
+            resolved.append(requested)
+    return list(dict.fromkeys(resolved))
 
 
 def validate_requested_skills(skill_list: list[str], max_skills: int = 5) -> str | None:
