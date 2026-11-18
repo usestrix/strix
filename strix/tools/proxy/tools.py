@@ -63,11 +63,30 @@ async def _ctx_client(ctx: RunContextWrapper) -> Client | None:
     return client
 
 
-async def _call[T](client: Client, fn: Callable[[Client], Awaitable[T]]) -> T:
-    """Run ``fn`` against the shared client, serialized under ``_CAIDO_CALL_LOCK``."""
-    async with _CAIDO_CALL_LOCK:
-        caido_api.extend_graphql_timeout(client)
-        return await fn(client)
+async def _call[T](
+    client: Client,
+    fn: Callable[[Client], Awaitable[T]],
+    *,
+    read_only: bool = False,
+    timeout: int = caido_api.GRAPHQL_TIMEOUT_SECONDS,
+) -> T:
+    """Run ``fn`` against the shared client, serialized under ``_CAIDO_CALL_LOCK``.
+
+    Now and then a request to the proxy gets no answer at all and the same
+    request succeeds immediately afterwards, so a ``read_only`` call that
+    times out is sent once more. The lock is released between the attempts.
+    """
+    attempts = 2 if read_only else 1
+    for attempt in range(1, attempts + 1):
+        async with _CAIDO_CALL_LOCK:
+            caido_api.extend_graphql_timeout(client, timeout)
+            try:
+                return await fn(client)
+            except Exception as exc:
+                if attempt == attempts or not _is_timeout(exc):
+                    raise
+                logger.warning("proxy call timed out after %ss; retrying once", timeout)
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 _REQUEST_EXISTS_QUERY = "query RequestExists($id: ID!) { request(id: $id) { id } }"
@@ -101,6 +120,7 @@ async def existing_request_ids(
                 exists = await _call(
                     client,
                     functools.partial(_request_exists, request_id=request_id),
+                    timeout=caido_api.GRAPHQL_READ_TIMEOUT_SECONDS,
                 )
             except Exception:
                 if attempt == _REQUEST_EXISTS_ATTEMPTS:
@@ -147,9 +167,11 @@ def _no_client() -> str:
     )
 
 
-def _is_timeout(exc: BaseException | None) -> bool:
+def _is_timeout(exc: object) -> bool:
+    """True when ``exc`` or anything it wraps is a timeout."""
     seen: set[int] = set()
-    while exc is not None and id(exc) not in seen:
+    # The SDK's ``source`` is not always an exception: a rejected query carries the error dict.
+    while isinstance(exc, BaseException) and id(exc) not in seen:
         if isinstance(exc, TimeoutError):
             return True
         seen.add(id(exc))
@@ -161,12 +183,16 @@ def _describe(exc: Exception) -> str:
     """Error text for the model; never empty, and explicit about timeouts."""
     if _is_timeout(exc):
         return (
-            f"the proxy did not answer within {caido_api.GRAPHQL_TIMEOUT_SECONDS}s. "
-            "The request is valid: call again, with a narrower filter or a smaller page "
-            "if it repeats."
+            "the proxy did not answer in time. The request is valid: call again, with a "
+            "narrower filter or a smaller page if it repeats."
         )
     text = str(exc).strip()
     source = getattr(exc, "source", None)
+    if source is not None and str(source).strip() and isinstance(exc, BaseError):
+        # The SDK appends the wrapped error even when it only repeats the message.
+        message = text.split("\n  Source:", 1)[0].strip()
+        if message == str(source).strip():
+            text = message
     if source is not None and not str(source).strip():
         # A wrapped exception with no message renders as a bare "Source:".
         text = f"{text.removesuffix('Source:').strip()} ({type(source).__name__})".strip()
@@ -285,6 +311,8 @@ async def list_requests(
                 sort_order=sort_order,
                 scope_id=scope_id,
             ),
+            read_only=True,
+            timeout=caido_api.GRAPHQL_READ_TIMEOUT_SECONDS,
         )
 
         entries = []
@@ -384,6 +412,7 @@ async def view_request(
         result = await _call(
             client,
             lambda client: caido_api.get_request_with_client(client, request_id, part=part),
+            read_only=True,
         )
         if result is None:
             return json.dumps(
@@ -591,6 +620,7 @@ async def list_sitemap(
                 depth=depth,
                 page=page,
             ),
+            read_only=True,
         )
         return json.dumps(payload, ensure_ascii=False, default=str)
     except Exception as exc:  # noqa: BLE001
@@ -619,6 +649,7 @@ async def view_sitemap_entry(
         payload = await _call(
             client,
             lambda client: caido_api.view_sitemap_entry_with_client(client, entry_id),
+            read_only=True,
         )
         return json.dumps(payload, ensure_ascii=False, default=str)
     except Exception as exc:  # noqa: BLE001
@@ -677,7 +708,7 @@ async def scope_rules(
 
     try:
         if action == "list":
-            scopes = await _call(client, caido_api.scope_list)
+            scopes = await _call(client, caido_api.scope_list, read_only=True)
             return json.dumps(
                 {"success": True, "scopes": [_to_tool_json(s) for s in scopes]},
                 ensure_ascii=False,
@@ -690,7 +721,9 @@ async def scope_rules(
                     ensure_ascii=False,
                     default=str,
                 )
-            scope = await _call(client, lambda client: caido_api.scope_get(client, scope_id))
+            scope = await _call(
+                client, lambda client: caido_api.scope_get(client, scope_id), read_only=True
+            )
             return json.dumps(
                 {"success": True, "scope": _to_tool_json(scope)},
                 ensure_ascii=False,

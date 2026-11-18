@@ -57,13 +57,21 @@ _REQ_FIELD_MAP: dict[SortBy, tuple[str, str]] = {
 # default, with a ``TimeoutError`` that has no message. A filter over a large
 # history routinely needs longer than that, so allow more time.
 GRAPHQL_TIMEOUT_SECONDS = 60
+# For metadata-only reads, which answer in well under a second: a call that
+# takes longer got no answer at all and is retried.
+GRAPHQL_READ_TIMEOUT_SECONDS = 20
 
 
-def extend_graphql_timeout(client: Client) -> None:
-    """Raise the SDK's default GraphQL operation timeout on ``client``."""
+def extend_graphql_timeout(client: Client, seconds: int = GRAPHQL_TIMEOUT_SECONDS) -> None:
+    """Raise the SDK's default GraphQL operation timeout on ``client``.
+
+    The SDK builds a new GraphQL client whenever the auth token changes
+    (``connect()`` included), which resets the timeout, so call this before
+    each operation rather than once at construction.
+    """
     gql_client = getattr(getattr(client, "graphql", None), "_http_client", None)
     if gql_client is not None and hasattr(gql_client, "execute_timeout"):
-        gql_client.execute_timeout = GRAPHQL_TIMEOUT_SECONDS
+        gql_client.execute_timeout = seconds
 
 
 def caido_url() -> str:
@@ -102,8 +110,8 @@ async def _new_client() -> Client:
         auth=TokenAuthOptions(token=token),
         timeout_ms=GRAPHQL_TIMEOUT_SECONDS * 1000,
     )
-    extend_graphql_timeout(client)
     await client.connect()
+    extend_graphql_timeout(client)
     return client
 
 
@@ -134,6 +142,7 @@ async def call_with_client[T](fn: Callable[[Client], Awaitable[T]]) -> T:
         if client is None:
             client = await _new_client()
             _CLIENT_CACHE["default"] = client
+        extend_graphql_timeout(client)
         return await fn(client)
 
 

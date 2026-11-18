@@ -32,7 +32,7 @@ def test_a_proxy_timeout_is_reported_as_a_timeout_not_an_empty_source() -> None:
 
     error = json.loads(proxy_tools._err("list_requests", exc))["error"]
 
-    assert "did not answer within" in error
+    assert "did not answer in time" in error
     assert "Source:" not in error
 
 
@@ -40,6 +40,49 @@ def test_a_messageless_wrapped_error_names_its_type() -> None:
     exc = OperationUserError("").with_source(ConnectionResetError())
 
     assert "ConnectionResetError" in proxy_tools._describe(exc)
+
+
+async def test_a_read_only_proxy_call_is_sent_once_more_after_a_timeout() -> None:
+    gql_client = SimpleNamespace(execute_timeout=10)
+    client: Any = SimpleNamespace(graphql=SimpleNamespace(_http_client=gql_client))
+    calls: list[int] = []
+
+    async def flaky(_client: Any) -> str:
+        calls.append(gql_client.execute_timeout)
+        if len(calls) == 1:
+            raise OperationUserError("").with_source(TimeoutError())
+        return "ok"
+
+    assert await proxy_tools._call(client, flaky, read_only=True, timeout=20) == "ok"
+    assert calls == [20, 20]
+
+
+async def test_a_call_that_sends_traffic_is_not_repeated_after_a_timeout() -> None:
+    client: Any = SimpleNamespace(graphql=SimpleNamespace(_http_client=SimpleNamespace()))
+    calls: list[int] = []
+
+    async def replay(_client: Any) -> str:
+        calls.append(1)
+        raise OperationUserError("").with_source(TimeoutError())
+
+    with pytest.raises(OperationUserError):
+        await proxy_tools._call(client, replay)
+    assert calls == [1]
+
+
+async def test_an_invalid_filter_is_not_retried_and_is_reported_once() -> None:
+    client: Any = SimpleNamespace(graphql=SimpleNamespace(_http_client=SimpleNamespace()))
+    calls: list[int] = []
+    detail = "{'message': 'Invalid HTTPQL query'}"
+
+    async def bad_filter(_client: Any) -> str:
+        calls.append(1)
+        raise OperationUserError(detail).with_source(detail)
+
+    with pytest.raises(OperationUserError) as caught:
+        await proxy_tools._call(client, bad_filter, read_only=True)
+    assert calls == [1]
+    assert proxy_tools._describe(caught.value) == detail
 
 
 async def test_request_summaries_query_asks_for_no_raw_bytes() -> None:

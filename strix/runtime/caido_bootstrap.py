@@ -102,12 +102,12 @@ async def bootstrap_caido(
         auth=TokenAuthOptions(token=access_token),
         timeout_ms=caido_api.GRAPHQL_TIMEOUT_SECONDS * 1000,
     )
-    caido_api.extend_graphql_timeout(client)
     try:
         # connect() is inside the guard as well: a cancellation there (scan
         # teardown while the bootstrap is still in flight) would otherwise
         # leave the half-connected transport behind.
         await client.connect()
+        caido_api.extend_graphql_timeout(client)
         project = await client.project.create(
             CreateProjectOptions(name="sandbox", temporary=True),
         )
