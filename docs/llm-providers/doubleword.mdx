@@ -1,0 +1,49 @@
+---
+title: "Doubleword"
+description: "Configure Strix with Doubleword models"
+---
+
+[Doubleword](https://doubleword.ai) serves open models through an OpenAI-compatible API.
+
+## Setup
+
+```bash
+export STRIX_LLM="openai/zai-org/GLM-5.3"
+export LLM_API_KEY="your-doubleword-api-key"
+export LLM_API_BASE="https://api.doubleword.ai/v1"
+```
+
+## Models
+
+Use any model id from the [Doubleword model list](https://docs.doubleword.ai/inference-api/models) with the `openai/` prefix, for example `openai/moonshotai/Kimi-K3.1-Pro`.
+
+## Cost Tracking
+
+Strix can't price Doubleword model ids on its own. Set the per-million-token prices from the [model list](https://docs.doubleword.ai/inference-api/models), or [fetch them from the API](https://docs.doubleword.ai/inference-api/models#retrieve-model-prices-through-the-api), so `--max-budget` and the cost report work.
+
+```bash
+export STRIX_LLM_INPUT_COST_PER_MTOK=<input price>
+export STRIX_LLM_CACHED_INPUT_COST_PER_MTOK=<cached input price>
+export STRIX_LLM_OUTPUT_COST_PER_MTOK=<output price>
+```
+
+## Flex Tier
+
+Flex costs less than realtime in exchange for slower responses, which suits unattended scans. With the same `--max-budget`, a flex scan gets through more work.
+
+```bash
+export LLM_EXTRA_BODY='{"service_tier":"flex"}'
+export LLM_TIMEOUT=900
+export LLM_STREAM_FIRST_EVENT_TIMEOUT=600
+export LLM_STREAM_TOTAL_TIMEOUT=1200
+```
+
+Set the cost variables to the flex prices from the [model list](https://docs.doubleword.ai/inference-api/models).
+
+## Get API Key
+
+1. Sign up at [app.doubleword.ai](https://app.doubleword.ai)
+2. Go to **API Keys**
+3. Create a key and copy it
+
+See the [Doubleword guide for Strix](https://docs.doubleword.ai/inference-api/integrations/strix) for a full example scan.
