@@ -55,7 +55,13 @@ yourself: same resource loaded, same use case called, same router or
 mount, same field family. For each, find the line that enforces the
 control after the patch. A guard that only authenticates does not enforce
 ownership. A shared helper counts only if the helper itself compares the
-caller to the resource. One sibling left open is a rejection. For a
+caller to the resource. One sibling left open is a rejection, with one
+exception: an entry the fix agent names as left open because closing it
+would make a legitimate caller change (check 8). Verify that reason
+yourself. If the entry can be closed by refusing only the attacker,
+reject; if it cannot, it is not a blocking problem, provided the notes
+and the proposed PR text say in their first lines that it stays open.
+For a
 leaked value, look for every other place it is logged, returned or sent
 to telemetry. For a race or replay, look for every other path that
 writes the same state, and reject a lock that can expire while the
@@ -124,7 +130,9 @@ on a changed line is a rejection, with the output.
 **11. The whole remediation.** Compare the patch with every remediation
 step the finding calls for. Each step is either done in the patch or
 named in the fix agent's notes as left out, with the reason. A patch that
-quietly does part of the job is rejected.
+quietly does part of the job is rejected. A step left out because it
+would make a legitimate caller change is a valid reason when check 8
+confirms it and the notes describe that step as a plan for the owner.
 
 **12. The words match the diff.** Every claim in the fix agent's notes
 and proposed PR text ("removes", "adds a test", "rate limits", "returns
