@@ -9,7 +9,7 @@ metadata:
 
 # Find security vulnerabilities in code
 
-White-box security review with Strix: the agents read the source to build a model of routes, sinks, and authorization checks, then attempt real exploitation. Findings come with a proof-of-concept, so the output is a short list of proven issues rather than the hundreds of "potential" hits a pattern-matching scanner produces.
+White-box security review with Strix: the agents read the source to build a model of routes, sinks, and authorization checks, then attempt real exploitation. Dynamic findings come with a proof-of-concept, so the output is a short list of proven issues rather than the hundreds of "potential" hits a pattern-matching scanner produces. Dependency-CVE findings can use a verified advisory and an affected installed version instead.
 
 Install, LLM setup, all flags, and the managed-cloud path are in the **penetration-testing-with-strix** skill. For a run with no Docker and no LLM key, the same binary drives the managed platform: `strix cloud login`, then `strix cloud scans start ...` (details in **managed-pentesting-with-strix**).
 
@@ -33,7 +33,7 @@ A local path is mounted into the sandbox **writable**, so the agents can modify 
 
 Two things sharply improve results:
 
-1. **Add a running instance of the app.** `-t ./ -t http://host.docker.internal:3000` lets the agents confirm exploitability against live behavior instead of reasoning about it statically — this is the difference between "this looks unsafe" and a validated finding. If nothing is running, static-only findings should be described as unconfirmed.
+1. **Add a running instance of the app.** `-t ./ -t http://host.docker.internal:3000` lets the agents confirm exploitability against live behavior instead of reasoning about it statically — this is the difference between "this looks unsafe" and a validated finding. If nothing is running, describe static-only code findings as unconfirmed. This rule does not apply to dependency-CVE findings with a verified advisory and an affected installed version.
 2. **Scope the review.** Point at the risky subtree and say what matters:
    ```bash
    strix -n -t ./services/api --max-budget 15 \
