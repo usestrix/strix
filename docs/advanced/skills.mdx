@@ -163,30 +163,19 @@ my-skills/
 
 Repeat `--skills-dir` for more directories, or set `STRIX_SKILLS_DIR` to a list of directories separated by the OS path separator. Strix searches these directories before the packaged skills. A file with the same path as a built-in skill replaces it. This works for installed builds too, so you do not have to rebuild the package to add a skill.
 
+Strix lists your skills first in the catalog, before the built-in skills, and marks them as operator skills. When one of your skills fits a task, agents load it or assign it before a built-in skill. Strix does not load your skills into an agent automatically. To do that for the root agent, use `--skills`.
+
 Each file needs the frontmatter `description` field. Agents only see the name and this description in the catalog, so write the description for the subtask that should trigger the skill.
 
-## Methodologies
+## Skills or instructions?
 
-A methodology is a set of rules for the full scan: how agents coordinate, which shared artifacts they keep, when the work is complete, and which skills to use for each part. Agents do not select a methodology from the catalog. You apply it:
+<Note>
+A skill is specialist knowledge for one agent: a vulnerability class, a technology, a tool, or a target-specific quirk. An agent loads a skill when the skill matches its subtask.
 
-```bash
-strix --target https://app.com --methodology ./authz-differential.md
-strix --target https://app.com --skills-dir ./my-skills --methodology custom/authz_differential
-```
+An instruction file is the engagement rulebook: scope, credentials, coordination rules, shared artifacts, and completion criteria. Every agent sees the instructions. See [Custom Instructions](/usage/instructions#reusable-methodology).
+</Note>
 
-The value is a markdown file or the name of a skill. Strix puts the text in the system prompt of the root agent and of every agent the root agent creates. Repeat `--methodology` for more than one. A resumed scan keeps the methodologies of the original run.
-
-Keep the methodology short, because every agent pays for it on every turn. Name the built-in skills to use (for example `idor`, `broken_function_level_authorization`, `mass_assignment`, `business_logic`) instead of repeating their techniques.
-
-## Skill, methodology, or instructions?
-
-| You have | Use | Who sees it |
-| --- | --- | --- |
-| Specialist knowledge for one subtask: a vulnerability class, a technology, a tool, a target-specific quirk | A skill (`--skills-dir`) | The agents that load it |
-| Reusable rules for the full scan: coordination, shared artifacts, completion criteria, delegation | A methodology (`--methodology`) | Every agent, in the system prompt |
-| Details of one engagement: scope, credentials, focus areas | Instructions (`--instruction-file`) | Every agent, in the task |
-
-See [Custom Instructions](/usage/instructions#reusable-methodology).
+A cross-cutting methodology that spans the whole engagement belongs in an instruction file. If the methodology also needs knowledge that the built-in skills do not have, put that part in a custom skill and name it from the instruction file.
 
 ## Contributing Skills
 

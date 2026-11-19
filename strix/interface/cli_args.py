@@ -20,12 +20,7 @@ from strix.interface.utils import (
     validate_config_file,
 )
 from strix.report.runs import list_run_summaries
-from strix.skills import (
-    SKILLS_DIR_ENV,
-    env_skill_dirs,
-    resolve_methodology,
-    validate_requested_skills,
-)
+from strix.skills import SKILLS_DIR_ENV, env_skill_dirs, validate_requested_skills
 
 
 # Severities ``--fail-on`` accepts, most severe first.
@@ -192,16 +187,6 @@ Strix Cloud:
         help="Directory with extra skills, in the same '<category>/<name>.md' layout as the "
         "built-in set. Repeat the option for more directories. A skill with the same path as "
         f"a built-in skill replaces it. Also read from the {SKILLS_DIR_ENV} environment variable.",
-    )
-
-    parser.add_argument(
-        "--methodology",
-        action="append",
-        metavar="FILE_OR_SKILL",
-        help="Markdown file or skill name with a testing methodology that applies to the full "
-        "scan (for example '--methodology ./authz-method.md'). Strix puts it in the system "
-        "prompt of the root agent and every agent it creates. Repeat the option for more "
-        "than one.",
     )
 
     parser.add_argument(
@@ -386,16 +371,6 @@ Strix Cloud:
     if args.skills and (skills_error := validate_requested_skills(args.skills, max_skills=None)):
         parser.error(f"--skills: {skills_error}")
 
-    methodology: list[dict[str, str]] = []
-    for ref in args.methodology or []:
-        try:
-            name, content = resolve_methodology(ref)
-        except ValueError as e:
-            parser.error(f"--methodology: {e}")
-        if all(item["name"] != name for item in methodology):
-            methodology.append({"name": name, "content": content})
-    args.methodology = methodology
-
     # The MCP loader reads these as its per-run include/exclude selection.
     if args.mcp_server:
         os.environ["STRIX_MCP_ONLY"] = ",".join(args.mcp_server)
@@ -571,9 +546,6 @@ def load_resume_state(args: argparse.Namespace) -> None:
     if not args.skills:
         stored_skills = cast("list[str]", state.get("skills") or [])
         args.skills = [str(name) for name in stored_skills if str(name).strip()]
-    if not args.methodology:
-        stored_methodology = cast("list[dict[str, str]]", state.get("methodology") or [])
-        args.methodology = [m for m in stored_methodology if isinstance(m, dict)]
     if not getattr(args, "user_instruction", None):
         args.user_instruction = state.get("user_instruction") or None
     args.local_sources = collect_local_sources(args.targets_info)
