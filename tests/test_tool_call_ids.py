@@ -18,14 +18,22 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from agents import Agent, Runner, function_tool
+from agents.models.fake_id import FAKE_RESPONSES_ID
 from agents.models.interface import Model, ModelProvider
 from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 from agents.run import RunConfig
 from openai import AsyncOpenAI
-from openai.types.responses import ResponseFunctionToolCall
+from openai.types.responses import (
+    Response,
+    ResponseCompletedEvent,
+    ResponseFunctionToolCall,
+    ResponseOutputItemAddedEvent,
+    ResponseOutputItemDoneEvent,
+)
 
-from strix.config.models import _NonStreamingModel, _TurnGuardModel
+from strix.config.models import _guard_event, _NonStreamingModel, _TurnGuardModel
 from strix.config.tool_call_ids import TurnCallIdRewriter, dedupe_history_call_ids
+from strix.config.tool_call_limits import TurnToolCallLimiter
 
 
 if TYPE_CHECKING:
@@ -380,3 +388,101 @@ def test_turn_rewriter_gives_parallel_blank_calls_distinct_ids() -> None:
     )
 
     assert rewriter.rewrite_item(a).call_id != rewriter.rewrite_item(b).call_id
+
+
+@pytest.mark.parametrize("item_id", ["real", FAKE_RESPONSES_ID, None])
+@pytest.mark.parametrize("historical_id", ["dup", "unrelated"])
+def test_duplicate_calls_keep_distinct_ids_across_stream_sightings(
+    item_id: str | None, historical_id: str
+) -> None:
+    rewriter = TurnCallIdRewriter([{"type": "function_call", "call_id": historical_id}])
+    calls = [
+        ResponseFunctionToolCall(
+            id=f"fc_{position}" if item_id == "real" else item_id,
+            call_id="dup",
+            name="do_thing",
+            arguments=json.dumps({"n": position}),
+            type="function_call",
+        )
+        for position in range(2)
+    ]
+    # A preceding non-tool item is part of the output index as well.
+    prefix = {"type": "reasoning"}
+    added = [rewriter.rewrite_item(call, i + 1) for i, call in enumerate(calls)]
+    done = [rewriter.rewrite_item(call, i + 1) for i, call in enumerate(calls)]
+    completed = rewriter.rewrite_items([prefix, *calls])
+
+    ids = [call.call_id for call in added]
+    assert len(set(ids)) == 2
+    assert historical_id not in ids
+    assert [call.call_id for call in done] == ids
+    assert completed[0] is prefix
+    assert [call.call_id for call in completed[1:]] == ids
+    assert [rewriter.rewrite_item(call, i + 1).call_id for i, call in enumerate(added)] == ids
+
+
+@pytest.mark.parametrize("item_id", ["real", FAKE_RESPONSES_ID, None])
+def test_stream_guard_counts_duplicate_calls_separately_and_only_once(
+    item_id: str | None,
+) -> None:
+    rewriter = TurnCallIdRewriter([])
+    limiter = TurnToolCallLimiter(2)
+    calls = [
+        ResponseFunctionToolCall(
+            id=f"fc_{position}" if item_id == "real" else item_id,
+            call_id="dup",
+            name="do_thing",
+            arguments=json.dumps({"n": position}),
+            type="function_call",
+        )
+        for position in range(3)
+    ]
+    accepted: list[str] = []
+    for position, call in enumerate(calls):
+        added = _guard_event(
+            ResponseOutputItemAddedEvent(
+                item=call,
+                output_index=position,
+                sequence_number=position * 2,
+                type="response.output_item.added",
+            ),
+            rewriter,
+            limiter,
+        )
+        done = _guard_event(
+            ResponseOutputItemDoneEvent(
+                item=call,
+                output_index=position,
+                sequence_number=position * 2 + 1,
+                type="response.output_item.done",
+            ),
+            rewriter,
+            limiter,
+        )
+        if position == 2:
+            assert added is None
+            assert done is None
+            continue
+        assert isinstance(added, ResponseOutputItemAddedEvent)
+        assert isinstance(done, ResponseOutputItemDoneEvent)
+        assert isinstance(added.item, ResponseFunctionToolCall)
+        assert isinstance(done.item, ResponseFunctionToolCall)
+        assert added.item.call_id == done.item.call_id
+        accepted.append(added.item.call_id)
+
+    completed = _guard_event(
+        ResponseCompletedEvent(
+            response=Response.model_construct(output=calls),
+            sequence_number=6,
+            type="response.completed",
+        ),
+        rewriter,
+        limiter,
+    )
+    assert isinstance(completed, ResponseCompletedEvent)
+    output = completed.response.output
+    assert [
+        call.call_id for call in output if isinstance(call, ResponseFunctionToolCall)
+    ] == accepted
+    assert len(set(accepted)) == 2
+    assert limiter.dropped == 1
