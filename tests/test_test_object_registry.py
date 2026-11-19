@@ -1,6 +1,10 @@
+import csv
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from agents.tool_context import ToolContext
 
 from strix.tools.test_objects import tools as registry
 from strix.tools.test_objects.tools import with_registration_reminder
@@ -72,7 +76,72 @@ def test_the_registry_is_written_as_a_spreadsheet_beside_the_report(tmp_path: Pa
     assert registry.register("alice@example.com", "account", "provisioned")
     assert registry.register("=cmd|'/c calc'!A1", "record", "agent")
     lines = (tmp_path / "test_objects.csv").read_text(encoding="utf-8").splitlines()
-    assert lines[0] == "identifier,kind,source,created_at"
+    assert lines[0] == "identifier,kind,source,created_at,agent,details"
     assert lines[1].startswith("alice@example.com,account,provisioned,")
     # A cell a spreadsheet would run as a formula is kept as text.
     assert lines[2].startswith("'=cmd|'/c calc'!A1,record,agent,")
+
+
+def test_object_details_are_kept_and_exported_without_credentials(tmp_path: Path) -> None:
+    registry.hydrate_test_objects_from_disk(tmp_path / ".state")
+    assert registry.register(
+        "qa7f3@example.com",
+        "user",
+        "agent",
+        "a1",
+        agent_name="Signup Tester",
+        details={
+            "username": "qa7f3",
+            "email": "qa7f3@example.com",
+            "user_id": 4412,
+            "password": "hunter2",
+            "sessionToken": "r:abc",
+            "api_key": "sk-1",
+            "profile": {"role": "customer"},
+            "empty": "",
+        },
+    )
+    with (tmp_path / "test_objects.csv").open(encoding="utf-8", newline="") as file:
+        row = next(iter(csv.DictReader(file)))
+    assert row["agent"] == "Signup Tester"
+    assert json.loads(row["details"]) == {
+        "username": "qa7f3",
+        "email": "qa7f3@example.com",
+        "user_id": "4412",
+        "profile": '{"role": "customer"}',
+    }
+    assert "hunter2" not in (tmp_path / ".state" / "test_objects.json").read_text(encoding="utf-8")
+
+
+def test_details_that_are_not_a_map_are_ignored(tmp_path: Path) -> None:
+    registry.hydrate_test_objects_from_disk(tmp_path / ".state")
+    assert registry.register("order-9912", "record", "agent", details="free text")
+    lines = (tmp_path / "test_objects.csv").read_text(encoding="utf-8").splitlines()
+    assert lines[1].endswith(",,")
+
+
+async def test_tool_stores_each_objects_own_details(tmp_path: Path) -> None:
+    registry.hydrate_test_objects_from_disk(tmp_path / ".state")
+    coordinator = SimpleNamespace(names={"a1": "Signup Tester"})
+    ctx = ToolContext(
+        context={"agent_id": "a1", "coordinator": coordinator},
+        tool_name="register_test_object",
+        tool_call_id="call-1",
+        tool_arguments="{}",
+    )
+    result = await registry.register_test_object.on_invoke_tool(
+        ctx,
+        json.dumps(
+            {
+                "identifiers": ["qa7f3@example.com", "order-9912"],
+                "kind": "object",
+                "details": {"qa7f3@example.com": {"username": "qa7f3", "password": "x"}},
+            }
+        ),
+    )
+    assert json.loads(result)["registered"] == ["qa7f3@example.com", "order-9912"]
+    with (tmp_path / "test_objects.csv").open(encoding="utf-8", newline="") as file:
+        rows = list(csv.DictReader(file))
+    assert json.loads(rows[0]["details"]) == {"username": "qa7f3"}
+    assert rows[0]["agent"] == "Signup Tester"
+    assert rows[1]["details"] == ""
