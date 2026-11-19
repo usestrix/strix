@@ -1,4 +1,5 @@
-"""Per-run registry of objects the test owns — mirrored to {state_dir}/test_objects.json.
+"""Per-run registry of objects the test owns — mirrored to {state_dir}/test_objects.json
+and, for people, to test_objects.csv beside the report.
 
 Agents register what they create on the target; the scan seeds the accounts it
 was given. The action-approval guard reads it to tell the test's own objects
@@ -8,6 +9,8 @@ from pre-existing ones.
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import logging
 import re
@@ -16,6 +19,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from agents import RunContextWrapper, function_tool
+
+from strix.report.writer import atomic_write_text, csv_safe
 
 
 if TYPE_CHECKING:
@@ -70,6 +75,16 @@ def _persist() -> None:
         tmp = _path.with_name(f".{_path.name}.tmp")
         tmp.write_text(json.dumps(_objects, ensure_ascii=False), encoding="utf-8")
         tmp.replace(_path)
+        # The same list as a spreadsheet beside the report: what the test left on the target.
+        rows = io.StringIO()
+        writer = csv.writer(rows)
+        writer.writerow(["identifier", "kind", "source", "created_at"])
+        for identifier, entry in _objects.items():
+            writer.writerow(
+                csv_safe(value)
+                for value in (identifier, entry["kind"], entry["source"], entry["created_at"])
+            )
+        atomic_write_text(_path.parent.parent / "test_objects.csv", rows.getvalue())
     except OSError:
         logger.exception("test objects persist to %s failed", _path)
 

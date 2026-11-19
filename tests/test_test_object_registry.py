@@ -65,3 +65,14 @@ def test_reminder_added_to_output_reporting_a_create(output: str) -> None:
 )
 def test_reminder_not_added_without_a_create(output: str | None) -> None:
     assert with_registration_reminder(output) == output
+
+
+def test_the_registry_is_written_as_a_spreadsheet_beside_the_report(tmp_path: Path) -> None:
+    registry.hydrate_test_objects_from_disk(tmp_path / ".state")
+    assert registry.register("alice@example.com", "account", "provisioned")
+    assert registry.register("=cmd|'/c calc'!A1", "record", "agent")
+    lines = (tmp_path / "test_objects.csv").read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "identifier,kind,source,created_at"
+    assert lines[1].startswith("alice@example.com,account,provisioned,")
+    # A cell a spreadsheet would run as a formula is kept as text.
+    assert lines[2].startswith("'=cmd|'/c calc'!A1,record,agent,")
