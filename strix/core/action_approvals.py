@@ -231,9 +231,7 @@ def _action_text(tool: str, args: dict[str, Any]) -> str:
     if tool == "exec_command":
         return str(args.get("cmd", ""))
     if tool == "write_stdin":
-        chars = str(args.get("chars", ""))
-        command = args.get("session_command")
-        return f"{chars}\n\nTyped into: {command}" if command else chars
+        return str(args.get("chars", ""))
     # A person approves what the summary says, so it carries the call's own input.
     if tool == "call_mcp":
         arguments = json.dumps(args.get("arguments") or {}, ensure_ascii=False, default=str)
@@ -264,9 +262,6 @@ class ActionApprovalGuard:
         self.judge = LlmJudge(settings, default_model=default_model)
         self.event_sink = event_sink
         self._pending: dict[str, _Approval] = {}
-        # What each shell session runs. The sandbox's sessions are shared by every agent in
-        # the scan, so the record is kept here and not with the agent that opened one.
-        self.shell_sessions: dict[str, str] = {}
         self._checks: dict[asyncio.Task[str | None], str] = {}
         self._stopped_agents: set[str] = set()
         self._closed = False
