@@ -127,7 +127,7 @@ def _apply_log_limits(create_kwargs: dict[str, Any]) -> None:
     executes arbitrary commands. ``max-file`` rotation means the on-disk cap is
     ``max-size * max-file``. Set ``STRIX_SANDBOX_LOG_MAX_SIZE`` to ``0``/``off``
     to opt back out to docker's default."""
-    max_size = os.environ.get("STRIX_SANDBOX_LOG_MAX_SIZE", "50m").strip()
+    max_size = os.environ.get("STRIX_SANDBOX_LOG_MAX_SIZE", "50m").strip() or "50m"
     if max_size.lower() in ("0", "off", "none", "unlimited"):
         return
     max_file = os.environ.get("STRIX_SANDBOX_LOG_MAX_FILE", "3").strip() or "3"
