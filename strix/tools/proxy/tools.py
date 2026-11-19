@@ -13,8 +13,10 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from agents import RunContextWrapper, function_tool
+from agents.tool import default_tool_timeout_error_message
 from caido_sdk_client import BaseError
 
+from strix.core.action_approvals import check_action
 from strix.runtime.caido_handle import CaidoBootstrapHandle
 from strix.tools.nullish import clean_optional
 from strix.tools.proxy import caido_api
@@ -27,6 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from caido_sdk_client import Client
+    from caido_sdk_client.types import ConnectionInfoInput
 
     from strix.tools.proxy.caido_api import (
         RequestPart,
@@ -49,6 +52,18 @@ ScopeAction = Literal["get", "list", "create", "update", "delete"]
 # is not concurrency-safe (parallel calls raise "Transport is already
 # connected"). Serialize every host-side proxy call through this lock.
 _CAIDO_CALL_LOCK = asyncio.Lock()
+
+
+def _secrets(value: str) -> set[str]:
+    """The secrets in a credential header: each cookie value, the token after a scheme."""
+    parts = (part.strip().split("=", 1)[-1].split()[-1:] for part in value.split(";"))
+    return {part[0].strip('"') for part in parts if part and len(part[0]) >= 8}
+
+
+# The check and the approver get the body whole up to this size. A longer one is cut,
+# marked, and treated as unchecked: blocked, or shown to a person who can only deny it.
+_CHECKED_BODY_CHARS = 64 * 1024
+_CREDENTIAL_HEADER_RE = re.compile(r"authorization|cookie|token|api[-_]?key|secret|session", re.I)
 
 
 async def _ctx_client(ctx: RunContextWrapper) -> Client | None:
@@ -430,7 +445,7 @@ def _format_text_page(content: str, *, page: int, page_size: int) -> dict[str, A
     }
 
 
-@function_tool(timeout=120, strict_mode=False)
+@function_tool(strict_mode=False)
 async def repeat_request(
     ctx: RunContextWrapper,
     request_id: str,
@@ -461,12 +476,9 @@ async def repeat_request(
             - ``body`` — replace the body string entirely.
             - ``cookies`` — dict of cookies to add/update.
     """
-    client = await _ctx_client(ctx)
-    if client is None:
-        return _no_client()
     mods = modifications or {}
 
-    async def _do(client: Client) -> dict[str, Any] | None:
+    async def _prepare(client: Client) -> tuple[ConnectionInfoInput, bytes, dict[str, Any]] | None:
         result = await caido_api.get_request_with_client(client, request_id, part="request")
         if result is None or result.request.raw is None:
             return None
@@ -481,17 +493,60 @@ async def repeat_request(
             headers=modified["headers"],
             body=modified["body"],
         )
-        return await caido_api.replay_send_raw(client, raw=raw, connection=connection)
+        sent_headers = caido_api.parse_raw_request(raw.decode("utf-8"))["headers"]
+        body = modified["body"]
+        arguments: dict[str, Any] = {
+            "method": modified["method"].upper(),
+            "url": modified["url"],
+            "header_names": list(sent_headers),
+            "body": body[:_CHECKED_BODY_CHARS],
+            "body_truncated": len(body) > _CHECKED_BODY_CHARS,
+        }
+        # Header values stay out of the check, so it is told when the captured
+        # request's own credentials would go to a host they were not captured from.
+        captured_host = str(original.host or "").lower()
+        # A captured secret counts wherever it reappears: another header, the URL or the body.
+        sent = raw.decode("utf-8", errors="replace")
+        carried = [
+            name
+            for name, value in components["headers"].items()
+            if _CREDENTIAL_HEADER_RE.search(name)
+            and any(secret in sent for secret in _secrets(value))
+        ]
+        if carried and captured_host and str(connection.host or "").lower() != captured_host:
+            arguments["captured_credentials_sent_to_another_host"] = {
+                "headers": carried,
+                "captured_from": captured_host,
+                "sent_to": str(connection.host or "").lower(),
+            }
+        return connection, raw, arguments
 
     try:
-        replay = await _call(client, _do)
-        if replay is None:
+        started = asyncio.get_running_loop().time()
+        async with asyncio.timeout(120):
+            client = await _ctx_client(ctx)
+            if client is None:
+                return _no_client()
+            prepared = await _call(client, _prepare)
+        remaining = max(0, 120 - (asyncio.get_running_loop().time() - started))
+        if prepared is None:
             return json.dumps(
                 {"success": False, "error": f"Request {request_id} not found"},
                 ensure_ascii=False,
                 default=str,
             )
+        connection, raw, arguments = prepared
+        blocked = await check_action(ctx, "repeat_request", arguments)
+        if blocked is not None:
+            return blocked
+        async with asyncio.timeout(remaining):
+            replay = await _call(
+                client,
+                lambda client: caido_api.replay_send_raw(client, raw=raw, connection=connection),
+            )
         return _format_replay_tool_result(replay)
+    except TimeoutError:
+        return default_tool_timeout_error_message(tool_name="repeat_request", timeout_seconds=120)
     except Exception as exc:  # noqa: BLE001
         return _err("repeat_request", exc)
 

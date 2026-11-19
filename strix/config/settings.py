@@ -140,6 +140,27 @@ class DedupeSettings(BaseSettings):
         return _lowercase(value)
 
 
+class ActionApprovalSettings(BaseSettings):
+    model_config = _BASE_CONFIG
+
+    enabled: bool = Field(default=False, alias="STRIX_ACTION_APPROVALS")
+    mode: Literal["auto", "ask"] = Field(default="ask", alias="STRIX_ACTION_APPROVAL_MODE")
+    model: str | None = Field(default=None, alias="STRIX_ACTION_APPROVAL_MODEL")
+    timeout_seconds: float = Field(
+        default=300, gt=0, allow_inf_nan=False, alias="STRIX_ACTION_APPROVAL_TIMEOUT_SECONDS"
+    )
+    on_timeout: Literal["block", "allow"] = Field(
+        default="block", alias="STRIX_ACTION_APPROVAL_ON_TIMEOUT"
+    )
+    api_key: str | None = Field(default=None, alias="ACTION_APPROVAL_API_KEY", repr=False)
+    api_base: str | None = Field(default=None, alias="ACTION_APPROVAL_API_BASE")
+
+    @field_validator("mode", "on_timeout", mode="before")
+    @classmethod
+    def _normalize_case(cls, value: object) -> object:
+        return _lowercase(value)
+
+
 class ContextSettings(BaseSettings):
     """Context-window management: per-tool-output caps and history compaction."""
 
@@ -231,6 +252,7 @@ class Settings(BaseSettings):
 
     llm: LlmSettings = Field(default_factory=LlmSettings)
     dedupe: DedupeSettings = Field(default_factory=DedupeSettings)
+    action_approvals: ActionApprovalSettings = Field(default_factory=ActionApprovalSettings)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     context: ContextSettings = Field(default_factory=ContextSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)

@@ -362,3 +362,16 @@ func TestReportSectionsKeepBlankLinesInFencedCode(t *testing.T) {
 		t.Fatalf("blank-line runs outside fenced code were not collapsed in %q", plain)
 	}
 }
+
+func TestShellOutputKeepsTheWholeBlockedReason(t *testing.T) {
+	blocked := "Blocked by action approvals (denied by a person; " + strings.Repeat("the reason continues ", 15) +
+		"so it could delete records.): this action did not run. Do not retry it; find a non-destructive way to continue."
+	out := ansi.Strip(formatShellOutput(blocked))
+	if !strings.Contains(out, "find a non-destructive way to continue.") {
+		t.Fatalf("blocked reason was shortened:\n%s", out)
+	}
+	long := strings.Repeat("x", 400)
+	if got := ansi.Strip(formatShellOutput(long)); len(got) > 210 || !strings.HasSuffix(got, "...") {
+		t.Fatalf("ordinary long output lines are still shortened, got %d chars", len(got))
+	}
+}
