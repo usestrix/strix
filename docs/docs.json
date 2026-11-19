@@ -37,6 +37,7 @@
               "llm-providers/anthropic",
               "llm-providers/vercel-ai-gateway",
               "llm-providers/openrouter",
+              "llm-providers/orcarouter",
               "llm-providers/vertex",
               "llm-providers/bedrock",
               "llm-providers/azure",
