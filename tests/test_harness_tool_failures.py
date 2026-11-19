@@ -122,18 +122,21 @@ def test_a_malformed_cve_is_still_rejected() -> None:
     assert _validate_identifiers("CVE-24-1", None)[2]
 
 
-def test_near_miss_skill_names_resolve_to_the_real_skill() -> None:
-    resolved = resolve_requested_skills(
-        ["technologies/nextjs", "tooling/nuklei", "vulnerabilities/idor"]
-    )
+def test_a_wrong_category_resolves_to_the_exact_skill_name() -> None:
+    resolved = resolve_requested_skills(["technologies/nextjs", "vulnerabilities/idor"])
 
-    assert resolved == ["nextjs", "nuclei", "vulnerabilities/idor"]
+    assert resolved == ["nextjs", "vulnerabilities/idor"]
     assert validate_requested_skills(resolved) is None
 
 
-def test_unknown_and_short_skill_names_are_left_for_validation() -> None:
-    assert resolve_requested_skills(["tooling/curl", "bogus"]) == ["tooling/curl", "bogus"]
-    assert validate_requested_skills(["bogus"]) is not None
+def test_a_misspelled_skill_name_is_rejected_with_a_suggestion() -> None:
+    assert resolve_requested_skills(["tooling/nuklei", "bogus"]) == ["tooling/nuklei", "bogus"]
+
+    error = validate_requested_skills(["tooling/nuklei"])
+
+    assert error is not None
+    assert "Did you mean: {'tooling/nuklei': ['nuclei']}?" in error
+    assert "Did you mean" not in (validate_requested_skills(["bogus"]) or "")
 
 
 def test_page_fetch_with_no_content_reports_why_and_does_not_say_try_again(

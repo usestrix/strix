@@ -246,16 +246,13 @@ def get_available_skills() -> dict[str, list[dict[str, str]]]:
     return grouped
 
 
-_MIN_FUZZY_SKILL_NAME = 6
-
-
 def resolve_requested_skills(skill_list: list[str]) -> list[str]:
-    """Map near-miss skill names onto real ones; leave the rest untouched.
+    """Drop a wrong category from a skill name; leave the rest untouched.
 
     Models often guess the category (``technologies/nextjs`` for
-    ``frameworks/nextjs``) or misspell a name (``tooling/nuklei``). A guess is
-    replaced only when exactly one skill matches, so an unknown or ambiguous
-    name still reaches :func:`validate_requested_skills` and is rejected there.
+    ``frameworks/nextjs``). The category is dropped only when the name itself
+    is an exact, unambiguous skill name, so anything else still reaches
+    :func:`validate_requested_skills` and is rejected there.
     """
     names = get_all_skill_names()
     keys = _get_all_skill_keys()
@@ -263,23 +260,11 @@ def resolve_requested_skills(skill_list: list[str]) -> list[str]:
     resolved: list[str] = []
     for requested in skill_list:
         skill = requested.strip()
-        if skill in keys or (skill in names and skill not in ambiguous):
-            resolved.append(skill)
-            continue
         base = skill.rsplit("/", 1)[-1]
-        if "/" in skill and base in names and base not in ambiguous:
+        if skill not in keys and "/" in skill and base in names and base not in ambiguous:
             resolved.append(base)
-            continue
-        # Typos only: short names are too close to each other (curl / hurl).
-        close = (
-            difflib.get_close_matches(base, sorted(names), 2, 0.8)
-            if len(base) >= _MIN_FUZZY_SKILL_NAME
-            else []
-        )
-        if len(close) == 1 and close[0] not in ambiguous:
-            resolved.append(close[0])
         else:
-            resolved.append(requested)
+            resolved.append(skill)
     return list(dict.fromkeys(resolved))
 
 
@@ -301,7 +286,13 @@ def validate_requested_skills(skill_list: list[str], max_skills: int | None = 5)
     available_keys = _get_all_skill_keys()
     invalid = sorted({s for s in skill_list if s not in available and s not in available_keys})
     if invalid:
-        return f"Invalid skill name(s): {invalid}. Available skills: {sorted(available)}"
+        suggestions = {
+            name: close
+            for name in invalid
+            if (close := difflib.get_close_matches(name.rsplit("/", 1)[-1], sorted(available), 3))
+        }
+        hint = f" Did you mean: {suggestions}?" if suggestions else ""
+        return f"Invalid skill name(s): {invalid}.{hint} Available skills: {sorted(available)}"
     ambiguous = sorted({s for s in skill_list if "/" not in s} & _get_ambiguous_skill_names())
     if ambiguous:
         return (
