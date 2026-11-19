@@ -102,6 +102,8 @@ class GoTuiRuntime:
             "local_sources": self.args.local_sources or [],
             "workspace_files": getattr(self.args, "workspace_files", None) or [],
             "scope_mode": self.args.scope_mode,
+            "skills": list(getattr(self.args, "skills", None) or []),
+            "methodology": list(getattr(self.args, "methodology", None) or []),
             "diff_base": self.args.diff_base,
             "resume_instruction": self.args.user_explicit_instruction or "",
             "workspace_mount": getattr(self.args, "workspace_mount", None) or "",

@@ -72,6 +72,23 @@ strix --target https://api.example.com \
 Be specific. Good instructions help Strix prioritize the most valuable attack paths.
 </Tip>
 
+## Reusable methodology
+
+Keep a methodology that you reuse across engagements in a version-controlled markdown file, and apply it with `--methodology`. Good content for the file:
+
+- Coordination rules, for example which identities to test as HIGH and LOW privilege
+- Shared artifacts and the format of the evidence you expect
+- Completion criteria
+- The built-in skills to delegate to, by name, for example `idor`, `broken_function_level_authorization`, `mass_assignment`, and `business_logic`
+
+Strix puts the methodology in the system prompt of the root agent and every agent it creates. Agents do not see the full text of a skill unless the skill matches their subtask, so a methodology written as a normal skill is often not loaded. Keep the details of one engagement (scope, credentials, focus areas) in the instructions. See [Methodologies](/advanced/skills#methodologies).
+
+```bash
+strix --target https://api.example.com \
+  --methodology ./authz-differential.md \
+  --instruction-file ./engagement.md
+```
+
 ## Workspace files
 
 Instructions become part of the prompt. To give Strix a file to work with, such

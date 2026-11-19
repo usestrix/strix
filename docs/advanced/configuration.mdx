@@ -164,6 +164,10 @@ affecting the agents that do the actual testing.
   Record every LLM request's and tool call's timing in `run.json`, under `llm_requests` and `tool_calls`. Adds about 0.5 MB to a typical scan's `run.json`.
 </ParamField>
 
+<ParamField path="STRIX_SKILLS_DIR" type="string">
+  Extra skill directories, separated by the OS path separator (`:` on Linux and macOS). Each directory uses the `<category>/<name>.md` layout of the built-in skills. Skills in these directories replace built-in skills with the same path. `--skills-dir` adds directories in front of this list. See [Skills](/advanced/skills#add-your-own-skills).
+</ParamField>
+
 <ParamField path="TRACELOOP_BASE_URL" type="string">
   OTLP/Traceloop base URL for remote OpenTelemetry export. If unset, Strix keeps traces local only.
 </ParamField>
