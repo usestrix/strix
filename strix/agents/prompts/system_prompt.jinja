@@ -519,8 +519,21 @@ Default user: pentester (sudo available)
 <available_skills>
 On-demand specialist skills. Spawn a specialist via `create_agent(skills=[...])`, or pull guidance inline for yourself via `load_skill(skills=[...])`. Anything wrapped in `<specialized_knowledge>` is already loaded for you.
 
+{% set ns = namespace(priority=false) -%}
 {% for category, skills in available_skills | dictsort -%}
-{% for skill in skills -%}
+{% for skill in skills if skill.priority -%}
+{% if not ns.priority -%}
+{% set ns.priority = true -%}
+Operator skills. The operator of this scan wrote these. When one fits a task, load it or assign it before a built-in skill, and follow it where the two differ:
+{% endif -%}
+- {{ category }}/{{ skill.name }}{% if skill.description %}: {{ skill.description }}{% endif %}
+{% endfor -%}
+{% endfor -%}
+{% if ns.priority %}
+Built-in skills:
+{% endif -%}
+{% for category, skills in available_skills | dictsort -%}
+{% for skill in skills if not skill.priority -%}
 - {{ category }}/{{ skill.name }}{% if skill.description %}: {{ skill.description }}{% endif %}
 {% endfor -%}
 {% endfor -%}

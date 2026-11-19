@@ -4,7 +4,7 @@ import re
 from collections import Counter
 from collections.abc import Iterator, Mapping
 from pathlib import Path
-from typing import TypeGuard
+from typing import Any, TypeGuard
 
 import yaml
 from jinja2 import Environment, StrictUndefined
@@ -33,6 +33,7 @@ _ROOT_SKILL_CATEGORY = "root"
 SKILLS_DIR_ENV = "STRIX_SKILLS_DIR"
 
 _EXTRA_SKILL_DIRS: list[Path] = []
+_PRIORITY_SKILL_DIRS: set[Path] = set()
 _SKILL_METADATA_CACHE: dict[tuple[Path, int, int], dict[str, str]] = {}
 
 
@@ -40,7 +41,7 @@ def _is_frontmatter_mapping(value: object) -> TypeGuard[dict[object, object]]:
     return isinstance(value, dict)
 
 
-def register_skill_dir(path: str | Path) -> None:
+def register_skill_dir(path: str | Path, *, priority: bool = False) -> None:
     """Add a directory searched for skills ahead of the built-in set.
 
     The directory uses the same layout as the packaged skills
@@ -49,8 +50,14 @@ def register_skill_dir(path: str | Path) -> None:
     callers can both add new skills and override existing ones without
     editing the package. The most recently registered directory has the
     highest precedence.
+
+    With ``priority`` set, the skills in the directory are listed to agents as
+    the operator's own, ahead of the built-in set, the same as the skills from
+    ``STRIX_SKILLS_DIR``.
     """
     resolved = Path(path)
+    if priority:
+        _PRIORITY_SKILL_DIRS.add(resolved)
     if resolved not in _EXTRA_SKILL_DIRS:
         _EXTRA_SKILL_DIRS.append(resolved)
         logger.info("Registered extra skill dir: %s", resolved)
@@ -228,8 +235,14 @@ def _read_skill_metadata(file_path: Path) -> dict[str, str]:
     return metadata
 
 
-def get_available_skills() -> dict[str, list[dict[str, str]]]:
-    grouped: dict[str, list[dict[str, str]]] = {}
+def _is_priority_skill_file(file_path: Path) -> bool:
+    """Whether the skill comes from the operator: ``STRIX_SKILLS_DIR`` or a priority dir."""
+    roots = {*env_skill_dirs(), *_PRIORITY_SKILL_DIRS}
+    return any(file_path.is_relative_to(root) for root in roots)
+
+
+def get_available_skills() -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
     for category, name in _iter_user_skill_files():
         file_path = _qualified_skill_file_for_name(f"{category}/{name}")
         if file_path is None:
@@ -241,7 +254,13 @@ def get_available_skills() -> dict[str, list[dict[str, str]]]:
             continue
         metadata = _read_skill_metadata(file_path)
         description = " ".join(metadata.get("description", "").split())
-        grouped.setdefault(category, []).append({"name": name, "description": description})
+        grouped.setdefault(category, []).append(
+            {
+                "name": name,
+                "description": description,
+                "priority": _is_priority_skill_file(file_path),
+            }
+        )
     return grouped
 
 

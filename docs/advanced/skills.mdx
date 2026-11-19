@@ -163,6 +163,8 @@ my-skills/
 
 Repeat `--skills-dir` for more directories, or set `STRIX_SKILLS_DIR` to a list of directories separated by the OS path separator. Strix searches these directories before the packaged skills. A file with the same path as a built-in skill replaces it. This works for installed builds too, so you do not have to rebuild the package to add a skill.
 
+Strix lists your skills first in the catalog, before the built-in skills, and marks them as operator skills. When one of your skills fits a task, agents load it or assign it before a built-in skill. Strix does not load your skills into an agent automatically. To do that for the root agent, use `--skills`.
+
 Each file needs the frontmatter `description` field. Agents only see the name and this description in the catalog, so write the description for the subtask that should trigger the skill.
 
 ## Skills or instructions?

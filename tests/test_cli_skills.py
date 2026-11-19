@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from strix import skills as skills_pkg
+from strix.agents.prompt import render_system_prompt
 from strix.report.state import ReportState
 
 
@@ -149,9 +150,13 @@ def test_env_skill_dir_is_searched_and_shadows_builtin(
     assert skills_pkg.env_skill_dirs() == (tmp_path,)
     assert skills_pkg.skill_search_dirs()[0] == tmp_path
     catalog = skills_pkg.get_available_skills()
-    assert {"name": "gap_assessment", "description": "Web/API gap assessment"} in catalog["custom"]
+    assert {
+        "name": "gap_assessment",
+        "description": "Web/API gap assessment",
+        "priority": True,
+    } in catalog["custom"]
     idor = [s for s in catalog["vulnerabilities"] if s["name"] == "idor"]
-    assert idor == [{"name": "idor", "description": "Our IDOR playbook"}]
+    assert idor == [{"name": "idor", "description": "Our IDOR playbook", "priority": True}]
     assert "Our IDOR playbook" in skills_pkg.load_skills(["idor"])["idor"]
 
 
@@ -218,3 +223,41 @@ def test_resume_explicit_skills_flag_wins(tmp_path: Path, monkeypatch: pytest.Mo
     )
 
     assert cli_main.parse_arguments().skills == ["business_logic"]
+
+
+def test_operator_skills_are_listed_first_in_the_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_skill(tmp_path, "team/my_method.md", "Our methodology")
+    monkeypatch.setenv(skills_pkg.SKILLS_DIR_ENV, str(tmp_path))
+
+    entries = skills_pkg.get_available_skills()
+    assert [e["priority"] for e in entries["team"]] == [True]
+    assert not any(e["priority"] for e in entries["vulnerabilities"])
+
+    prompt = render_system_prompt()
+    catalog = prompt[prompt.rindex("<available_skills>") :]
+    assert catalog.index("Operator skills.") < catalog.index("- team/my_method")
+    assert catalog.index("- team/my_method") < catalog.index("Built-in skills:")
+
+
+def test_catalog_has_no_operator_section_without_operator_skills() -> None:
+    prompt = render_system_prompt()
+    assert "Operator skills." not in prompt
+    assert "Built-in skills:" not in prompt
+
+
+def test_registered_dir_is_priority_only_when_asked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plain, operator = tmp_path / "plain", tmp_path / "operator"
+    _write_skill(plain, "extra/internal.md", "Internal")
+    _write_skill(operator, "org/checkout.md", "Checkout")
+    monkeypatch.setattr(skills_pkg, "_EXTRA_SKILL_DIRS", [])
+    monkeypatch.setattr(skills_pkg, "_PRIORITY_SKILL_DIRS", set())
+    skills_pkg.register_skill_dir(plain)
+    skills_pkg.register_skill_dir(operator, priority=True)
+
+    entries = skills_pkg.get_available_skills()
+    assert entries["extra"][0]["priority"] is False
+    assert entries["org"][0]["priority"] is True
