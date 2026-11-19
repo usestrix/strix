@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from agents.sandbox.capabilities.tools.shell_tool import WriteStdinTool
 from agents.tool import CustomTool, FunctionTool
 
 from strix.agents import factory
@@ -215,3 +216,52 @@ def test_view_image_is_left_out_for_text_only_models(
 
     view_image = next(tool for tool in filesystem.tools() if tool.name == "view_image")
     assert cast("FunctionTool", view_image).is_enabled is has_view_image
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "chars",
+    [
+        'print("left\\nright")\n',
+        'print("a\\tvalue")\n',
+        'print("literal \\u0003")\n',
+        'print("backslash \\\\ value")\n',
+    ],
+)
+async def test_wrap_write_stdin_preserves_literal_escapes(chars: str) -> None:
+    class Session:
+        def supports_pty(self) -> bool:
+            return True
+
+        async def pty_write_stdin(self, *, chars: str, **_kwargs: Any) -> Any:
+            self.received = chars
+            return SimpleNamespace(
+                output=b"", exit_code=None, process_id=1, original_token_count=None
+            )
+
+    session = Session()
+    tool = factory._wrap_write_stdin(WriteStdinTool(session=cast("Any", session)))
+    await tool.on_invoke_tool(cast("Any", None), json.dumps({"session_id": 1, "chars": chars}))
+    assert session.received == chars
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("chars", "expected"),
+    [(r"\u0003", "\x03"), (r"\x03", "\x03"), ("\x03", "\x03")],
+)
+async def test_wrap_write_stdin_preserves_ctrl_c(chars: str, expected: str) -> None:
+    class Session:
+        def supports_pty(self) -> bool:
+            return True
+
+        async def pty_write_stdin(self, *, chars: str, **_kwargs: Any) -> Any:
+            self.received = chars
+            return SimpleNamespace(
+                output=b"", exit_code=None, process_id=1, original_token_count=None
+            )
+
+    session = Session()
+    tool = factory._wrap_write_stdin(WriteStdinTool(session=cast("Any", session)))
+    await tool.on_invoke_tool(cast("Any", None), json.dumps({"session_id": 1, "chars": chars}))
+    assert session.received == expected
