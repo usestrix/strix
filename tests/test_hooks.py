@@ -567,6 +567,18 @@ async def test_turn_limit_warns_ten_before_and_repeats_past_it() -> None:
 
 
 @pytest.mark.asyncio
+async def test_turn_notices_name_the_subagents_own_finish_tool() -> None:
+    hooks = ReportUsageHooks(model="test-model", max_turns=100)
+    for requests in (14, 95):
+        ctx = _make_warn_context(requests=requests, parent_id="root-1")
+        ctx.context.update(turn_limit=25, finish_tool="validator_finish")
+        items: list[Any] = []
+        await hooks.on_llm_start(ctx, MagicMock(), None, items)
+        assert "validator_finish" in items[-1]["content"]
+        assert "agent_finish" not in items[-1]["content"]
+
+
+@pytest.mark.asyncio
 async def test_no_turn_limit_no_notice() -> None:
     hooks = ReportUsageHooks(model="test-model")
     items: list[Any] = []

@@ -6,6 +6,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from typing import cast
 
 from strix.config import apply_config_override
 from strix.config.settings import DEFAULT_MAX_TURNS
@@ -19,6 +20,7 @@ from strix.interface.utils import (
     validate_config_file,
 )
 from strix.report.runs import list_run_summaries
+from strix.skills import SKILLS_DIR_ENV, env_skill_dirs, validate_requested_skills
 
 
 # Severities ``--fail-on`` accepts, most severe first.
@@ -166,6 +168,25 @@ Strix Cloud:
         help="Path to a file containing detailed custom instructions for the penetration test. "
         "Use this option when you have lengthy or complex instructions saved in a file "
         "(e.g., '--instruction-file ./detailed_instructions.txt').",
+    )
+
+    parser.add_argument(
+        "--skills",
+        type=str,
+        metavar="NAMES",
+        help="Comma-separated skills to load into the root agent before the scan starts "
+        "(for example '--skills idor,mass_assignment,custom/my_method'). Use the bare name "
+        "or '<category>/<name>'. Unknown names stop the run and list the available skills.",
+    )
+
+    parser.add_argument(
+        "--skills-dir",
+        dest="skills_dir",
+        action="append",
+        metavar="PATH",
+        help="Directory with extra skills, in the same '<category>/<name>.md' layout as the "
+        "built-in set. Repeat the option for more directories. A skill with the same path as "
+        f"a built-in skill replaces it. Also read from the {SKILLS_DIR_ENV} environment variable.",
     )
 
     parser.add_argument(
@@ -334,6 +355,22 @@ Strix Cloud:
         # setting it here makes the flag win over the default location.
         os.environ["STRIX_MCP_CONFIG"] = str(mcp_config_path)
 
+    # The skill registry reads this env var on every lookup, so writing the flag
+    # into it (ahead of any entries the user already set) is enough to register.
+    if args.skills_dir:
+        skill_dirs: list[str] = []
+        for raw in args.skills_dir:
+            skills_dir = Path(raw).expanduser()
+            if not skills_dir.is_dir():
+                parser.error(f"--skills-dir directory not found: {raw}")
+            skill_dirs.append(str(skills_dir))
+        skill_dirs.extend(str(d) for d in env_skill_dirs() if str(d) not in skill_dirs)
+        os.environ[SKILLS_DIR_ENV] = os.pathsep.join(skill_dirs)
+
+    args.skills = parse_skill_names(args.skills)
+    if args.skills and (skills_error := validate_requested_skills(args.skills, max_skills=None)):
+        parser.error(f"--skills: {skills_error}")
+
     # The MCP loader reads these as its per-run include/exclude selection.
     if args.mcp_server:
         os.environ["STRIX_MCP_ONLY"] = ",".join(args.mcp_server)
@@ -444,6 +481,16 @@ def resume_run_list_message(lead: str) -> str:
     return "\n".join(lines)
 
 
+def parse_skill_names(raw: str | None) -> list[str]:
+    """Split a comma-separated ``--skills`` value, dropping blanks and repeats."""
+    names: list[str] = []
+    for part in (raw or "").split(","):
+        name = part.strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
 def load_resume_state(args: argparse.Namespace) -> None:
     """Populate ``args.targets_info`` and friends from a prior run's run.json.
 
@@ -496,6 +543,9 @@ def load_resume_state(args: argparse.Namespace) -> None:
 
     if args.instruction is None:
         args.instruction = state.get("instruction")
+    if not args.skills:
+        stored_skills = cast("list[str]", state.get("skills") or [])
+        args.skills = [str(name) for name in stored_skills if str(name).strip()]
     if not getattr(args, "user_instruction", None):
         args.user_instruction = state.get("user_instruction") or None
     args.local_sources = collect_local_sources(args.targets_info)

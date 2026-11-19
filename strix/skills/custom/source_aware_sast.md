@@ -1,6 +1,6 @@
 ---
 name: source-aware-sast
-description: Practical source-aware SAST and AST playbook for semgrep, ast-grep, gitleaks, and trivy fs
+description: Practical source-aware SAST and AST playbook for opengrep, ast-grep, gitleaks, and trivy fs
 ---
 
 # Source-Aware SAST Playbook
@@ -23,19 +23,19 @@ Run this baseline once per repository before deep narrowing:
 ART=/workspace/.source-aware
 mkdir -p "$ART"
 
-semgrep scan --config p/default --config p/golang --config p/secrets \
-  --metrics=off --json --output "$ART/semgrep.json" .
-# Build deterministic AST targets from semgrep scope (no hardcoded path guessing)
+opengrep scan --config /opt/opengrep-rules --taint-intrafile \
+  --json --output "$ART/opengrep.json" .
+# Build deterministic AST targets from opengrep scope (no hardcoded path guessing)
 python3 - <<'PY'
 import json
 from pathlib import Path
 
 art = Path("/workspace/.source-aware")
-semgrep_json = art / "semgrep.json"
+opengrep_json = art / "opengrep.json"
 targets_file = art / "sg-targets.txt"
 
 try:
-    data = json.loads(semgrep_json.read_text(encoding="utf-8"))
+    data = json.loads(opengrep_json.read_text(encoding="utf-8"))
 except Exception:
     targets_file.write_text("", encoding="utf-8")
     raise
@@ -63,17 +63,18 @@ trivy fs --scanners vuln,misconfig --timeout 30m --offline-scan \
   --format json --output "$ART/trivy-fs.json" . || true
 ```
 
-## Semgrep First Pass
+## Opengrep First Pass
 
-Use Semgrep as the default static triage pass:
+Use Opengrep as the default static triage pass. Rules are bundled offline in `/opt/opengrep-rules` (one directory per language, plus `generic/secrets`):
 
 ```bash
-# Preferred deterministic profile set (works with --metrics=off)
-semgrep scan --config p/default --config p/golang --config p/secrets \
-  --metrics=off --json --output /workspace/.source-aware/semgrep.json .
+# Full bundled ruleset
+opengrep scan --config /opt/opengrep-rules --taint-intrafile \
+  --json --output /workspace/.source-aware/opengrep.json .
 
-# If you choose auto config, do not combine it with --metrics=off
-semgrep scan --config auto --json --output /workspace/.source-aware/semgrep-auto.json .
+# Narrow to the target stack when the full set is slow or noisy
+opengrep scan --config /opt/opengrep-rules/python --config /opt/opengrep-rules/generic/secrets \
+  --taint-intrafile --json --output /workspace/.source-aware/opengrep-python.json .
 ```
 
 If diff scope is active, restrict to changed files first, then expand only when needed.

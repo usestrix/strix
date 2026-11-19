@@ -112,6 +112,15 @@ async def test_retry_after_parses_seconds_and_http_date() -> None:
 
 
 @pytest.mark.asyncio
+async def test_successful_response_clears_previous_auth_failure() -> None:
+    recorder = HttpStatusRecorder()
+    await recorder(_http_error(401).response)
+    request = httpx.Request("POST", "https://provider.example/tools")
+    await recorder(httpx.Response(200, request=request))
+    assert recorder.take() is None
+
+
+@pytest.mark.asyncio
 async def test_recorder_only_keeps_non_sensitive_request_metadata() -> None:
     recorder = HttpStatusRecorder()
     response = _http_error(500, retry_after="3").response

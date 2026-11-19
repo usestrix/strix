@@ -206,6 +206,19 @@ async def finish_scan(
        record it as ``needs_follow_up`` before finishing. The response
        from this tool reports coverage counts and any unresolved rows.
 
+    **Final step before this call (mandatory): review the threat
+    model.** Call ``get_threat_model`` for every target of the scan and
+    read the body together with its amendments against what the scan
+    actually established. People read the saved body after the scan and
+    never see the amendments, so it must be the final, corrected
+    account. If any amendment exists, or anything in the body is now
+    wrong, incomplete, or still marked as inferred after it was
+    confirmed or disproved, rewrite it and call ``save_threat_model``
+    with the full corrected document, diagrams included. If the body is
+    already accurate, leave it. Do this last, after every agent has
+    stopped, so no later amendment is lost, and only then call
+    ``finish_scan``.
+
     **Calling this multiple times overwrites the previous report.**
     Make the single call comprehensive.
 

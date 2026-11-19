@@ -733,7 +733,11 @@ async def test_search_matches_any_query_term_and_prioritizes_active_tools() -> N
 
 
 @pytest.mark.asyncio
-async def test_search_returns_active_tools_when_text_does_not_match() -> None:
+@pytest.mark.parametrize("active_tools", [[], ["search_documents"]])
+@pytest.mark.parametrize("limit", [1, 2, 8])
+async def test_search_returns_tools_when_text_does_not_match(
+    active_tools: list[str], limit: int
+) -> None:
     registry = McpRegistry()
     registry.add(
         name="docs",
@@ -747,7 +751,7 @@ async def test_search_returns_active_tools_when_text_does_not_match() -> None:
         config=McpConnectionConfig(
             name="docs",
             url="https://example.invalid/mcp",
-            active_tools=["fetch_page"],
+            active_tools=active_tools,
         ),
     )
 
@@ -757,17 +761,47 @@ async def test_search_returns_active_tools_when_text_does_not_match() -> None:
             {
                 "connection": "docs",
                 "query": "unrelated capability",
+                "limit": limit,
             }
         ),
     )
 
+    expected = (
+        ["search_documents", "fetch_page"] if active_tools else ["fetch_page", "search_documents"]
+    )
     assert searched["matches"] == [
         {
-            "name": "fetch_page",
-            "description": "remote tool fetch_page",
-            "active": True,
+            "name": name,
+            "description": f"remote tool {name}",
+            "active": name in active_tools,
         }
+        for name in expected[:limit]
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", [1, 2, 3, 100])
+async def test_search_includes_non_matches_only_when_catalog_fits(limit: int) -> None:
+    registry = McpRegistry()
+    registry.add(
+        name="remote",
+        server=FakeMCPServer(
+            "remote", [_mcp_tool("execute"), _mcp_tool("search"), _mcp_tool("docs")]
+        ),
+        config=McpConnectionConfig(
+            name="remote",
+            url="https://example.invalid/mcp",
+            active_tools=["execute"],
+        ),
+    )
+
+    searched = await search_mcp_tools.on_invoke_tool(
+        _ctx(registry),
+        json.dumps({"connection": "remote", "query": "docs", "limit": limit}),
+    )
+
+    expected = ["docs", "execute", "search"] if limit >= 3 else ["docs"]
+    assert [match["name"] for match in searched["matches"]] == expected
 
 
 @pytest.mark.asyncio

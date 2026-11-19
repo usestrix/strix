@@ -30,6 +30,8 @@ from strix.core.hooks import (
     BudgetExceededError,
     BudgetPausedError,
     SubagentBudgetReservedError,
+    finish_tool_name,
+    subagent_finish_tool,
 )
 from strix.core.inputs import child_initial_input
 from strix.core.sessions import (
@@ -439,6 +441,7 @@ async def spawn_child_agent(
             parent_id=parent_id,
             task=task,
             parent_history=parent_history,
+            finish_tool=subagent_finish_tool(parent_ctx),
         ),
         event_sink=event_sink,
         hooks=hooks,
@@ -652,7 +655,6 @@ async def _run_until_lifecycle(
         input_data = await _append_tool_required_message(
             session=session,
             context=context,
-            root_finish_tool=coordinator.root_finish_tool,
             attempt=recoveries,
             limit=recovery_limit,
             interactive=interactive,
@@ -1053,9 +1055,8 @@ async def _append_tool_required_message(
     interactive: bool,
     silent_yield: bool = False,
     serialized_tool_call: bool = False,
-    root_finish_tool: str = "finish_scan",
 ) -> list[dict[str, str]]:
-    finish_tool = root_finish_tool if context.get("parent_id") is None else "agent_finish"
+    finish_tool = finish_tool_name(context)
     if silent_yield:
         message = (
             "You called wait_for_user without having written anything to the user since "

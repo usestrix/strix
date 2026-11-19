@@ -48,6 +48,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# A cold go run can download a toolchain and modules, then compile, before the
+# child connects and answers the handshake.
+_GO_RUN_HANDSHAKE_TIMEOUT = 300.0
+
 
 def _revision_count(report: dict[str, Any]) -> int:
     history = report.get("update_history")
@@ -98,6 +102,7 @@ class GoTuiRuntime:
             "local_sources": self.args.local_sources or [],
             "workspace_files": getattr(self.args, "workspace_files", None) or [],
             "scope_mode": self.args.scope_mode,
+            "skills": list(getattr(self.args, "skills", None) or []),
             "diff_base": self.args.diff_base,
             "resume_instruction": self.args.user_explicit_instruction or "",
             "workspace_mount": getattr(self.args, "workspace_mount", None) or "",
@@ -431,8 +436,9 @@ class GoTuiRuntime:
                     file=original_stdout,
                     flush=True,
                 )
-            process, backend_socket = await launch_tui_process(command, env, cwd)
-            await self.server.start(backend_socket)
+            startup_timeout = _GO_RUN_HANDSHAKE_TIMEOUT if cwd is not None else None
+            process, backend_socket = await launch_tui_process(command, env, cwd, startup_timeout)
+            await self.server.start(backend_socket, handshake_timeout=startup_timeout)
             prepare_task = self._start_preparation()
             sync_task = asyncio.create_task(self.sync_state())
             return_code = await wait_process(process)

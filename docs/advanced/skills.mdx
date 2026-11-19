@@ -134,6 +134,49 @@ How to bypass common protections.
 How to confirm findings and avoid false positives.
 ```
 
+## Load skills yourself
+
+Agents pick skills from a catalog of names and one-line descriptions. The pick depends on the subtask the agent was given. To make sure the root agent starts with a skill, name it on the command line:
+
+```bash
+strix --target https://api.example.com --skills idor,mass_assignment
+strix --target https://api.example.com --skills vulnerabilities/idor,custom/my_method
+```
+
+Strix loads the named skills into the root agent's system prompt before the scan starts. The root agent can still pass them to child agents with `create_agent(skills=[...])`. An unknown name stops the run and prints the available skills. A resumed scan keeps the skills of the original run.
+
+## Add your own skills
+
+Point Strix at a directory that uses the same `<category>/<name>.md` layout as the built-in skills:
+
+```bash
+strix --target https://app.com --skills-dir ./my-skills --skills custom/my_method
+```
+
+```text
+my-skills/
+├── custom/
+│   └── my_method.md
+└── vulnerabilities/
+    └── idor.md        # replaces the built-in idor skill
+```
+
+Repeat `--skills-dir` for more directories, or set `STRIX_SKILLS_DIR` to a list of directories separated by the OS path separator. Strix searches these directories before the packaged skills. A file with the same path as a built-in skill replaces it. This works for installed builds too, so you do not have to rebuild the package to add a skill.
+
+Strix lists your skills first in the catalog, before the built-in skills, and marks them as operator skills. When one of your skills fits a task, agents load it or assign it before a built-in skill. Strix does not load your skills into an agent automatically. To do that for the root agent, use `--skills`.
+
+Each file needs the frontmatter `description` field. Agents only see the name and this description in the catalog, so write the description for the subtask that should trigger the skill.
+
+## Skills or instructions?
+
+<Note>
+A skill is specialist knowledge for one agent: a vulnerability class, a technology, a tool, or a target-specific quirk. An agent loads a skill when the skill matches its subtask.
+
+An instruction file is the engagement rulebook: scope, credentials, coordination rules, shared artifacts, and completion criteria. Every agent sees the instructions. See [Custom Instructions](/usage/instructions#reusable-methodology).
+</Note>
+
+A cross-cutting methodology that spans the whole engagement belongs in an instruction file. If the methodology also needs knowledge that the built-in skills do not have, put that part in a custom skill and name it from the instruction file.
+
 ## Contributing Skills
 
 Community contributions are welcome. Create a `.md` file in the appropriate category with YAML frontmatter (`name` and `description` fields). Good skills include:
