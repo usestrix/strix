@@ -152,7 +152,7 @@ _NETWORK_TEST_USER_ADD_BODY = (
 
 _NETWORK_ID_HELP = (
     "Use a connector ID from strix cloud connectors list as NETWORK_ID. "
-    "For this self-hosted install, use direct instead."
+    "On a self-hosted install, use direct for the local network."
 )
 
 
@@ -1207,7 +1207,7 @@ GROUP_HELP: dict[str, str] = {
     "scans": "Start, watch, and manage scans",
     "vulns": "Triage and remediate vulnerabilities",
     "domains": "Manage domain assets and test users",
-    "networks": "Manage network test users with connector IDs or direct (self-hosted only)",
+    "networks": "Manage test users on network connectors",
     "repos": "Manage repository assets and supply-chain scans",
     "supply-chain": "Organization supply-chain summary",
     "schedules": "Manage scan schedules",
