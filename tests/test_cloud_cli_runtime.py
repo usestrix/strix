@@ -742,6 +742,116 @@ def test_wait_timeout_is_bounded(monkeypatch: pytest.MonkeyPatch, capsys: Any) -
     assert "wait timed out" in json.loads(capsys.readouterr().out)["error"]
 
 
+class _FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _start_scan_and_wait(wait_timeout: str) -> int:
+    return cloud.run_cloud(
+        [
+            "scans",
+            "start",
+            "--domain-ids",
+            "domain-1",
+            "--wait",
+            "--wait-timeout",
+            wait_timeout,
+            "--json",
+        ]
+    )
+
+
+def test_wait_starts_no_poll_after_the_deadline(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    clock = _FakeClock()
+    poll_starts: list[float] = []
+
+    def response(method: str, _path: str, **_kwargs: Any) -> FakeResponse:
+        if method == "POST":
+            return FakeResponse({"id": "scan-1", "status": "pending"})
+        poll_starts.append(clock.now)
+        clock.now += 0.1
+        return FakeResponse({"id": "scan-1", "status": "running"})
+
+    monkeypatch.setattr(http, "request", response)
+    monkeypatch.setattr(runner, "time", clock)
+
+    assert _start_scan_and_wait("1") == 1
+    assert poll_starts == [0.0]
+    payload = json.loads(capsys.readouterr().out)
+    assert "wait timed out" in payload["error"]
+    assert payload["operation_id"] == "scan-1"
+
+
+def test_wait_reports_a_final_status_received_after_the_deadline_as_a_timeout(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    clock = _FakeClock()
+
+    def response(method: str, _path: str, **_kwargs: Any) -> FakeResponse:
+        if method == "POST":
+            return FakeResponse({"id": "scan-1", "status": "pending"})
+        clock.now += 30.0
+        return FakeResponse({"id": "scan-1", "status": "completed"})
+
+    monkeypatch.setattr(http, "request", response)
+    monkeypatch.setattr(runner, "time", clock)
+
+    assert _start_scan_and_wait("1") == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert "wait timed out" in payload["error"]
+    assert payload["operation_id"] == "scan-1"
+
+
+def test_wait_caps_each_poll_request_at_the_remaining_budget(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    clock = _FakeClock()
+    poll_timeouts: list[float | None] = []
+
+    def response(method: str, _path: str, **kwargs: Any) -> FakeResponse:
+        if method == "POST":
+            return FakeResponse({"id": "scan-1", "status": "pending"})
+        poll_timeouts.append(kwargs.get("timeout"))
+        status = "running" if len(poll_timeouts) == 1 else "completed"
+        return FakeResponse({"id": "scan-1", "status": status})
+
+    monkeypatch.setattr(http, "request", response)
+    monkeypatch.setattr(runner, "time", clock)
+
+    assert _start_scan_and_wait("20") == 0
+    assert poll_timeouts == [20.0, 5.0]
+    assert json.loads(capsys.readouterr().out)["status"] == "completed"
+
+
+def test_request_timeout_override_only_shortens_the_configured_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timeouts: list[float] = []
+
+    def fake_request(*_args: Any, **kwargs: Any) -> FakeResponse:
+        timeouts.append(kwargs["timeout"])
+        return FakeResponse({})
+
+    monkeypatch.setattr(http, "_timeout_s", 120.0)
+    monkeypatch.setattr(http, "api_token", lambda _token=None: "token")
+    monkeypatch.setattr(http.requests, "request", fake_request)
+
+    http.request("GET", "/scans/scan-1")
+    http.request("GET", "/scans/scan-1", timeout=5.0)
+    http.request("GET", "/scans/scan-1", timeout=600.0)
+
+    assert timeouts == [120.0, 5.0, 120.0]
+
+
 def test_wait_interruption_returns_130_with_remote_operation_id(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
