@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import csv
-import io
 import json
 import logging
 import re
@@ -20,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from agents import RunContextWrapper, function_tool
 
-from strix.report.writer import atomic_write_text, csv_safe
+from strix.report.writer import csv_safe
 
 
 if TYPE_CHECKING:
@@ -75,18 +74,27 @@ def _persist() -> None:
         tmp = _path.with_name(f".{_path.name}.tmp")
         tmp.write_text(json.dumps(_objects, ensure_ascii=False), encoding="utf-8")
         tmp.replace(_path)
-        # The same list as a spreadsheet beside the report: what the test left on the target.
-        rows = io.StringIO()
-        writer = csv.writer(rows)
-        writer.writerow(["identifier", "kind", "source", "created_at"])
-        for identifier, entry in _objects.items():
+    except OSError:
+        logger.exception("test objects persist to %s failed", _path)
+
+
+def _append_csv_row(identifier: str, entry: dict[str, Any]) -> None:
+    """Add the object to test_objects.csv beside the report: what the test left on the target."""
+    if _path is None:
+        return
+    path = _path.parent.parent / "test_objects.csv"
+    try:
+        new_file = not path.exists()
+        with path.open("a", encoding="utf-8", newline="") as file:
+            writer = csv.writer(file)
+            if new_file:
+                writer.writerow(["identifier", "kind", "source", "created_at"])
             writer.writerow(
                 csv_safe(value)
                 for value in (identifier, entry["kind"], entry["source"], entry["created_at"])
             )
-        atomic_write_text(_path.parent.parent / "test_objects.csv", rows.getvalue())
     except OSError:
-        logger.exception("test objects persist to %s failed", _path)
+        logger.exception("test objects export to %s failed", path)
 
 
 def register(identifier: str, kind: str, source: str, agent_id: str | None = None) -> bool:
@@ -99,16 +107,16 @@ def register(identifier: str, kind: str, source: str, agent_id: str | None = Non
     if source == "agent" and not _ISSUED_IDENTIFIER_RE.search(identifier):
         return False
     with _lock:
-        _objects.setdefault(
-            identifier,
-            {
+        if identifier not in _objects:
+            entry = {
                 "kind": kind.strip() or "object",
                 "source": source,
                 "agent_id": agent_id,
                 "created_at": datetime.now(UTC).isoformat(),
-            },
-        )
-        _persist()
+            }
+            _objects[identifier] = entry
+            _persist()
+            _append_csv_row(identifier, entry)
     return True
 
 
