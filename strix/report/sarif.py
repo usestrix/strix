@@ -53,6 +53,7 @@ import json
 import logging
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
@@ -196,6 +197,33 @@ def _stride_legs_for_cwe(cwe: str | None) -> tuple[str, ...]:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FindingFingerprints:
+    """Identity hashes SARIF emits for one finding.
+
+    ``primary`` is ``partialFingerprints.primaryLocationLineHash`` (location +
+    rule). ``vuln_class`` is ``properties.strix_vuln_class_hash`` (rule + class
+    keyword, independent of file path).
+    """
+
+    primary: str | None
+    vuln_class: str | None
+
+
+def fingerprints_for_finding(report: dict[str, Any]) -> FindingFingerprints:
+    """Return the primary and class fingerprints SARIF would emit for *report*.
+
+    ``strix diff`` matches findings with these hashes so comparison uses the
+    same identity as ``findings.sarif``.
+    """
+    locations, is_synthetic, _dropped = _build_locations(report)
+    rule_id = _rule_id(report)
+    return FindingFingerprints(
+        primary=_primary_fingerprint(rule_id, report, locations, is_synthetic=is_synthetic),
+        vuln_class=_class_fingerprint(rule_id, report),
+    )
 
 
 def build_sarif_report(

@@ -10,7 +10,10 @@ from strix.interface.cloud.spec import DEFAULT_VERBS, SPEC, Cmd
 from strix.interface.terminal_text import has_terminal_control, sanitize_terminal_text
 
 
-_ROOT_COMMANDS = ("cloud", "auth", "view", "completions", "completion")
+_ROOT_COMMANDS = ("cloud", "auth", "view", "diff", "completions", "completion")
+_DIFF_FLAGS = ("--json", "--fail-on-new", "--match", "-h", "--help")
+_DIFF_MATCH = ("strict", "class")
+_DIFF_SEVERITIES = ("critical", "high", "medium", "low", "info")
 _SESSION_COMMANDS = ("login", "logout", "whoami", "session", "credits")
 _COMMON_FLAGS = (
     "--json",
@@ -57,6 +60,8 @@ def completion_candidates(words: list[str]) -> list[str]:
     prior, current = _split_cursor(words)
     if not prior:
         candidates = _matching(_ROOT_COMMANDS, current)
+    elif prior[0] == "diff":
+        candidates = _diff_candidates(prior[1:], current)
     elif prior[0] != "cloud":
         candidates = []
     else:
@@ -64,6 +69,14 @@ def completion_candidates(words: list[str]) -> list[str]:
     # The line-oriented shell protocol cannot represent these names safely.
     # Omitting them is preferable to returning a sanitized path that does not exist.
     return [candidate for candidate in candidates if not has_terminal_control(candidate)]
+
+
+def _diff_candidates(prior: list[str], current: str) -> list[str]:
+    if prior and prior[-1] == "--match" and not current.startswith("-"):
+        return _matching(_DIFF_MATCH, current)
+    if prior and prior[-1] == "--fail-on-new" and not current.startswith("-"):
+        return _matching(_DIFF_SEVERITIES, current)
+    return _matching(_DIFF_FLAGS, current)
 
 
 def _split_cursor(words: list[str]) -> tuple[list[str], str]:

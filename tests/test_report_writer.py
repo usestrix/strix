@@ -49,6 +49,13 @@ def test_read_run_record_corrupt_raises(tmp_path: Path) -> None:
         read_run_record(tmp_path)
 
 
+def test_read_run_record_invalid_utf8_raises(tmp_path: Path) -> None:
+    record = tmp_path / "run.json"
+    record.write_bytes(b"\xff\xfe not utf-8")
+    with pytest.raises(RuntimeError, match="unreadable"):
+        read_run_record(tmp_path)
+
+
 def test_read_run_record_non_object_raises(tmp_path: Path) -> None:
     record = tmp_path / "run.json"
     record.write_text(json.dumps(["array"]), encoding="utf-8")

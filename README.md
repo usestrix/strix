@@ -207,6 +207,18 @@ The dashboard shows the findings, a live map of the agent team, and past runs. N
 
 See the [viewer documentation](https://docs.strix.ai/usage/viewer) for the options and for reaching the viewer from another machine.
 
+### Compare two runs
+
+After a fix, re-run Strix and compare findings (new, fixed, still present):
+
+```bash
+strix diff before-fix after-fix
+strix diff before-fix after-fix --match class
+strix diff before-fix after-fix --fail-on-new high
+```
+
+Each argument is a run name under `./strix_runs` or a path to a run directory. See the [CLI reference](https://docs.strix.ai/usage/cli).
+
 ---
 
 ## Usage Examples
