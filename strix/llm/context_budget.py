@@ -8,7 +8,7 @@ import logging
 from functools import lru_cache
 from typing import Any
 
-from strix.config import load_settings
+from strix.config import load_settings, mistral
 
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,8 @@ _DEFAULT_OUTPUT_TOKENS = 8_192
 
 
 def _lookup_key(model: str) -> str:
+    if model.startswith(mistral.SUBSCRIPTION_PREFIX):
+        return "mistral/" + model[len(mistral.SUBSCRIPTION_PREFIX) :]
     for prefix in _STRIPPABLE_PREFIXES:
         if model.startswith(prefix):
             return model[len(prefix) :]
@@ -48,7 +50,8 @@ def _model_info(model: str) -> dict[str, int]:
     lookup_key = _lookup_key(model)
     # Provider-qualified ChatGPT lookups may start a synchronous device-login
     # poll. LiteLLM keys the metadata by the underlying model slug.
-    candidates = (lookup_key,) if model.startswith("chatgpt/") else (model, lookup_key)
+    subscription_prefixes = ("chatgpt/", mistral.SUBSCRIPTION_PREFIX)
+    candidates = (lookup_key,) if model.startswith(subscription_prefixes) else (model, lookup_key)
     for candidate in candidates:
         info = _safe_get_model_info(candidate)
         if info is not None:

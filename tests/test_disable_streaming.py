@@ -29,7 +29,7 @@ from openai.types.responses import (
     ResponseOutputText,
 )
 
-from strix.config import codex, loader
+from strix.config import codex, loader, mistral, subscriptions
 from strix.config.loader import load_settings
 from strix.config.models import StrixProvider, _NonStreamingModel, _TurnGuardModel
 from strix.llm.request_log import RequestLoggingModel
@@ -322,7 +322,9 @@ def test_get_model_guards_subscription_model_but_keeps_it_streaming(
 ) -> None:
     # Subscription (ChatGPT) models are always streamed, so LLM_DISABLE_STREAMING
     # must not apply — but a runaway response needs capping there too.
-    monkeypatch.setattr(codex, "subscription_model", lambda *_: "gpt-5.5")
+    monkeypatch.setattr(
+        subscriptions, "subscription_for", lambda *_: (subscriptions.CHATGPT, "gpt-5.5")
+    )
     monkeypatch.setattr(codex, "get_subscription_client", lambda: AsyncOpenAI(api_key="x"))
     monkeypatch.setenv("LLM_DISABLE_STREAMING", "true")
     load_settings()
@@ -330,3 +332,15 @@ def test_get_model_guards_subscription_model_but_keeps_it_streaming(
     model = StrixProvider().get_model("gpt-5.5")
     assert isinstance(model, _TurnGuardModel)
     assert not isinstance(model._inner, _NonStreamingModel)
+
+
+def test_get_model_honours_disable_streaming_on_the_mistral_subscription(
+    monkeypatch: pytest.MonkeyPatch, _reset_settings: None
+) -> None:
+    monkeypatch.setattr(mistral, "get_subscription_client", lambda: AsyncOpenAI(api_key="x"))
+    monkeypatch.setenv("LLM_DISABLE_STREAMING", "true")
+    load_settings()
+
+    model = StrixProvider().get_model("lechat/mistral-large-latest")
+    assert isinstance(model, _TurnGuardModel)
+    assert isinstance(model._inner, _NonStreamingModel)

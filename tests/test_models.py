@@ -2,17 +2,30 @@
 
 from __future__ import annotations
 
+import json
+from typing import TYPE_CHECKING, Any
+
+import httpx
 import litellm
 import pytest
 from agents.extensions.models.litellm_model import LitellmModel
 from agents.model_settings import ModelSettings
 from agents.models import _openai_shared
+from agents.models.interface import ModelTracing
 from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 from agents.models.openai_responses import OpenAIResponsesModel
+from openai import AsyncOpenAI
+from openai.types.responses import (
+    ResponseCompletedEvent,
+    ResponseOutputMessage,
+    ResponseOutputText,
+    ResponseReasoningItem,
+)
 
-from strix.config import models
+from strix.config import mistral, models
 from strix.config.models import (
     StrixProvider,
+    _MistralChatModel,
     _NonStreamingModel,
     _TurnGuardModel,
     configure_sdk_model_defaults,
@@ -25,6 +38,10 @@ from strix.config.models import (
 )
 from strix.config.settings import Settings
 from strix.llm.request_log import RequestLoggingModel
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def test_request_timeout_extra_args_positive() -> None:
@@ -211,3 +228,192 @@ def test_image_support_follows_the_catalog(monkeypatch: pytest.MonkeyPatch) -> N
     assert model_supports_images("acme-text") is False
     assert model_supports_images("litellm/openai/acme-vision") is True
     assert model_supports_images("acme-unknown-model") is True
+
+
+def test_mistral_subscription_resolves_to_the_chat_completions_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """lechat/<slug> must resolve to the Mistral subscription chat model, never LiteLLM."""
+    client = AsyncOpenAI(api_key="placeholder", base_url="http://127.0.0.1:9/v1")
+    monkeypatch.setattr(mistral, "get_subscription_client", lambda: client)
+
+    model = StrixProvider().get_model("lechat/mistral-large-latest")
+    assert isinstance(model, _TurnGuardModel)
+    logged = model._inner
+    assert isinstance(logged, RequestLoggingModel)
+    assert isinstance(logged._inner, _MistralChatModel)
+    assert logged._provider == "mistral-subscription"
+    assert logged._host == "api.mistral.ai"
+    assert logged._inner._client is client
+    assert logged._inner.model == "mistral-large-latest"
+
+
+_MISTRAL_THINKING = {"type": "thinking", "thinking": [{"type": "text", "text": "User wants pong."}]}
+
+
+def _mistral_model(handler: Callable[[httpx.Request], httpx.Response]) -> _MistralChatModel:
+    client = AsyncOpenAI(
+        api_key="placeholder",
+        base_url="http://mistral.test/v1",
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    return _MistralChatModel("mistral-large-latest", client)
+
+
+def _output_text_and_reasoning(output: list[Any]) -> tuple[str, str]:
+    text = "".join(
+        part.text
+        for item in output
+        if isinstance(item, ResponseOutputMessage)
+        for part in item.content
+        if isinstance(part, ResponseOutputText)
+    )
+    reasoning = "".join(
+        summary.text
+        for item in output
+        if isinstance(item, ResponseReasoningItem)
+        for summary in item.summary
+    )
+    return text, reasoning
+
+
+@pytest.mark.asyncio
+async def test_mistral_thinking_content_becomes_text_and_reasoning() -> None:
+    """Mistral reasoning models answer with a list of thinking and text chunks
+    where the SDK expects a string."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "c1",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "mistral-large-latest",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": [_MISTRAL_THINKING, {"type": "text", "text": "pong"}],
+                        },
+                    }
+                ],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+            },
+        )
+
+    response = await _mistral_model(handler).get_response(
+        None,
+        "ping",
+        ModelSettings(),
+        [],
+        None,
+        [],
+        ModelTracing.DISABLED,
+        previous_response_id=None,
+        conversation_id=None,
+        prompt=None,
+    )
+
+    assert _output_text_and_reasoning(response.output) == ("pong", "User wants pong.")
+
+
+@pytest.mark.asyncio
+async def test_mistral_streamed_thinking_content_becomes_text_and_reasoning() -> None:
+    deltas: list[Any] = [
+        [_MISTRAL_THINKING],
+        [{"type": "text", "text": "po"}],
+        "ng",
+    ]
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        chunks = [
+            {
+                "id": "c1",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": "mistral-large-latest",
+                "choices": [{"index": 0, "delta": {"content": delta}, "finish_reason": None}],
+            }
+            for delta in deltas
+        ]
+        chunks[-1]["choices"][0]["finish_reason"] = "stop"
+        body = "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks) + "data: [DONE]\n\n"
+        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    events = [
+        event
+        async for event in _mistral_model(handler).stream_response(
+            None,
+            "ping",
+            ModelSettings(),
+            [],
+            None,
+            [],
+            ModelTracing.DISABLED,
+            previous_response_id=None,
+            conversation_id=None,
+            prompt=None,
+        )
+    ]
+
+    completed = [e for e in events if isinstance(e, ResponseCompletedEvent)]
+    assert len(completed) == 1
+    assert _output_text_and_reasoning(completed[0].response.output) == (
+        "pong",
+        "User wants pong.",
+    )
+
+
+def test_mistral_subscription_needs_no_litellm_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """configure_sdk_model_defaults must skip LiteLLM/env setup for lechat/ models."""
+    settings = _settings(monkeypatch, "lechat/mistral-large-latest", None)
+    monkeypatch.setattr(litellm, "api_key", None)
+    monkeypatch.setattr(litellm, "api_base", None)
+
+    def _boom() -> None:
+        msg = "LiteLLM setup must not run for a subscription model"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(models, "_configure_litellm_compatibility", _boom)
+    monkeypatch.setattr(models, "_configure_attribution", _boom)
+    models.configure_sdk_model_defaults(settings)
+    assert litellm.api_key is None
+
+
+@pytest.mark.parametrize(
+    ("model_name", "expected"),
+    [
+        ("lechat/mistral-large-latest", True),  # chat completions route
+        ("chatgpt/gpt-5.4", False),  # responses route
+        ("openai/gpt-5.4", False),
+        ("anthropic/claude-sonnet-4-5", True),
+    ],
+)
+def test_uses_chat_completions_tool_schema_routes_subscriptions(
+    model_name: str, expected: bool
+) -> None:
+    assert uses_chat_completions_tool_schema(model_name, Settings()) is expected
+
+
+def test_mistral_subscription_sends_non_strict_tool_schemas() -> None:
+    assert supports_strict_tool_schemas("lechat/mistral-large-latest") is False
+    # The ChatGPT route keeps its existing behaviour.
+    assert supports_strict_tool_schemas("chatgpt/gpt-5.4") is True
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    ["lechat/mistral-large-latest", "chatgpt/gpt-5.4"],
+)
+def test_subscription_prefixes_never_route_through_litellm(model_name: str) -> None:
+    assert routes_through_litellm(model_name) is False
+
+
+def test_mistral_api_key_prefix_still_routes_through_litellm() -> None:
+    assert routes_through_litellm("mistral/mistral-large-latest") is True
+    assert supports_strict_tool_schemas("mistral/mistral-large-latest") is True

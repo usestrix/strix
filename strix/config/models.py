@@ -22,6 +22,7 @@ from agents.model_settings import ModelSettings
 from agents.models.fake_id import FAKE_RESPONSES_ID
 from agents.models.interface import Model, ModelProvider
 from agents.models.multi_provider import MultiProvider
+from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 from agents.models.openai_responses import OpenAIResponsesModel
 from agents.retry import (
     ModelRetryBackoffSettings,
@@ -29,6 +30,7 @@ from agents.retry import (
     RetryPolicyContext,
     retry_policies,
 )
+from openai.types.chat import ChatCompletion
 from openai.types.responses import (
     Response,
     ResponseCompletedEvent,
@@ -39,7 +41,7 @@ from openai.types.responses.response_usage import ResponseUsage
 from openai.types.shared import Reasoning
 
 from strix.agents.prompt import CACHE_POINT
-from strix.config import codex
+from strix.config import codex, mistral, subscriptions
 from strix.config.loader import load_settings
 from strix.config.tool_call_arguments import repair_input
 from strix.config.tool_call_ids import TurnCallIdRewriter, dedupe_input
@@ -57,7 +59,8 @@ if TYPE_CHECKING:
     from agents.retry import ModelRetryAdvice, ModelRetryAdviceRequest
     from agents.tool import Tool
     from agents.usage import Usage
-    from openai import AsyncOpenAI
+    from openai import AsyncOpenAI, AsyncStream
+    from openai.types.chat import ChatCompletionChunk
     from openai.types.responses.response_prompt_param import ResponsePromptParam
 
     from strix.config.settings import ApiType, LlmSettings, ReasoningEffort, Settings
@@ -166,6 +169,64 @@ class _CodexResponsesModel(OpenAIResponsesModel):
                 result = close()
                 if inspect.isawaitable(result):
                     await result
+
+
+def _split_mistral_content(holder: Any) -> None:
+    """Rewrite a Mistral content-chunk list on a message or delta in place: text
+    chunks become the ``content`` string and thinking chunks ``reasoning_content``,
+    the shapes the SDK's chat-completions converters read."""
+    content = getattr(holder, "content", None)
+    if not isinstance(content, list):
+        return
+    text: list[str] = []
+    thinking: list[str] = []
+    for chunk in cast("list[object]", content):
+        if not isinstance(chunk, dict):
+            continue
+        part = cast("dict[str, Any]", chunk)
+        if part.get("type") == "text":
+            text.append(str(part.get("text") or ""))
+        elif part.get("type") == "thinking":
+            thinking.extend(
+                str(cast("dict[str, Any]", step).get("text") or "")
+                for step in cast("list[object]", part.get("thinking") or [])
+                if isinstance(step, dict)
+            )
+    holder.content = "".join(text) or None
+    if thinking:
+        holder.reasoning_content = "".join(thinking)
+
+
+class _MistralChatModel(OpenAIChatCompletionsModel):
+    """Chat-completions model for the Mistral subscription backend.
+
+    The Mistral subscription serves the OpenAI-compatible API at
+    ``https://api.mistral.ai/v1`` with a Bearer token, so the SDK's stock chat
+    completions route (streaming included) carries it, except that reasoning
+    models answer with a list of thinking and text chunks where the SDK expects
+    a string; ``_split_mistral_content`` reshapes those before the SDK reads them.
+    """
+
+    async def _fetch_response(self, *args: Any, **kwargs: Any) -> Any:
+        result = cast("Any", await super()._fetch_response(*args, **kwargs))
+        if isinstance(result, ChatCompletion):
+            for choice in result.choices:
+                _split_mistral_content(choice.message)
+            return result
+        response, stream = cast("tuple[Response, AsyncStream[ChatCompletionChunk]]", result)
+        return response, self._split_stream(stream)
+
+    @staticmethod
+    async def _split_stream(
+        stream: AsyncStream[ChatCompletionChunk],
+    ) -> AsyncGenerator[ChatCompletionChunk]:
+        try:
+            async for chunk in stream:
+                for choice in chunk.choices:
+                    _split_mistral_content(choice.delta)
+                yield chunk
+        finally:
+            await stream.close()
 
 
 class _NonStreamingModel(Model):
@@ -612,12 +673,13 @@ class StrixProvider(MultiProvider):
 
     def get_model(self, model_name: str | None) -> Model:
         llm = load_settings().llm
-        slug = codex.subscription_model(model_name)
+        sub = subscriptions.subscription_for(model_name)
         # The settings use 0 for no bound.
         idle_timeout = float(llm.stream_idle_timeout) or None
         first_event_timeout = float(llm.stream_first_event_timeout) or None
         total_timeout = float(llm.stream_total_timeout) or None
-        if slug:
+        if sub is not None and sub[0] is subscriptions.CHATGPT:
+            slug = sub[1]
             # The ChatGPT subscription backend is always streamed; it has no
             # non-streaming mode to fall back to, so LLM_DISABLE_STREAMING
             # does not apply here.
@@ -631,6 +693,17 @@ class StrixProvider(MultiProvider):
                 provider="openai-codex",
                 base_url=None,
             )
+        elif sub is not None:
+            slug = sub[1]
+            model = request_log.RequestLoggingModel(
+                _MistralChatModel(slug, mistral.get_subscription_client()),
+                model_name=slug,
+                provider="mistral-subscription",
+                base_url=mistral.API_BASE,
+            )
+            if llm.disable_streaming:
+                model = _NonStreamingModel(model)
+                idle_timeout = first_event_timeout = total_timeout = None
         else:
             model = super().get_model(model_name)
             resolved_name = model_name or llm.model or "unknown"
@@ -710,7 +783,7 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     request_log.install()
     if settings.telemetry.run_record_timings:
         request_log.register_sink(record_llm_request)
-    if codex.subscription_model(llm.model):
+    if subscriptions.subscription_slug(llm.model):
         return
     _configure_litellm_compatibility()
     _configure_attribution(llm.model)
@@ -984,8 +1057,10 @@ def _configure_litellm_default(name: str, value: str) -> None:
 
 def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bool:
     """Return whether the resolved SDK route can only receive JSON function tools."""
-    if codex.subscription_model(model_name):
-        return False
+    sub = subscriptions.subscription_for(model_name)
+    if sub is not None:
+        # chatgpt/ runs on the Responses API; lechat/ on chat completions.
+        return sub[0] is subscriptions.MISTRAL
     model = model_name.strip().lower()
     if "/" in model and not model.startswith("openai/"):
         return True
@@ -1001,6 +1076,10 @@ def supports_strict_tool_schemas(model_name: str) -> bool:
     exceeded and the request is rejected outright.
     """
     name = model_name.strip().lower()
+    sub = subscriptions.subscription_for(name)
+    if sub is not None and sub[0] is subscriptions.MISTRAL:
+        # The Mistral API does not guarantee strict tool schemas; send relaxed ones.
+        return False
     return not any(marker in name for marker in _ANTHROPIC_MODEL_MARKERS)
 
 
@@ -1061,7 +1140,7 @@ def routes_through_litellm(model_name: str | None) -> bool:
     OpenAI-compatible gateway in front of Claude.
     """
     name = (model_name or "").strip()
-    if not name or codex.subscription_model(name):
+    if not name or subscriptions.subscription_slug(name):
         return False
     prefix, _, rest = name.partition("/")
     return bool(rest) and prefix.lower() not in {"openai", "any-llm"}
