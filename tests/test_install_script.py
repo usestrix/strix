@@ -49,6 +49,10 @@ esac
     )
     _write_executable(mock_bin / "docker", "#!/bin/sh\nexit 0\n")
     _write_executable(
+        mock_bin / "mktemp",
+        '#!/bin/sh\nexec /usr/bin/mktemp "$@" "$TMPDIR/strix.XXXXXX"\n',
+    )
+    _write_executable(
         mock_bin / "curl",
         """#!/bin/sh
 output=""
@@ -61,7 +65,8 @@ while [ "$#" -gt 0 ]; do
   printf '%s\\n' "$1" >> "$STRIX_TEST_CURL_LOG"
   shift
 done
-cp "$STRIX_TEST_ARCHIVE" "$output"
+cp "$STRIX_TEST_ARCHIVE" "$output" || exit $?
+exit "${STRIX_TEST_CURL_EXIT:-0}"
 """,
     )
     return mock_bin
@@ -134,6 +139,31 @@ def test_installer_downloads_and_runs_linux_arm64_release(tmp_path: Path) -> Non
         check=True,
     )
     assert installed_result.stdout.strip() == f"strix {RELEASE_VERSION}"
+    assert not any(Path(environment["TMPDIR"]).iterdir())
+
+
+@pytest.mark.parametrize("curl_exit", [18, 0], ids=["partial-download", "invalid-archive"])
+def test_installer_removes_temporary_archive_on_failure(tmp_path: Path, curl_exit: int) -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    archive_path = tmp_path / "damaged-archive"
+    archive_path.write_bytes(b"incomplete release download")
+    mock_bin = _create_mock_commands(tmp_path, machine="aarch64")
+    environment, home_path, _ = _create_installer_environment(tmp_path, archive_path, mock_bin)
+    environment["STRIX_TEST_CURL_EXIT"] = str(curl_exit)
+    installed = home_path / ".strix/bin/strix"
+    installed.parent.mkdir(parents=True)
+    original = "#!/bin/sh\nprintf 'strix 9.9.8\\n'\n"
+    _write_executable(installed, original)
+
+    result = _run_installer(repository_root, environment)
+
+    assert result.returncode != 0
+    if curl_exit:
+        assert result.returncode == curl_exit
+    else:
+        assert "Extracting..." in result.stdout
+    assert installed.read_text(encoding="utf-8") == original
+    assert not any(Path(environment["TMPDIR"]).iterdir())
 
 
 def test_installer_rejects_unsupported_architecture(tmp_path: Path) -> None:
