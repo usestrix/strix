@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -55,8 +56,8 @@ def resolve_dedupe_model(dedupe: DedupeSettings, model_name: str) -> Model:
 
     Credentials can't ride on the request: every model implementation already
     passes its own ``api_key``/``base_url``, so the same keys in ``extra_args``
-    collide with them and raise before anything is sent. A provider bound to the
-    dedupe endpoint keeps it apart from the main model's process-wide defaults.
+    collide with them and raise before anything is sent. A provider bound to
+    the dedupe endpoint keeps it apart from the main model's process-wide defaults.
     """
     api_key = (dedupe.api_key or "").strip() if dedupe.model else ""
     api_base = (dedupe.api_base or "").strip() if dedupe.model else ""
@@ -92,7 +93,8 @@ CRITICAL DEDUPLICATION RULES:
    - Minor variations in technical analysis
 
 4. DEPENDENCY-CVE reports use package identity:
-   - Same CVE and same package/ecosystem is a duplicate
+   - Same CVE and same package/ecosystem is a duplicate within the same source
+   - The same CVE/package in different source roots is NOT a duplicate
    - Same CVE but different package/ecosystem is NOT a duplicate
    - Same package/ecosystem but different CVE is NOT a duplicate
 
@@ -186,15 +188,63 @@ def _manifest_path(report: dict[str, Any]) -> str:
     return str(metadata.get("manifest_path") or "").strip()
 
 
-def _distinct_manifest_paths(candidate: dict[str, Any], report: dict[str, Any]) -> bool:
-    """Same CVE/package observed in two different manifests is two findings.
+def _canonical_source_path(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    try:
+        return os.path.realpath(os.path.expanduser(value.strip()))
+    except (OSError, ValueError):
+        return ""
 
-    Only applies when both sides carry a manifest_path; a missing path keeps
-    the legacy CVE/package/ecosystem identity.
+
+def _dependency_source_identity(report: dict[str, Any]) -> str | None:
+    """Return the stable source identity available for a dependency finding.
+
+    Dependency reports store a user-facing target, while the run configuration
+    retains the canonical local source roots. Prefer the source-root index when
+    a target resolves to one of those roots; the target itself is the fallback
+    for legacy reports and non-local targets.
+    """
+    target = str(report.get("target") or "").strip()
+    if not target:
+        return None
+
+    state = get_global_report_state()
+    config = getattr(state, "scan_config", None) if state is not None else None
+    sources = config.get("local_sources") if isinstance(config, dict) else None
+    if isinstance(sources, list):
+        canonical_target = _canonical_source_path(target)
+        if canonical_target:
+            for index, source in enumerate(sources):
+                if not isinstance(source, dict):
+                    continue
+                source_path = source.get("source_path")
+                if canonical_target == _canonical_source_path(source_path):
+                    return f"local-source:{index}"
+
+    return target
+
+
+def _same_dependency_source(candidate: dict[str, Any], report: dict[str, Any]) -> bool:
+    candidate_source = _dependency_source_identity(candidate)
+    report_source = _dependency_source_identity(report)
+    return candidate_source is not None and candidate_source == report_source
+
+
+def _distinct_manifest_paths(candidate: dict[str, Any], report: dict[str, Any]) -> bool:
+    """Treat findings in different source roots as distinct dependencies.
+
+    The manifest path is intentionally relative to each source root. Comparing
+    it without the source identity collapses two repositories that both contain,
+    for example, ``package-lock.json``.
     """
     candidate_path = _manifest_path(candidate)
     report_path = _manifest_path(report)
-    return bool(candidate_path and report_path and candidate_path != report_path)
+    if not (candidate_path and report_path):
+        return False
+    if not _same_dependency_source(candidate, report):
+        return True
+    return candidate_path != report_path
 
 
 def _report_cve(report: dict[str, Any]) -> str:
