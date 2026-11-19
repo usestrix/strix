@@ -65,18 +65,32 @@ mkdir -p build/sidecar
 echo -e "\n${BLUE}Building binary with PyInstaller...${NC}"
 uv run pyinstaller strix.spec --noconfirm
 
+BINARY_PATH="dist/strix"
+if [ "$OS_NAME" = "windows" ]; then
+    BINARY_PATH="${BINARY_PATH}.exe"
+fi
+if [ ! -f "$BINARY_PATH" ]; then
+    echo -e "${RED}Build failed: Binary not found${NC}" >&2
+    exit 1
+fi
+
+echo -e "\n${BLUE}Testing binary...${NC}"
+if "$BINARY_PATH" --help > /dev/null; then
+    echo -e "${GREEN}Binary test passed!${NC}"
+else
+    smoke_status=$?
+    echo -e "${RED}Binary test failed (exit $smoke_status)${NC}" >&2
+    exit "$smoke_status"
+fi
+
 RELEASE_DIR="dist/release"
 mkdir -p "$RELEASE_DIR"
 
 BINARY_NAME="strix-${VERSION}-${OS_NAME}-${ARCH_NAME}"
 
 if [ "$OS_NAME" = "windows" ]; then
-    if [ ! -f "dist/strix.exe" ]; then
-        echo -e "${RED}Build failed: Binary not found${NC}"
-        exit 1
-    fi
     BINARY_NAME="${BINARY_NAME}.exe"
-    cp "dist/strix.exe" "$RELEASE_DIR/$BINARY_NAME"
+    cp "$BINARY_PATH" "$RELEASE_DIR/$BINARY_NAME"
     echo -e "\n${BLUE}Creating zip...${NC}"
     ARCHIVE_NAME="${BINARY_NAME%.exe}.zip"
 
@@ -87,11 +101,7 @@ if [ "$OS_NAME" = "windows" ]; then
     fi
     echo -e "${GREEN}Created:${NC} $RELEASE_DIR/$ARCHIVE_NAME"
 else
-    if [ ! -f "dist/strix" ]; then
-        echo -e "${RED}Build failed: Binary not found${NC}"
-        exit 1
-    fi
-    cp "dist/strix" "$RELEASE_DIR/$BINARY_NAME"
+    cp "$BINARY_PATH" "$RELEASE_DIR/$BINARY_NAME"
     chmod +x "$RELEASE_DIR/$BINARY_NAME"
     echo -e "\n${BLUE}Creating tarball...${NC}"
     ARCHIVE_NAME="${BINARY_NAME}.tar.gz"
@@ -105,8 +115,5 @@ echo -e "${YELLOW}Binary:${NC} $RELEASE_DIR/$BINARY_NAME"
 
 SIZE=$(ls -lh "$RELEASE_DIR/$BINARY_NAME" | awk '{print $5}')
 echo -e "${YELLOW}Size:${NC} $SIZE"
-
-echo -e "\n${BLUE}Testing binary...${NC}"
-"$RELEASE_DIR/$BINARY_NAME" --help > /dev/null 2>&1 && echo -e "${GREEN}Binary test passed!${NC}" || echo -e "${RED}Binary test failed${NC}"
 
 echo -e "\n${GREEN}Done!${NC}"
