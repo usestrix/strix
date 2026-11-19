@@ -1318,13 +1318,14 @@ async def test_interactive_nudge_offers_waiting_without_repeating() -> None:
 
 @pytest.mark.asyncio
 async def test_nudge_names_the_root_finish_tool() -> None:
+    coordinator = AgentCoordinator()
+    coordinator.root_finish_tool = "finish_pr_review"
     items = await execution._append_tool_required_message(
         session=None,
-        context={"parent_id": None},
+        context={"parent_id": None, "coordinator": coordinator},
         attempt=1,
         limit=3,
         interactive=False,
-        root_finish_tool="finish_pr_review",
     )
 
     assert "call finish_pr_review" in items[0]["content"]

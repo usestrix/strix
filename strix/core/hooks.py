@@ -156,13 +156,18 @@ def subagent_finish_tool(context: dict[str, Any]) -> str:
     return str(context.get(FINISH_TOOL_KEY) or "agent_finish")
 
 
+def finish_tool_name(context: dict[str, Any]) -> str:
+    """The tool that ends this agent's run."""
+    if context.get("parent_id") is not None:
+        return subagent_finish_tool(context)
+    coordinator = coordinator_from_context(context)
+    return coordinator.root_finish_tool if coordinator is not None else "finish_scan"
+
+
 def _wrapup_directive(context: RunContextWrapper[dict[str, Any]], stage: int) -> str:
     is_root = context.context.get("parent_id") is None
-    if not is_root:
-        return _SUBAGENT_DIRECTIVES[stage].format(finish_tool=subagent_finish_tool(context.context))
-    coordinator = coordinator_from_context(context.context)
-    finish_tool = coordinator.root_finish_tool if coordinator is not None else "finish_scan"
-    return _ROOT_DIRECTIVES[stage].format(finish_tool=finish_tool)
+    directives = _ROOT_DIRECTIVES if is_root else _SUBAGENT_DIRECTIVES
+    return directives[stage].format(finish_tool=finish_tool_name(context.context))
 
 
 def _urgency(stage: int) -> str:
