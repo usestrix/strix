@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
@@ -123,6 +124,46 @@ async def test_manual_rates_make_unpriced_model_trip_budget(
         pytest.raises(BudgetExceededError),
     ):
         await hooks.on_llm_end(_make_context(), MagicMock(), response)
+
+
+@pytest.mark.parametrize(("budget", "raises"), [(0.01, True), (0.0101, False)])
+@pytest.mark.asyncio
+async def test_resumed_model_switch_uses_correct_live_budget(
+    budget: float,
+    raises: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(loader, "_override", tmp_path / "missing.json")
+    monkeypatch.setenv("STRIX_LLM", "gateway/model-a")
+    monkeypatch.setenv("STRIX_LLM_INPUT_COST_PER_MTOK", "2")
+    monkeypatch.setattr(loader, "_cached", None)
+    original = LLMUsageLedger()
+    original.record(agent_id="root", usage=Usage(input_tokens=1000), model="gateway/model-a")
+
+    monkeypatch.setenv("STRIX_LLM", "gateway/model-b")
+    monkeypatch.setenv("STRIX_LLM_INPUT_COST_PER_MTOK", "8")
+    monkeypatch.setattr(loader, "_cached", None)
+    resumed = LLMUsageLedger()
+    resumed.hydrate(original.to_record())
+
+    class ReportState:
+        def record_sdk_usage(self, **kwargs: Any) -> None:
+            resumed.record(**kwargs)
+
+        def get_total_llm_cost(self) -> float:
+            return resumed.total_cost
+
+    hooks = ReportUsageHooks(model="gateway/model-b", max_budget_usd=budget)
+    response: Any = SimpleNamespace(usage=Usage(input_tokens=1000))
+    expectation = pytest.raises(BudgetExceededError) if raises else nullcontext()
+    with (
+        patch("strix.core.hooks.get_global_report_state", return_value=ReportState()),
+        expectation,
+    ):
+        await hooks.on_llm_end(_make_context(agent_id="root"), MagicMock(), response)
+
+    assert resumed.total_cost == 0.01
 
 
 @pytest.mark.asyncio
