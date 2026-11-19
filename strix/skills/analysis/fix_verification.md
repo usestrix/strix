@@ -29,6 +29,8 @@ above it* — not the fewest lines.
 
 ## Before You Edit
 
+Before editing, identify an existing legitimate workflow and its expected result. Keep that example passing before and after. For every path that changes the same state, check the final result—not just the response code.
+
 Establish these from the code, not from assumption:
 
 - The source → sink path or the specific broken control.
@@ -124,8 +126,8 @@ decides whether a patch is attached to the finding.
 
 When a legitimate caller would have to change:
 
-1. Look for the part of the fix that refuses only the attacker and
-   attach that part alone. There usually is one: scope a write to the records
+1. Only an independently secured operation can stand alone. If another
+   path to that operation remains unsafe, withhold. For an independent operation: scope a write to the records
    that belong to the identity the request already carries, stop
    returning data the caller has no claim to, reject an identifier that
    was never issued.
@@ -148,8 +150,8 @@ A sentence about what something outside the repository does or is able
 to do is a claim, not knowledge: a device's firmware, a released client,
 a partner's API, a browser, a proxy or CDN header, a cloud service. It
 needs a source the reader can open: a `file:line` in the repository, or
-the vendor's published documentation, which you read during this run and
-quote with its address.
+a local copy of the vendor's published documentation that you can quote
+with its address. Do not contact outside systems.
 
 Without a source it is a question. Write it as an open question for the
 owner and do not build the patch on the answer you would like. "The
@@ -169,22 +171,13 @@ unrelated, that `fix_before` still matches the file character-for-
 character, and that `start_line`/`end_line` still cover exactly those
 lines. Run the narrowest syntax / import / type check available.
 
-**2. Security closure.** Re-run the original PoC against the patched
-code. If you cannot execute it, re-trace source → control → sink through
-the *patched* source and state precisely which step now fails and why.
-"The fix adds validation" is not closure; "the fix rejects `../` before
-the path reaches `open()`, and `open()` is the only sink on this path" is.
+**2. Security closure.** Trace the filed operation through the patched
+source to its enforcing line. State what the code now guarantees.
 
-**3. Bypass review.** Re-read the finding and the diff *without* leaning
-on the reasoning that produced the patch — you are looking for what that
-reasoning missed. Trace the changed branches from their direct callers.
-Walk the coverage inventory again: for every entry, is the enforcing line
-you quoted still the one the request hits? Check equivalent sinks and
-sibling call sites of the same helper. Try at least one alternate malicious
-input class: different encoding, different
-content type, a null byte, a unicode homoglyph, a nested/doubled
-payload, a different HTTP verb. A control that catches your one payload
-and nothing else has not closed the boundary.
+**3. Coverage.** Check that the same invariant holds on every path in the
+coverage inventory, including every writer of the same state. Disclosure
+is not an exception for a path to the same unsafe operation. An independent
+operation can stand alone if the patch and its description say so.
 
 **4. Preserved behavior.** Exercise the legitimate case through the same
 boundary. Grep for every symbol the patch removes or renames (an import, a
@@ -216,17 +209,9 @@ configuration (package scripts, Makefile, task runner, workflow files) and
 use the formatter, linter, type checker and test runner it already uses,
 with its own configuration. Do not substitute your preferred tool.
 
-**Get the tools without touching the owner's systems.** Never send a
-request to the repository owner's package registry, artifact store,
-deployed services, or any host that belongs to them, even when the
-repository's configuration points there. Install from the public registry
-only: in the scratch copy, point the package manager at the public
-registry and drop the dependencies that only exist privately. Many checks
-need far less than a full install; a formatter or linter usually runs on
-the touched files with only itself installed. When a check cannot run
-without private packages or a service you cannot start, say so and move to
-the next check; never invent stand-ins for missing packages to make a
-suite pass.
+Use installed tooling offline. Do not contact a registry, fetch a dependency
+or invent stand-ins for missing packages or services. Record any check you
+cannot run as `not run` with its reason.
 
 **Run, narrowest first, on the files you touched:**
 
@@ -238,16 +223,9 @@ suite pass.
    its own `code_locations` entry. A test that fails because you broke a
    legitimate caller means the patch is wrong.
 
-**Write the test for the attack.** Add a regression test, in the existing
-test file nearest the changed code and in its style, that performs the
-attack from the finding and asserts it is refused, plus one assertion that
-the legitimate caller still succeeds. Add one case per entry in the
-coverage inventory, not only the route in the title. Where the suite can
-run, show the test fails on the unpatched copy and passes on the patched
-one. Ship the test as a `code_locations` entry of its own: `fix_before` is
-the last lines of the existing test block, `fix_after` is those same lines
-followed by the new test. Ship it even when you could not execute it, and
-say that it was not executed.
+**Check legitimate results.** Exercise the workflow you identified before
+editing with an ordinary local unit test. Assert on the final result, not
+only the response. Include any test changes in the delivered patch.
 
 **Feed the results back into the patch.** Every failure a check reports on
 your change is fixed in `fix_after` before you attach it, and the checks
@@ -294,57 +272,32 @@ Rules that hold for every fix:
 
 ## Independent Review Before You Attach the Patch
 
-"The reviewer" here always means a separate agent that you start with
+"The reviewer" here always means a separate read-only agent that you start with
 `create_agent`. Nothing else counts: not your own second read and not a
 review you expect to happen later. If no agent you started has answered
-`APPROVE` for the exact patch you are about to attach, you are not
+`approve` for the exact patch you are about to attach, you are not
 allowed to put a `fix_after` on the report. A patch attached without that
 verdict is the single failure this procedure exists to prevent.
 
-The unpatched workspace stays unpatched from start to finish. The
-reviewer needs it to see the attack test fail, and the report's
-`fix_before` lines are matched against it. All edits go in the scratch
-copy; if you edited the workspace by mistake, restore it before anything
-else.
-
-Begin `fix_verification` with one line the reader can audit:
-`Independent review: APPROVE by agent <id>, patch sha256 <checksum>`.
-When no patch is attached, begin the revised `remediation_steps` with
-`No patch attached:` and the reason in one line.
-
-You do not approve your own fix. When the patch is ready in the scratch
-copy and your checks are clean:
-
-1. Write the patch to a file next to the scratch copy
-   (`git diff` against the unpatched tree) and note its checksum.
-2. Write the words you intend to attach to a second file next to it: the
-   proposed `fix_pr_body`, the `remediation_steps`, your list of
-   legitimate callers and the class of the change, every outside fact
-   the patch depends on with its source, and what you left out or left
-   open and why. State these plainly. Do not argue for the patch.
-3. Start a reviewer with `create_agent`: name it "Fix Reviewer", give it
-   the `fix_review` skill, and set `inherit_context` to false so it does
-   not see your reasoning. Its task carries only: the finding as written,
-   the path of the unpatched workspace, the path of your scratch copy,
-   the path and checksum of the patch file, the path of the file with
-   your intended words, and the commands you ran with their results.
-4. Wait for its verdict. Do not touch the report while it is working.
-5. On `APPROVE` for the checksum you sent: attach exactly that patch
-   and the words the reviewer read to the filed report with
-   `update_vulnerability_report` (`code_locations` with `fix_before` /
-   `fix_after`, `fix_verification`, `fix_pr_body`, and
-   `remediation_steps` when the plan changed). If you changed the patch
-   or those words after the review, it is not what was approved; send it
-   back.
-6. On `REJECT`: fix every blocking problem it lists, re-run your checks,
-   and send the new patch to a fresh reviewer once. You get one retry.
-7. Rejected twice: attach no patch. The report stays as it was filed.
-   Revise only its `remediation_steps` with `update_vulnerability_report`:
-   what you would change, the reviewer's unresolved problems, and what
-   the owner has to decide. No fix is better than one that was rejected.
-
-Record the reviewer's verdict, what it executed and the checksum in
-`fix_verification`.
+1. Build the deliverable from the proposed `code_locations` on a pristine
+   copy of the source. Only anchored `fix_before` / `fix_after` replacements
+   are delivered; a helper mentioned in prose or present only in the scratch
+   copy is not. Verify that the resulting files match the intended edits.
+   If they do not, repair the locations or withhold. Hash this diff and keep
+   it and the proposed report fields unchanged pending the decision.
+2. Start a fresh child with `create_agent`, `skills=["fix_review"]` and
+   `inherit_context=false`. Put the evidence itself in its task: the filed
+   finding, relevant pre-change source including callers, the exact diff and
+   SHA-256, proposed PR text, remediation steps and check results. Do not
+   send only paths: this reviewer does not read files. Do not send secrets.
+3. Wait for that child's completion. Only its explicit `decision: approve`
+   on this submission authorizes `update_vulnerability_report` on the existing
+   report with the reviewed fields. Record its agent id and the diff SHA-256 in
+   `fix_verification`. A change to the candidate requires fresh review.
+4. On `withhold`, use the reason to revise once and submit the revised packet
+   to a fresh reviewer. If the second review rejects it, or no valid approval
+   arrives, leave the finding filed with no patch. Update `remediation_steps`
+   with the unresolved question and the next step for the owner.
 
 ## What Disqualifies a Fix
 
@@ -416,12 +369,6 @@ subject directly in your patch (the loaded record's owner or tenant against
 the caller), and say in `fix_verification` which guard you did not trust
 and why.
 
-Then attack your own patch with one more request: change the state the
-check reads through another route the caller may use, send the value as a
-nested or dotted key, an array or an operator object, reach the same data
-through an aliased, cached or batched path. A check that one extra request
-defeats has not closed the boundary.
-
 ## What the Operator Must Do
 
 A fix PR is merged by someone who was not in the room. Start `fix_pr_body`
@@ -441,9 +388,8 @@ the list when none do:
   which permission is required, what the limit is, which status code a
   refusal uses), first look for the repository's own precedent: the
   limit, permission name or status the neighbouring handlers use. Follow
-  it and cite it. Where there is none, choose the strictest option that
-  keeps the callers you can see in the repository working, and state the
-  choice and the alternative in one line so the owner can confirm it.
+  it and cite it. If it does not establish policy for this operation,
+  withhold and ask the owner rather than guessing.
 - **Answers that change.** Any caller that receives a different status
   or body after the patch, and what it now receives. This list is for
   refusals and error shapes only. A legitimate caller that has to send
@@ -466,6 +412,4 @@ about — rather than execute — as an explicit gap. End with a "Checks"
 list, one line per check: the command, then `passed`, `failed` (with what
 you changed), or `not run` (with the reason). Repeat the `not run` lines
 in `fix_pr_body` so the person merging knows what their CI still has to
-prove. Do not hide proof
-gaps; a reviewer who knows gate 5 was skipped can run it themselves, but
-one who was told it passed cannot.
+prove. Never describe an unexecuted check as passing.
