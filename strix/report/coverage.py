@@ -124,6 +124,7 @@ _SKILL_PHRASINGS: dict[str, tuple[str, ...]] = {
     "prototype_pollution": ("prototype pollution",),
     "race_conditions": ("race condition", "toctou"),
     "rce": ("rce", "remote code execution", "code execution", "command injection"),
+    "redos": ("redos", "regex denial", "regular expression denial", "catastrophic backtracking"),
     "semantic_confusion": (
         "semantic confusion",
         "parser differential",
