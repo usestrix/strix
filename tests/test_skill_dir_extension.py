@@ -191,6 +191,15 @@ def test_system_prompt_omits_empty_skill_description(tmp_path: Path) -> None:
     assert "- extra/widget: " not in prompt
 
 
+def test_skill_named_like_a_template_argument_renders(tmp_path: Path) -> None:
+    _write_skill(tmp_path, "custom", "methodology", "widget body")
+    register_skill_dir(tmp_path)
+
+    prompt = render_system_prompt(skills=["custom/methodology"], scan_mode="quick")
+
+    assert "<methodology>\nwidget body\n</methodology>" in prompt
+
+
 def test_registered_root_skill_is_discoverable_and_valid(tmp_path: Path) -> None:
     _write_root_skill(tmp_path, "widget", "widget body")
     register_skill_dir(tmp_path)

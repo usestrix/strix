@@ -147,7 +147,6 @@ def render_system_prompt(
             include_scope=include_scope,
             report_tool=report_tool,
             coverage_tools=coverage_tools,
-            **skill_content,
         )
     except Exception:
         logger.exception("render_system_prompt failed; returning empty prompt")
