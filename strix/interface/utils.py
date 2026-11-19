@@ -1136,6 +1136,9 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
 
     target = target.strip()
 
+    if target.startswith("-"):
+        raise ValueError(f"Invalid target: {target}. Targets cannot start with a dash.")
+
     if target.startswith("git@"):
         return "repository", {"target_repo": target}
 
@@ -1254,6 +1257,7 @@ def read_target_list_file(path_str: str) -> list[str]:
 
 def sanitize_name(name: str) -> str:
     sanitized = re.sub(r"[^A-Za-z0-9._-]", "-", name.strip())
+    sanitized = sanitized.lstrip(".-")
     return sanitized or "target"
 
 
@@ -1282,7 +1286,7 @@ def derive_local_base_name(path_str: str) -> str:
 
 
 def assign_workspace_subdirs(targets_info: list[dict[str, Any]]) -> None:
-    name_counts: dict[str, int] = {}
+    assigned_names: set[str] = set()
 
     for target in targets_info:
         target_type = target["type"]
@@ -1297,12 +1301,14 @@ def assign_workspace_subdirs(targets_info: list[dict[str, Any]]) -> None:
         if base_name is None:
             continue
 
-        count = name_counts.get(base_name, 0) + 1
-        name_counts[base_name] = count
+        candidate = base_name
+        count = 2
+        while candidate in assigned_names:
+            candidate = f"{base_name}-{count}"
+            count += 1
 
-        workspace_subdir = base_name if count == 1 else f"{base_name}-{count}"
-
-        details["workspace_subdir"] = workspace_subdir
+        assigned_names.add(candidate)
+        details["workspace_subdir"] = candidate
 
 
 def is_whitebox_scan(targets_info: list[dict[str, Any]]) -> bool:
@@ -1555,6 +1561,11 @@ def stage_api_specs(targets_info: list[dict[str, Any]], run_name: str) -> list[d
 def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None) -> str:
     console = Console()
 
+    if not repo_url or repo_url.strip().startswith("-"):
+        raise ValueError(
+            f"Invalid repository URL: {repo_url}. Repository URL cannot start with a dash."
+        )
+
     git_executable = shutil.which("git")
     if git_executable is None:
         raise FileNotFoundError("Git executable not found in PATH")
@@ -1567,7 +1578,22 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
     else:
         repo_name = Path(repo_url).stem if repo_url.endswith(".git") else Path(repo_url).name
 
+    if (
+        not repo_name
+        or repo_name in (".", "..")
+        or "/" in repo_name
+        or "\\" in repo_name
+        or repo_name.startswith("-")
+    ):
+        raise ValueError(f"Invalid repository destination name: {repo_name}")
+
     clone_path = temp_dir / repo_name
+
+    if (
+        not clone_path.resolve().is_relative_to(temp_dir.resolve())
+        or clone_path.resolve() == temp_dir.resolve()
+    ):
+        raise ValueError(f"Invalid clone path outside temporary directory: {clone_path}")
 
     if clone_path.exists():
         shutil.rmtree(clone_path)
@@ -1578,6 +1604,7 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
                 [
                     git_executable,
                     "clone",
+                    "--",
                     repo_url,
                     str(clone_path),
                 ],
