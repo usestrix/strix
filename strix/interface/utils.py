@@ -814,6 +814,7 @@ def _classify_diff_entries(entries: list[DiffEntry]) -> dict[str, Any]:
     analyzable_files: list[str] = []
     analyzable_seen: set[str] = set()
     modified_seen: set[str] = set()
+    added_seen: set[str] = set()
 
     for entry in entries:
         path = entry.path
@@ -825,7 +826,7 @@ def _classify_diff_entries(entries: list[DiffEntry]) -> dict[str, Any]:
             continue
 
         if entry.status == "A":
-            added_files.append(path)
+            _append_unique(added_files, added_seen, path)
             _append_unique(analyzable_files, analyzable_seen, path)
             continue
 
@@ -848,7 +849,7 @@ def _classify_diff_entries(entries: list[DiffEntry]) -> dict[str, Any]:
             continue
 
         if entry.status == "C":
-            _append_unique(modified_files, modified_seen, path)
+            _append_unique(added_files, added_seen, path)
             _append_unique(analyzable_files, analyzable_seen, path)
             continue
 
@@ -1283,6 +1284,7 @@ def derive_local_base_name(path_str: str) -> str:
 
 def assign_workspace_subdirs(targets_info: list[dict[str, Any]]) -> None:
     name_counts: dict[str, int] = {}
+    allocated_subdirs: set[str] = set()
 
     for target in targets_info:
         target_type = target["type"]
@@ -1298,9 +1300,21 @@ def assign_workspace_subdirs(targets_info: list[dict[str, Any]]) -> None:
             continue
 
         count = name_counts.get(base_name, 0) + 1
-        name_counts[base_name] = count
-
         workspace_subdir = base_name if count == 1 else f"{base_name}-{count}"
+
+        # Avoid colliding with a subdir already allocated to another target
+        # (e.g. base names ["api-2", "api", "api"] would otherwise both map to "api-2").
+        # Track allocated subdirs separately from base-name counts so a derived
+        # suffix never poisons the count of a later target sharing that name.
+        max_attempts = len(targets_info) + 1
+        attempts = 0
+        while workspace_subdir in allocated_subdirs and attempts < max_attempts:
+            count += 1
+            workspace_subdir = f"{base_name}-{count}"
+            attempts += 1
+
+        name_counts[base_name] = count
+        allocated_subdirs.add(workspace_subdir)
 
         details["workspace_subdir"] = workspace_subdir
 
