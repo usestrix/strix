@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from agents.sandbox.capabilities.tools.shell_tool import WriteStdinTool
 from agents.tool import CustomTool, FunctionTool
 
 from strix.agents import factory
@@ -215,3 +216,69 @@ def test_view_image_is_left_out_for_text_only_models(
 
     view_image = next(tool for tool in filesystem.tools() if tool.name == "view_image")
     assert cast("FunctionTool", view_image).is_enabled is has_view_image
+
+
+def _capturing_write_tool(captured: dict[str, str]) -> FunctionTool:
+    async def invoke(_ctx: Any, raw_input: str) -> str:
+        captured["raw_input"] = raw_input
+        return "ok"
+
+    return FunctionTool(
+        name="write_stdin",
+        description="Write to an active PTY.",
+        params_json_schema={"type": "object", "properties": {}},
+        on_invoke_tool=invoke,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "chars",
+    [
+        r'print("left\nright")' + "\n",
+        r"C:\new\temp" + "\n",
+        r"\n",
+        r"\u263A",
+        r"\\u0003",
+        "",
+    ],
+)
+async def test_write_stdin_preserves_literal_input(chars: str) -> None:
+    captured: dict[str, str] = {}
+    wrapped = factory._wrap_write_stdin(_capturing_write_tool(captured))
+
+    assert await wrapped.on_invoke_tool(cast("Any", None), json.dumps({"chars": chars})) == "ok"
+    assert json.loads(captured["raw_input"])["chars"] == chars
+    assert "literal after JSON decoding" in wrapped.description
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("chars", [r"\u0003", r"\x03", "\x03"])
+async def test_write_stdin_retains_ctrl_c_compatibility(chars: str) -> None:
+    captured: dict[str, str] = {}
+    wrapped = factory._wrap_write_stdin(_capturing_write_tool(captured))
+
+    assert await wrapped.on_invoke_tool(cast("Any", None), json.dumps({"chars": chars})) == "ok"
+    assert json.loads(captured["raw_input"])["chars"] == "\x03"
+
+
+@pytest.mark.asyncio
+async def test_write_stdin_sdk_receives_unmodified_python_command() -> None:
+    class Session:
+        received: str = ""
+
+        def supports_pty(self) -> bool:
+            return True
+
+        async def pty_write_stdin(self, *, chars: str, **_kwargs: Any) -> SimpleNamespace:
+            self.received = chars
+            return SimpleNamespace(
+                output=b"", exit_code=None, process_id=1, original_token_count=None
+            )
+
+    session = Session()
+    wrapped = factory._wrap_write_stdin(WriteStdinTool(session=session))
+    command = r'print("left\nright")' + "\n"
+
+    await wrapped.on_invoke_tool(cast("Any", None), json.dumps({"session_id": 1, "chars": command}))
+    assert session.received == command

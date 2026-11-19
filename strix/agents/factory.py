@@ -394,33 +394,10 @@ def _make_filesystem_configurator(
     return configure
 
 
-_CHARS_ESCAPE_RE = re.compile(r"\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[0abtnvfr\\])")
-_CHARS_ESCAPE_MAP = {
-    "\\\\": "\\",
-    "\\n": "\n",
-    "\\t": "\t",
-    "\\r": "\r",
-    "\\0": "\x00",
-    "\\a": "\x07",
-    "\\b": "\x08",
-    "\\v": "\x0b",
-    "\\f": "\x0c",
-}
-
-
-def _decode_chars_escape(s: str) -> str:
-    if "\\" not in s:
-        return s
-
-    def sub(match: re.Match[str]) -> str:
-        token = match.group(0)
-        if token in _CHARS_ESCAPE_MAP:
-            return _CHARS_ESCAPE_MAP[token]
-        if token.startswith(("\\u", "\\x")):
-            return chr(int(token[2:], 16))
-        return token
-
-    return _CHARS_ESCAPE_RE.sub(sub, s)
+def _decode_legacy_ctrl_c(s: str) -> str:
+    # JSON has already decoded chars. Only preserve the legacy standalone Ctrl-C
+    # spellings; decoding arbitrary escapes corrupts commands containing backslashes.
+    return "\x03" if s in (r"\u0003", r"\x03") else s
 
 
 def _format_validation_error(tool_name: str, exc: ValidationError) -> str:
@@ -515,6 +492,12 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
 
 def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
+    tool.description = (
+        f"{tool.description.rstrip()} "
+        r"Input is literal after JSON decoding. JSON \n sends a newline; "
+        r"JSON \u0003 sends Ctrl-C. A standalone literal \u0003 or \x03 "
+        r"also sends Ctrl-C for compatibility."
+    )
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
         try:
@@ -523,7 +506,7 @@ def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
             parsed = None
         if isinstance(parsed, dict):
             if isinstance(parsed.get("chars"), str):
-                parsed["chars"] = _decode_chars_escape(parsed["chars"])
+                parsed["chars"] = _decode_legacy_ctrl_c(parsed["chars"])
             _apply_shell_output_cap(parsed)
             raw_input = json.dumps(parsed)
         try:
