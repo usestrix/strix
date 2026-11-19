@@ -198,6 +198,29 @@ async def test_chat_completions_filesystem_custom_tool_becomes_function_tool() -
     assert isinstance(toolset.read_file, FunctionTool)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw_input", ["null", "[]", '["*** Begin Patch"]', "123", '"patch"'])
+async def test_chat_completions_custom_tool_rejects_non_object_arguments(raw_input: str) -> None:
+    """Non-strict schemas let the model send JSON that is not an object; that must not crash."""
+    called = False
+
+    async def invoke(_ctx: Any, _inp: str) -> str:
+        nonlocal called
+        called = True
+        return "ok"
+
+    toolset = SimpleNamespace(
+        apply_patch=CustomTool(name="apply_patch", description="patch", on_invoke_tool=invoke)
+    )
+    factory._configure_filesystem_tools(toolset, chat_completions=True)
+    tool = cast("FunctionTool", toolset.apply_patch)
+
+    result = await tool.on_invoke_tool(cast("Any", None), raw_input)
+
+    assert result == "`patch` must be a non-empty string."
+    assert called is False
+
+
 def test_function_tools_are_result_bounded() -> None:
     agent = factory.build_strix_agent(is_root=True)
     by_name = {t.name: t for t in agent.tools}

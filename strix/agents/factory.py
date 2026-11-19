@@ -126,6 +126,8 @@ def _extract_custom_input(tool: CustomTool, raw_input: str | dict[str, Any]) -> 
             return ""
     else:
         parsed = raw_input
+    if not isinstance(parsed, dict):
+        return ""
     value = parsed.get(_custom_tool_input_field(tool))
     return value if isinstance(value, str) else ""
 
