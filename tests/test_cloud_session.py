@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -124,6 +125,73 @@ def test_logout_keeps_local_token_when_remote_outcome_is_not_definitive(
     assert cloud.run_cloud(["logout", "--json"]) == 1
     assert auth_path.exists()
     assert json.loads(capsys.readouterr().out)["removed"] is False
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+def test_session_scope_update_reports_local_storage_failure(
+    auth_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any, as_json: bool
+) -> None:
+    platform_cli.save_record(
+        {
+            "api_token": "secret",
+            "organization_id": "org_1",
+            "app_url": "https://app.example.test",
+            "scopes": ["scans:read", "scans:write"],
+        }
+    )
+    before = auth_path.read_text(encoding="utf-8")
+    calls: list[tuple[str, str]] = []
+
+    def request(method: str, path: str, **_kwargs: Any) -> Response:
+        calls.append((method, path))
+        return Response({"scopes": ["scans:read"], "scope_profile": "custom"})
+
+    def fail_save(_record: dict[str, Any]) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(http, "request", request)
+    monkeypatch.setattr(cloud_session, "save_record", fail_save)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+
+    argv = ["session", "scopes", "set", "--scopes", "scans:read"]
+    assert cloud.run_cloud([*argv, *(["--json"] if as_json else [])]) == 1
+    output = capsys.readouterr().out
+    if as_json:
+        payload = json.loads(output)
+        assert payload["scopes_updated"] is True
+        assert payload["local_record_updated"] is False
+        output = payload["error"]
+    assert "disk full" in output
+    assert "session scopes" in output
+    assert "platform updated the session scopes" in output
+    assert calls == [("PATCH", "/cli/session")]
+    assert auth_path.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.parametrize("environment_token", [False, True])
+def test_session_scope_update_override_does_not_need_writable_local_storage(
+    auth_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any, environment_token: bool
+) -> None:
+    platform_cli.save_record({"api_token": "stored-secret", "scopes": ["scans:read"]})
+    before = auth_path.read_text(encoding="utf-8")
+    monkeypatch.setattr(
+        http,
+        "request",
+        lambda *_args, **_kwargs: Response({"scopes": ["scans:read"], "scope_profile": "custom"}),
+    )
+
+    def fail_save(_record: dict[str, Any]) -> None:
+        pytest.fail("an override session must not update the local record")
+
+    monkeypatch.setattr(cloud_session, "save_record", fail_save)
+    token_args = ["--token", "override"]
+    if environment_token:
+        monkeypatch.setenv("STRIX_API_TOKEN", "override")
+        token_args = []
+    argv = ["session", "scopes", "set", "--scopes", "scans:read", "--json", *token_args]
+    assert cloud.run_cloud(argv) == 0
+    assert json.loads(capsys.readouterr().out)["scopes"] == ["scans:read"]
+    assert auth_path.read_text(encoding="utf-8") == before
 
 
 def test_local_only_logout_is_explicit_and_recoverable(auth_path: Path, capsys: Any) -> None:
