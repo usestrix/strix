@@ -254,7 +254,7 @@ def test_exa_page_text_rejects_pages_without_text(
     monkeypatch: pytest.MonkeyPatch, body: dict[str, Any]
 ) -> None:
     monkeypatch.setattr(requests, "post", lambda *_a, **_kw: _FakeResponse(body))
-    with pytest.raises(ValueError, match="no page contents"):
+    with pytest.raises(tool._NoPageContentError, match="no page contents"):
         tool._exa_page_text("ek", ["https://ex.example"])
 
 

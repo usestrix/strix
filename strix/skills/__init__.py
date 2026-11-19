@@ -1,3 +1,4 @@
+import difflib
 import logging
 import os
 import re
@@ -264,6 +265,28 @@ def get_available_skills() -> dict[str, list[dict[str, Any]]]:
     return grouped
 
 
+def resolve_requested_skills(skill_list: list[str]) -> list[str]:
+    """Drop a wrong category from a skill name; leave the rest untouched.
+
+    Models often guess the category (``technologies/nextjs`` for
+    ``frameworks/nextjs``). The category is dropped only when the name itself
+    is an exact, unambiguous skill name, so anything else still reaches
+    :func:`validate_requested_skills` and is rejected there.
+    """
+    names = get_all_skill_names()
+    keys = _get_all_skill_keys()
+    ambiguous = _get_ambiguous_skill_names()
+    resolved: list[str] = []
+    for requested in skill_list:
+        skill = requested.strip()
+        base = skill.rsplit("/", 1)[-1]
+        if skill not in keys and "/" in skill and base in names and base not in ambiguous:
+            resolved.append(base)
+        else:
+            resolved.append(skill)
+    return list(dict.fromkeys(resolved))
+
+
 def validate_requested_skills(skill_list: list[str], max_skills: int | None = 5) -> str | None:
     """Validate a list of user-passed skill names.
 
@@ -282,7 +305,13 @@ def validate_requested_skills(skill_list: list[str], max_skills: int | None = 5)
     available_keys = _get_all_skill_keys()
     invalid = sorted({s for s in skill_list if s not in available and s not in available_keys})
     if invalid:
-        return f"Invalid skill name(s): {invalid}. Available skills: {sorted(available)}"
+        suggestions = {
+            name: close
+            for name in invalid
+            if (close := difflib.get_close_matches(name.rsplit("/", 1)[-1], sorted(available), 3))
+        }
+        hint = f" Did you mean: {suggestions}?" if suggestions else ""
+        return f"Invalid skill name(s): {invalid}.{hint} Available skills: {sorted(available)}"
     ambiguous = sorted({s for s in skill_list if "/" not in s} & _get_ambiguous_skill_names())
     if ambiguous:
         return (
