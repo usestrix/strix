@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import dataclasses
 import inspect
 import json
@@ -16,7 +15,7 @@ from agents.sandbox.capabilities import Filesystem, Shell
 from agents.sandbox.errors import InvalidManifestPathError
 from agents.sandbox.session.pty_types import PTY_YIELD_TIME_MS_MAX
 from agents.tool import CustomTool, FunctionTool, Tool
-from pydantic import TypeAdapter, ValidationError
+from pydantic import ValidationError
 
 from strix.agents.prompt import render_system_prompt
 from strix.config import load_settings
@@ -503,27 +502,6 @@ def _annotate_running_non_tty(parsed: dict[str, Any], result: Any) -> Any:
     return f"{result[: header.end()]}{notice}\n{result[header.end() :]}"
 
 
-_SESSION_ID_RE = re.compile(r"^Process running with session ID (\d+)$", re.MULTILINE)
-_SESSION_ID = TypeAdapter(int)
-
-
-def _shell_sessions(ctx: Any) -> dict[str, str]:
-    """The command each of the scan's open shell sessions runs, to judge input typed into one."""
-    context = getattr(ctx, "context", None)
-    coordinator = context.get("coordinator") if isinstance(context, dict) else None
-    guard = getattr(coordinator, "action_approvals", None)
-    return cast("dict[str, str]", getattr(guard, "shell_sessions", {}))
-
-
-def _remember_shell_session(ctx: Any, parsed: dict[str, Any], result: Any) -> None:
-    if not isinstance(result, str) or not isinstance(parsed.get("cmd"), str):
-        return
-    # Only the header the runtime writes, never the command's own output.
-    header = _OUTPUT_HEADER_RE.search(result)
-    if match := _SESSION_ID_RE.search(result, 0, header.start() if header else len(result)):
-        _shell_sessions(ctx)[match[1]] = parsed["cmd"]
-
-
 def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
     invoke_tool = separate_tool_timeout(tool)
     tool.description = f"{tool.description.rstrip()} {_EXEC_COMMAND_DESCRIPTION_NOTE}"
@@ -554,7 +532,6 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
             )
         result = with_registration_reminder(result)
         if isinstance(parsed, dict):
-            _remember_shell_session(ctx, parsed, result)
             return _annotate_running_non_tty(parsed, result)
         return result
 
@@ -574,17 +551,9 @@ def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
             if isinstance(parsed.get("chars"), str):
                 parsed["chars"] = _decode_chars_escape(parsed["chars"])
             _apply_shell_output_cap(parsed)
-            # The session is looked up by the number the tool will type into, and what it
-            # runs comes from the engine's record alone, never from the agent's arguments.
-            with contextlib.suppress(ValidationError):
-                parsed["session_id"] = _SESSION_ID.validate_python(parsed.get("session_id"))
-            parsed.pop("session_command", None)
             raw_input = json.dumps(parsed)
             if cast("dict[str, Any]", parsed).get("chars"):
-                checked = dict(parsed)
-                if command := _shell_sessions(ctx).get(str(parsed.get("session_id"))):
-                    checked["session_command"] = command
-                blocked = await check_action(ctx, "write_stdin", checked)
+                blocked = await check_action(ctx, "write_stdin", cast("dict[str, Any]", parsed))
                 if blocked is not None:
                     return blocked
         try:

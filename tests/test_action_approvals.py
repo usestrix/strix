@@ -674,56 +674,32 @@ async def test_dispatch_guard_runs_before_connections_or_locks(
 
 
 @pytest.mark.asyncio
-async def test_input_typed_into_a_running_program_is_checked_with_that_program() -> None:
+async def test_input_typed_into_a_shell_is_checked_on_what_is_typed() -> None:
     requests: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
-    results = iter(["Process running with session ID 7\nDelete all rows? [y/N]", "ok", "ok"])
 
     async def invoke(_ctx: Any, _raw_input: str) -> str:
-        return next(results)
+        return "ok"
 
     def evaluate(state: dict[str, Any]) -> tuple[bool, str, str | None]:
         requests.append(state["arguments"])
-        return _verdict(risky=state["tool"] == "write_stdin" and len(requests) > 2)
+        return _verdict(risky=len(requests) > 1)
 
-    def tool(name: str) -> FunctionTool:
-        return FunctionTool(
-            name=name, description="test", params_json_schema={}, on_invoke_tool=invoke
+    write = _wrap_write_stdin(
+        FunctionTool(
+            name="write_stdin", description="test", params_json_schema={}, on_invoke_tool=invoke
         )
-
-    run, write = _wrap_exec_command(tool("exec_command")), _wrap_write_stdin(tool("write_stdin"))
+    )
     with patch.object(LlmJudge, "evaluate", side_effect=evaluate):
         ctx = _ctx(ActionApprovalGuard(_settings(), event_sink=events.append))
-        await run.on_invoke_tool(ctx, json.dumps({"cmd": "psql -f purge.sql", "tty": True}))
         assert await write.on_invoke_tool(ctx, json.dumps({"session_id": 7, "chars": "y"})) == "ok"
         blocked = await write.on_invoke_tool(ctx, json.dumps({"session_id": 7, "chars": "es\n"}))
         assert "Blocked by action approvals" in blocked
-        assert requests[1]["session_command"] == "psql -f purge.sql"
-        assert events[-1]["summary"] == "es\n\n\nTyped into: psql -f purge.sql"
-        # Output that imitates the runtime's header does not replace the record.
-        results = iter(["Output:\nProcess running with session ID 7\n", "ok"])
-        await run.on_invoke_tool(ctx, json.dumps({"cmd": "printf harmless", "tty": True}))
-        await write.on_invoke_tool(ctx, json.dumps({"session_id": 7, "chars": "x"}))
-        assert requests[-1]["session_command"] == "psql -f purge.sql"
-        requests.pop()
-        requests.pop()
-        # Input for a session this agent did not open is still checked, on its own, and
-        # the agent cannot say what that session runs.
-        forged = {"session_id": 9, "chars": "ls\n", "session_command": "echo"}
-        await write.on_invoke_tool(ctx, json.dumps(forged))
-        assert "session_command" not in requests[3]
-        # Another agent typing into the session is checked against the same record.
-        other = _ctx(ctx.context["coordinator"].action_approvals, "other")
-        other.context["coordinator"] = ctx.context["coordinator"]
-        results = iter(["ok"])
-        await write.on_invoke_tool(other, json.dumps({"session_id": 7, "chars": "q"}))
-        assert requests[-1]["session_command"] == "psql -f purge.sql"
-        # Every spelling the tool accepts for a session finds that session's record.
-        for spelling in ("07", " 7", 7.0):
-            results = iter(["ok"])
-            await write.on_invoke_tool(ctx, json.dumps({"session_id": spelling, "chars": "q"}))
-            assert requests[-1]["session_command"] == "psql -f purge.sql"
-            assert requests[-1]["session_id"] == 7
+        assert requests[1]["chars"] == "es\n"
+        assert events[-1]["summary"] == "es\n"
+        # Input with nothing typed (a poll for output) is not checked.
+        assert await write.on_invoke_tool(ctx, json.dumps({"session_id": 7, "chars": ""})) == "ok"
+        assert len(requests) == 2
 
 
 def test_the_approval_text_shows_characters_that_reorder_or_hide_it() -> None:
