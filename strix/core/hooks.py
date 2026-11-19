@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from agents.lifecycle import RunHooks
 
 from strix.core.agents import BudgetPolicy, coordinator_from_context
-from strix.report.state import get_global_report_state, record_tool_call
+from strix.report.state import get_global_report_state, record_tool_call, sdk_response_id
 
 
 if TYPE_CHECKING:
@@ -418,6 +418,7 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
                 agent_name=agent_name,
                 model=self._model,
                 usage=response.usage,
+                response_id=sdk_response_id(response),
             )
         except Exception:
             logger.exception("failed to record SDK usage for agent %s", agent_id)

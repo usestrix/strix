@@ -3,7 +3,9 @@ import logging
 import re
 import subprocess
 import threading
+from collections import deque
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -236,6 +238,11 @@ class ReportState:
         }
         self._run_dir: Path | None = None
         self._saved_vuln_ids: set[str] = set()
+        # Chat Completions' SDK ModelResponse has response_id=None even when
+        # LiteLLM's provider reply has an id. The request log sees the latter;
+        # queue successful ids per agent so the usage hook can pair its estimate
+        # with the provider callback for that exact response.
+        self._pending_response_ids: dict[str, deque[str]] = {}
 
         self.caido_url: str | None = None
         self.vulnerability_found_callback: Callable[[dict[str, Any]], None] | None = None
@@ -646,18 +653,37 @@ class ReportState:
         usage: "Usage | None",
         agent_name: str | None = None,
         model: str | None = None,
+        response_id: str | None = None,
     ) -> None:
         """Record SDK-native token usage for one completed model run/cycle."""
+        pending = self._pending_response_ids.get(agent_id)
+        if pending:
+            if response_id:
+                with suppress(ValueError):
+                    pending.remove(response_id)
+            elif len(pending) == 1:
+                response_id = pending.popleft()
+            else:
+                # Multiple provider successes can precede one SDK hook after
+                # concurrent calls or a conversion failure. Their order is
+                # ambiguous; leave estimates separate rather than pair the
+                # wrong charge and understate the scan's budget.
+                pending.clear()
         if self._llm_usage.record(
             agent_id=agent_id,
             agent_name=agent_name,
             model=model,
             usage=usage,
+            response_id=response_id,
         ):
             self.save_run_data()
 
-    def record_observed_llm_cost(self, cost: float) -> None:
-        self._llm_usage.record_observed_cost(cost)
+    def note_llm_response(self, agent_id: str | None, response_id: str | None) -> None:
+        if agent_id and response_id:
+            self._pending_response_ids.setdefault(agent_id, deque()).append(response_id)
+
+    def record_observed_llm_cost(self, cost: float, *, response_id: str | None = None) -> None:
+        self._llm_usage.record_observed_cost(cost, response_id=response_id)
 
     def record_llm_provider(
         self,
@@ -983,6 +1009,31 @@ def _response_id(completion_response: Any) -> str | None:
     return response_id if isinstance(response_id, str) and response_id else None
 
 
+def sdk_response_id(response: Any) -> str | None:
+    """Recover Chat Completions' provider id from SDK output item metadata.
+
+    The Agents SDK leaves ``ModelResponse.response_id`` empty for non-streamed
+    Chat Completions and sets the constant ``FAKE_RESPONSES_ID`` for streamed
+    ones, but places the provider's chunk id in each output item's
+    ``provider_data``. The placeholder is not an id: every response would share
+    it, so it is skipped. Refuse to guess if the output names different ids.
+    """
+    # Deferred: strix.report must not import the agents SDK at import time.
+    from agents.models.fake_id import FAKE_RESPONSES_ID
+
+    response_id = getattr(response, "response_id", None)
+    if isinstance(response_id, str) and response_id and response_id != FAKE_RESPONSES_ID:
+        return response_id
+    ids: set[str] = set()
+    for item in getattr(response, "output", ()) or ():
+        provider_data = getattr(item, "provider_data", None)
+        if isinstance(provider_data, dict):
+            value = provider_data.get("response_id")
+            if isinstance(value, str) and value:
+                ids.add(value)
+    return next(iter(ids)) if len(ids) == 1 else None
+
+
 class StreamedOpenRouterCosts:
     """Correlates OpenRouter's per-stream cost from the parser to the cost callback.
 
@@ -1019,6 +1070,15 @@ class StreamedOpenRouterCosts:
 
 
 streamed_openrouter_costs = StreamedOpenRouterCosts()
+
+
+def correlate_llm_response(event: "LlmRequestEvent") -> None:
+    """Match provider response ids to SDK usage even without timing diagnostics."""
+    if event.outcome != "success":
+        return
+    report_state = get_global_report_state()
+    if report_state is not None and hasattr(report_state, "_pending_response_ids"):
+        report_state.note_llm_response(event.agent_id, event.response_id)
 
 
 def record_llm_request(event: "LlmRequestEvent") -> None:
@@ -1134,7 +1194,11 @@ def litellm_cost_callback(
     if report_state is None:
         return
     try:
-        report_state.record_observed_llm_cost(cost)
+        response_id = _response_id(completion_response)
+        if response_id:
+            report_state.record_observed_llm_cost(cost, response_id=response_id)
+        else:
+            report_state.record_observed_llm_cost(cost)
     except Exception:
         logger.exception("Failed to record observed LiteLLM cost")
 
