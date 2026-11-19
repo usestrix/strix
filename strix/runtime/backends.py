@@ -57,6 +57,8 @@ _BACKENDS: dict[str, SandboxBackend] = {
 
 _BIND_MOUNT_BACKENDS: set[str] = {"docker"}
 
+_PTY_BACKENDS: set[str] = {"docker"}
+
 
 def get_backend(name: str) -> SandboxBackend:
     """Return the backend factory for ``name`` or raise.
@@ -81,6 +83,7 @@ def register_backend(
     backend: SandboxBackend,
     *,
     supports_bind_mounts: bool = False,
+    supports_pty: bool = False,
 ) -> None:
     """Register a custom backend under ``name``.
 
@@ -89,17 +92,33 @@ def register_backend(
     an existing name overwrites the prior entry. ``supports_bind_mounts``
     defaults to False: a remote runtime cannot see the caller's filesystem, so
     it is handed local sources as manifest entries to upload instead.
+    ``supports_pty`` declares whether the backend's sessions support PTY exec;
+    deferred startup reports it before the session exists so the shell tools
+    pick the same mode they would after bring-up.
     """
     _BACKENDS[name] = backend
     if supports_bind_mounts:
         _BIND_MOUNT_BACKENDS.add(name)
     else:
         _BIND_MOUNT_BACKENDS.discard(name)
-    logger.info("Registered sandbox backend: %s (bind mounts: %s)", name, supports_bind_mounts)
+    if supports_pty:
+        _PTY_BACKENDS.add(name)
+    else:
+        _PTY_BACKENDS.discard(name)
+    logger.info(
+        "Registered sandbox backend: %s (bind mounts: %s, pty: %s)",
+        name,
+        supports_bind_mounts,
+        supports_pty,
+    )
 
 
 def backend_supports_bind_mounts(name: str) -> bool:
     return name in _BIND_MOUNT_BACKENDS
+
+
+def backend_supports_pty(name: str) -> bool:
+    return name in _PTY_BACKENDS
 
 
 def supported_backends() -> list[str]:

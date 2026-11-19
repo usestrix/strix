@@ -37,8 +37,10 @@ class DeferredSandboxSession(SandboxSession):
         *,
         manifest: Manifest,
         exposed_ports: tuple[int, ...] = (),
+        supports_pty: bool = False,
     ) -> None:
         self._bring_up = bring_up
+        self._pending_supports_pty = supports_pty
         self._pending_state: SandboxSessionState = _PendingSessionState(
             snapshot=NoopSnapshot(id="pending"),
             manifest=manifest,
@@ -126,7 +128,9 @@ class DeferredSandboxSession(SandboxSession):
         return self._resolved.register_persist_workspace_skip_path(path)
 
     def supports_pty(self) -> bool:
-        return self._resolved.supports_pty() if self._resolved is not None else False
+        if self._resolved is None:
+            return self._pending_supports_pty
+        return self._resolved.supports_pty()
 
     async def running(self) -> bool:
         if self._resolved is None:
