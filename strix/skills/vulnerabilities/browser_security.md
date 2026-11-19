@@ -1,6 +1,6 @@
 ---
 name: browser-security
-description: Browser-internals security testing for browsing-context relationships, postMessage, client-side path traversal, XS-Leaks, service workers, Web Workers, navigation behavior, CSP interactions, caches, and cross-origin state machines
+description: Browser-internals security testing for clickjacking, UI redressing, DoubleClickjacking, browsing-context relationships, postMessage, client-side path traversal, XS-Leaks, service workers, Web Workers, navigation behavior, CSP interactions, caches, and cross-origin state machines
 ---
 
 # Browser Security
@@ -42,6 +42,15 @@ Draw the context graph. Security checks on `event.origin`, `event.source`, or a 
 - Treat predictable `window.open()` target names and iframe names as potentially shared namespace entries. Confirm reuse within the same browsing-context group, opener chain, COOP state, and relevant navigation/message timing.
 - Check whether a blocked intermediate frame leaves a useful browsing-context relationship intact.
 - Use random per-flow names or `_blank` with `noopener` where an opener relationship is unnecessary.
+
+### Clickjacking and UI Redressing
+
+- **UI-redressing closure gate:** Never mark clickjacking as ruled out from `X-Frame-Options` or CSP `frame-ancestors` alone. Before closure, test both frame embedding and cross-window/popup retargeting.
+- Do not treat a different origin or port as protection against UI redressing. Same-origin policy blocks DOM access, not top-level navigation, `window.open()`, opener relationships, focus changes, or window closing. Test only explicitly authorized targets; if a required origin is outside scope, keep the path `needs_follow_up` and do not claim the vulnerability class is cleared.
+- For framed cases, prove the overlay and sensitive click. For DoubleClickjacking, use two real browser clicks and trace click 1 → window/focus/navigation/positioning change → click 2 → sensitive control. Never substitute scripted `.click()` calls.
+- Reproduce in the victim state required by the workflow—authenticated when necessary—with realistic user activation and stable geometry; capture window bounds and timing.
+- **Evidence-limited closure:** Verify a repeatable sensitive server-side state change with a recording or deterministic event trace and a negative control. If the exact sequence cannot be tested, record `needs_follow_up`, not `ruled_out` or `no_issue_found`. Popup-as-tab behavior, ignored geometry, unavailable OS-level input, or a manual control click are not counterevidence. Close the path only when a named mitigation blocks it, or when geometry is honored and both physical clicks are delivered without a sensitive action.
+- **Impact floor:** Successful execution of a protected consent, approval, or grant is an integrity impact even when idempotent, pre-seeded, or followed by no immediate token or data access. Use downstream capability to calibrate severity, not erase the demonstrated protected action.
 
 ### Client-Side Path Traversal
 
@@ -146,7 +155,7 @@ Also inspect DevTools network initiators, service workers, storage, CSP violatio
 
 ### Source Review
 
-- Search for `postMessage`, message listeners, `window.open`, named targets, opener/parent access, frame creation, and sandbox attributes.
+- Search for `postMessage`, message listeners, `window.open`, named targets, opener/parent access, frame creation, `dblclick`, `mousedown`/`mouseup`, focus/blur, move/resize, navigation handlers, and sandbox attributes.
 - Search for router parameter APIs flowing into `fetch`, Axios, navigation, or HTML rendering.
 - Search for service-worker registration, Cache API writes, worker constructors, Blob URLs, and dynamic imports.
 - Search for raw HTML sinks and trust escape hatches in every supported frontend framework.
@@ -161,7 +170,7 @@ Also inspect DevTools network initiators, service workers, storage, CSP violatio
 5. **Prove the primitive** - Data transfer, path change, state oracle, cache modification, or context capture.
 6. **Escalate deliberately** - Chain to a privileged action, sensitive disclosure, SSRF, or executable DOM sink.
 7. **Cross-browser check** - At minimum record Chromium/Firefox/Safari applicability when the primitive is browser-specific.
-8. **State interaction requirements** - Click, drag, popup permission, timing window, login state, and visual deception.
+8. **State interaction requirements** - Record each physical click or drag, popup permission state, active context, focus, geometry, navigation, timing window, login state, and visual deception.
 
 ## Validation
 
@@ -171,7 +180,7 @@ Also inspect DevTools network initiators, service workers, storage, CSP violatio
 4. For XS-Leaks, repeat randomized success/failure trials and quantify separation and noise.
 5. For workers/caches, show which later context consumes the modified data.
 6. For client-side traversal, capture the final network request and the security-relevant response/action.
-7. For interaction-dependent chains, provide a screen recording or deterministic event trace.
+7. For interaction-dependent chains, show both click targets, intermediate context changes, and the resulting sensitive state change in a recording or deterministic event trace.
 
 ## False Positives
 
