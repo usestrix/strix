@@ -189,6 +189,111 @@ def test_placeholder_substitution_percent_encodes_path_segments(
     assert seen["path"] == "/knowledge/repos/usestrix%2F.github/entries"
 
 
+@pytest.mark.parametrize("verb", ["add", "remove"])
+def test_additional_fix_pr_help_and_parameters(verb: str) -> None:
+    cmd = SPEC["vulns"][f"fix-prs {verb}"]
+    params = cmd.body if verb == "add" else cmd.query
+    assert len(params) == 1
+    assert params[0].name == "url"
+    assert params[0].required
+    assert "Pull request or merge request URL" in params[0].help
+    assert "vulnerabilities:write" in cmd.help
+    assert "Linear or Jira ticket" in cmd.help
+    assert "409" in cmd.help
+    help_text = runner._build_parser("vulns", f"fix-prs {verb}", cmd).format_help()
+    assert "--url" in help_text
+    assert "VULNERABILITY_ID" in help_text
+    if verb == "add":
+        assert "fix PR is not changed" in cmd.help
+        assert "existing URL changes nothing" in cmd.help
+        assert not cmd.query
+    else:
+        assert "does not unlink the fix PR" in cmd.help
+        assert "Removal succeeds if the finding does not have the URL" in cmd.help
+        assert not cmd.body
+
+
+@pytest.mark.parametrize("verb", ["add", "remove"])
+def test_additional_fix_pr_requests(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: Any,
+    verb: str,
+) -> None:
+    url = "https://github.com/example/project/pull/17"
+    payload = {
+        "url": url,
+        "additional_fix_pr_urls": [url] if verb == "add" else [],
+        "ticket_links": {"results": []},
+    }
+    seen: dict[str, Any] = {}
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> FakeResponse:
+        seen.update(method=method, path=path, body=kwargs.get("body"), query=kwargs.get("query"))
+        return FakeResponse(payload=payload)
+
+    monkeypatch.setattr(http, "request", fake_request)
+    assert (
+        cloud.run_cloud(
+            [
+                "vulns",
+                "fix-prs",
+                verb,
+                "finding/1",
+                "--url",
+                url,
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert seen == {
+        "method": "POST" if verb == "add" else "DELETE",
+        "path": "/vulnerabilities/finding%2F1/fix-prs",
+        "body": {"url": url} if verb == "add" else None,
+        "query": {"url": url} if verb == "remove" else None,
+    }
+    assert json.loads(capsys.readouterr().out) == payload
+
+
+@pytest.mark.parametrize("verb", ["add", "remove"])
+def test_additional_fix_pr_requires_url(
+    monkeypatch: pytest.MonkeyPatch,
+    verb: str,
+) -> None:
+    def unexpected_request(*_args: Any, **_kwargs: Any) -> FakeResponse:
+        pytest.fail("Missing URL must not send a request.")
+
+    monkeypatch.setattr(http, "request", unexpected_request)
+    assert cloud.run_cloud(["vulns", "fix-prs", verb, "finding-1", "--json"]) == 2
+
+
+@pytest.mark.parametrize("verb", ["add", "remove"])
+def test_additional_fix_pr_server_validation_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: Any,
+    verb: str,
+) -> None:
+    def fake_request(_method: str, _path: str, **_kwargs: Any) -> FakeResponse:
+        raise http.CloudError("Unsupported pull request URL.", exit_code=1)
+
+    monkeypatch.setattr(http, "request", fake_request)
+    assert (
+        cloud.run_cloud(
+            [
+                "vulns",
+                "fix-prs",
+                verb,
+                "finding-1",
+                "--url",
+                "https://example.test/not-a-pr",
+                "--json",
+            ]
+        )
+        == 1
+    )
+    assert "Unsupported pull request URL." in capsys.readouterr().out
+
+
 def test_query_and_body_collection(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, Any] = {}
 

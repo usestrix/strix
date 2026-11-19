@@ -45,6 +45,8 @@ Target-specific workflows built on the same engine:
   SOURCE_SHA256="<reviewed source.archive_sha256>"
   strix cloud scans start --source . --approve-sha256 "$SOURCE_SHA256" --wait
   strix cloud vulns list --severity critical
+  strix cloud vulns fix-prs add <finding-id> --url https://github.com/example/project/pull/17
+  strix cloud vulns fix-prs remove <finding-id> --url https://github.com/example/project/pull/17
   strix cloud billing topup --credits 20 --yes  # explicit approval after exit code 5
   ```
   - Account setup runs from the CLI too: `strix cloud workspaces list|create|use` (`workspace` is an alias and `use` accepts a displayed number, name, or ID), `strix cloud session scopes|scopes set`, `strix cloud org members invite`, `strix cloud billing subscribe --plan strix_cloud`, `strix cloud billing portal`, `strix cloud integrations install github`, and `strix cloud domains verify <id>`. Workspace switching preserves the server-side profile and can never widen past the login ceiling; ordinary switches do not reprompt. The last four end at a person: the command prints a link or a DNS record for the user to open or add, and it never completes the payment, installation, or DNS change for them.
