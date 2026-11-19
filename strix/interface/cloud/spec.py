@@ -315,6 +315,25 @@ SPEC: dict[str, dict[str, Cmd]] = {
             "/vulnerabilities/{vulnerabilityId}/create-fix-pr",
             "Create a fix pull request for a vulnerability.",
         ),
+        "fix-prs add": Cmd(
+            "POST",
+            "/vulnerabilities/{vulnerabilityId}/fix-prs",
+            "Link an additional pull request or merge request. Requires vulnerabilities:write. "
+            "The fix PR is not changed. Strix attaches the link to each Linear or Jira ticket, "
+            "including tickets created later. An existing URL changes nothing. "
+            "Returns 409 if the PR was removed during the request.",
+            body=(P("url", required=True, help="Pull request or merge request URL."),),
+        ),
+        "fix-prs remove": Cmd(
+            "DELETE",
+            "/vulnerabilities/{vulnerabilityId}/fix-prs",
+            "Unlink an additional pull request from the finding and each Linear or Jira ticket. "
+            "Requires vulnerabilities:write. Send --url as a query parameter. "
+            "Removal succeeds if the finding does not have the URL. "
+            "This does not unlink the fix PR itself. "
+            "Returns 409 if the PR was added again during the request.",
+            query=(P("url", required=True, help="Pull request or merge request URL to remove."),),
+        ),
         "push": Cmd(
             "POST",
             "/vulnerabilities/{vulnerabilityId}/push",

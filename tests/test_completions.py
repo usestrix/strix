@@ -16,6 +16,19 @@ def test_cloud_group_and_alias_candidates() -> None:
 
 
 def test_cloud_verb_candidates_include_multiword_prefixes() -> None:
+    assert "fix-prs" in completion_candidates(["cloud", "vulns", ""])
+    assert completion_candidates(["cloud", "vulns", "fix-prs", ""]) == ["add", "remove"]
+    for verb in ("add", "remove"):
+        assert "--url" in completion_candidates(
+            [
+                "cloud",
+                "vulns",
+                "fix-prs",
+                verb,
+                "finding-1",
+                "--",
+            ]
+        )
     assert "test-users" in completion_candidates(["cloud", "domains", ""])
     assert completion_candidates(["cloud", "domains", "test-users", "in"]) == [
         "inbox",

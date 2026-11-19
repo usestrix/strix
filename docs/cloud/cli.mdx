@@ -43,8 +43,16 @@ strix cloud scans help                        # list the verbs of a resource
 strix cloud domains add --domain example.com --asset-type web_app
 strix cloud scans start --engagement-type live_test --domain-ids <uuid> --wait
 strix cloud vulns list --severity critical
+strix cloud vulns fix-prs add <finding-id> --url https://github.com/example/project/pull/17
+strix cloud vulns fix-prs remove <finding-id> --url https://github.com/example/project/pull/17
 strix cloud credits                           # credit balance
 ```
+
+Use `vulns fix-prs add|remove` to link or unlink additional pull requests and merge requests.
+Both commands require `vulnerabilities:write` and leave the primary `fix_pr_url` unchanged.
+Strix also attaches or removes the link on each Linear or Jira ticket of the finding.
+Add sends `url` in the JSON body. Remove sends `url` as a query parameter.
+The `additional_fix_pr_urls` response field lists additional PRs, oldest first.
 
 Write commands take request fields as flags. Every write command also accepts one JSON object with `--data`:
 
