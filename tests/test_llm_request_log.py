@@ -216,6 +216,25 @@ def test_litellm_success_falls_back_to_response_hidden_headers() -> None:
     assert event.provider_request_id == "req_hidden_1"
 
 
+def test_litellm_content_filter_success_callback_is_logged_as_provider_error() -> None:
+    class _Choice:
+        finish_reason = "content_filter"
+
+    class _Response(_FakeResponse):
+        choices: ClassVar[list[Any]] = [_Choice()]
+
+    event = request_log.event_from_litellm(
+        _anthropic_kwargs(None), _Response(), None, None, outcome="success"
+    )
+
+    assert event.outcome == "error"
+    assert event.status_code == 200
+    assert event.finish_reason == "content_filter"
+    assert event.error_type == "ProviderContentFilter"
+    assert event.error_message == "Response withheld by the provider's content filter."
+    assert (event.input_tokens, event.output_tokens, event.total_tokens) == (120, 30, 150)
+
+
 def test_litellm_anthropic_block_prefers_header_id_over_body_id() -> None:
     exc = _anthropic_error(400, ANTHROPIC_BLOCK_BODY, {"request-id": "req_HeaderWins01"})
     kwargs = _anthropic_kwargs(exc, headers={"request-id": "req_HeaderWins01"})

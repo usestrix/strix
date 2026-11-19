@@ -779,17 +779,24 @@ def _litellm_success(
     cost = _float_or_none(kwargs.get("response_cost"))
     if cost is None:
         cost = _float_or_none(hidden.get("response_cost"))
+    finish_reason = _litellm_finish_reason(response)
+    provider_filtered = finish_reason == "content_filter"
     return replace(
         base,
+        outcome="error" if provider_filtered else base.outcome,
         status_code=200,
         response_id=_str_or_none(getattr(response, "id", None)),
+        error_type="ProviderContentFilter" if provider_filtered else None,
+        error_message=(
+            "Response withheld by the provider's content filter." if provider_filtered else None
+        ),
         input_tokens=usage.get("input_tokens"),
         output_tokens=usage.get("output_tokens"),
         cached_input_tokens=usage.get("cached_input_tokens"),
         total_tokens=usage.get("total_tokens"),
         cost_usd=cost,
         response_bytes=json_size(response),
-        finish_reason=_litellm_finish_reason(response),
+        finish_reason=finish_reason,
         details=merge_details(
             ("request", _litellm_request_details(kwargs)),
             ("response", _litellm_response_details(response)),
