@@ -195,6 +195,9 @@ async def test_a_read_only_proxy_call_fits_two_attempts_inside_the_tool_deadline
     await proxy_tools._call(client, read, read_only=True)
     await proxy_tools._call(client, read)
 
+    await proxy_tools._call(client, read, read_only=True)
+    assert gql_client.execute_timeout == caido_api.GRAPHQL_TIMEOUT_SECONDS  # restored
+    seen.pop()
     assert seen == [caido_api.GRAPHQL_READ_TIMEOUT_SECONDS, caido_api.GRAPHQL_TIMEOUT_SECONDS]
     assert 2 * caido_api.GRAPHQL_READ_TIMEOUT_SECONDS < 60
 

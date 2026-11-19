@@ -93,6 +93,9 @@ async def _call[T](
                 if attempt == attempts or not _is_timeout(exc):
                     raise
                 logger.warning("proxy call timed out after %ss; retrying once", timeout)
+            finally:
+                # Other users of the shared client must not inherit the shorter read limit.
+                caido_api.extend_graphql_timeout(client)
     raise AssertionError("unreachable")  # pragma: no cover
 
 
