@@ -28,6 +28,8 @@ LLM_TURN_KEY = "llm_turn"
 # ``run_strix_scan(subagent_turn_limits=...)``, and the limit it gives one sub-agent.
 SUBAGENT_TURN_LIMITS_KEY = "subagent_turn_limits"
 TURN_LIMIT_KEY = "turn_limit"
+# A sub-agent's finish tool when it is not agent_finish, set on the context it is spawned with.
+FINISH_TOOL_KEY = "finish_tool"
 _TURN_LIMIT_WARN_BEFORE = 10
 _TURN_LIMIT_REPEAT = 5
 
@@ -42,6 +44,7 @@ _TURN_LIMIT_REPEAT = 5
 # scan), keeping its session, context and sandbox alive, and continues with that
 # same call when the operator raises the limit or resumes.
 __all__ = [
+    "FINISH_TOOL_KEY",
     "LLM_TURN_KEY",
     "SUBAGENT_TURN_LIMITS_KEY",
     "TURN_LIMIT_KEY",
@@ -139,20 +142,24 @@ _SUBAGENT_DIRECTIVES: tuple[str, ...] = (
     (
         "As a sub-agent, prioritize wrapping up your task now: report any confirmed, "
         "validated vulnerability, finish work that is nearly done rather than starting "
-        "anything new, and prepare to call agent_finish."
+        "anything new, and prepare to call {finish_tool}."
     ),
     (
         "As a sub-agent, STOP all other work and finish immediately: report any confirmed "
-        "vulnerability right now and call agent_finish to hand your results back to your "
+        "vulnerability right now and call {finish_tool} to hand your results back to your "
         "parent before you are cut off."
     ),
 )
 
 
+def subagent_finish_tool(context: dict[str, Any]) -> str:
+    return str(context.get(FINISH_TOOL_KEY) or "agent_finish")
+
+
 def _wrapup_directive(context: RunContextWrapper[dict[str, Any]], stage: int) -> str:
     is_root = context.context.get("parent_id") is None
     if not is_root:
-        return _SUBAGENT_DIRECTIVES[stage]
+        return _SUBAGENT_DIRECTIVES[stage].format(finish_tool=subagent_finish_tool(context.context))
     coordinator = coordinator_from_context(context.context)
     finish_tool = coordinator.root_finish_tool if coordinator is not None else "finish_scan"
     return _ROOT_DIRECTIVES[stage].format(finish_tool=finish_tool)
@@ -295,17 +302,18 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         if not isinstance(limit, int) or not isinstance(requests, int):
             return
         turns_used = requests + 1
+        finish_tool = subagent_finish_tool(context.context)
         if turns_used == limit - _TURN_LIMIT_WARN_BEFORE:
             content = (
                 f"[NOTICE] You have used {turns_used} of your {limit}-turn limit. Start "
                 "wrapping up: take only the steps you still need to answer your task, then "
-                "call agent_finish. You may go past the limit only while you are still "
+                f"call {finish_tool}. You may go past the limit only while you are still "
                 "making real progress."
             )
         elif turns_used >= limit and (turns_used - limit) % _TURN_LIMIT_REPEAT == 0:
             content = (
                 f"[NOTICE] You have used {turns_used} turns, past your {limit}-turn limit. "
-                "Call agent_finish now with what you have, listing anything unresolved in "
+                f"Call {finish_tool} now with what you have, listing anything unresolved in "
                 "open_items, unless your next steps are clearly making progress on your task."
             )
         else:

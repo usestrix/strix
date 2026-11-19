@@ -564,16 +564,22 @@ def _make_shell_configurator(*, chat_completions: bool, strict_schemas: bool) ->
 _PARKING_TOOLS: frozenset[str] = frozenset({"wait_for_user", "wait_for_agents"})
 
 
-def _lifecycle_tool_completed(tool_name: str, output: Any) -> bool:
-    if tool_name == "agent_finish":
-        completion_key = "agent_completed"
-    elif tool_name == "finish_scan":
-        completion_key = "scan_completed"
-    elif tool_name == "finish_pr_review":  # registered by strix-pro
-        completion_key = "review_completed"
-    else:
-        return False
+# Tools that end their agent's run, and the key each sets in its result to do so.
+_LIFECYCLE_TOOLS: dict[str, str] = {
+    "agent_finish": "agent_completed",
+    "finish_scan": "scan_completed",
+    # Registered by strix-pro.
+    "finish_pr_review": "review_completed",
+    "investigator_finish": "agent_completed",
+    "validator_finish": "agent_completed",
+    "reporter_finish": "agent_completed",
+}
 
+
+def _lifecycle_tool_completed(tool_name: str, output: Any) -> bool:
+    completion_key = _LIFECYCLE_TOOLS.get(tool_name)
+    if completion_key is None:
+        return False
     if not isinstance(output, str):
         return False
     try:

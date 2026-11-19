@@ -191,6 +191,8 @@ def test_disabling_strict_leaves_shared_tools_untouched() -> None:
         ("finish_pr_review", '{"success": false, "error": "agents_still_active"}', False),
         ("finish_scan", '{"success": true, "scan_completed": true}', True),
         ("think", '{"success": true, "review_completed": true}', False),
+        ("think", '{"success": true, "agent_completed": true}', False),
+        ("validator_finish", '{"success": true, "agent_completed": true}', True),
     ],
 )
 def test_lifecycle_tool_completed(tool_name: str, output: str, completed: bool) -> None:
