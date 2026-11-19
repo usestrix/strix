@@ -7,7 +7,7 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from strix.skills import get_available_skills, load_skills, methodology_tag, skill_search_dirs
+from strix.skills import get_available_skills, load_skills, skill_search_dirs
 from strix.utils.resource_paths import get_strix_resource_path
 
 
@@ -78,7 +78,6 @@ def _resolve_skills(
 def render_system_prompt(
     *,
     skills: list[str] | None = None,
-    methodology: list[dict[str, str]] | None = None,
     scan_mode: str = "deep",
     is_whitebox: bool = False,
     is_root: bool = False,
@@ -135,11 +134,6 @@ def render_system_prompt(
             shared_skill_names=[name for name in skill_content if name in shared],
             requested_skill_names=[name for name in skill_content if name not in shared],
             available_skills=get_available_skills(),
-            methodology=[
-                {"name": methodology_tag(m.get("name", "")), "content": m["content"]}
-                for m in methodology or []
-                if m.get("content")
-            ],
             interactive=interactive,
             parallel_tool_calls=parallel_tool_calls,
             is_root=is_root,

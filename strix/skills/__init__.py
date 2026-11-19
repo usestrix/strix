@@ -273,39 +273,6 @@ def validate_requested_skills(skill_list: list[str], max_skills: int | None = 5)
     return None
 
 
-def methodology_tag(name: str) -> str:
-    """Name of a methodology as it appears as a tag in the system prompt."""
-    tag = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_")
-    # The prompt wraps all entries in <methodology>; an entry must not reuse that tag.
-    return tag if tag and tag.lower() != "methodology" else "methodology_rules"
-
-
-def resolve_methodology(ref: str) -> tuple[str, str]:
-    """Resolve a methodology reference to ``(name, body)``.
-
-    *ref* is a path to a markdown file, or the name of a skill. Raises
-    ``ValueError`` with a user-readable message when it is neither, or when
-    the body is empty.
-    """
-    path = Path(ref).expanduser()
-    if path.is_file():
-        try:
-            content = path.read_text(encoding="utf-8")
-        except (OSError, ValueError) as e:
-            raise ValueError(f"Failed to read methodology file '{ref}': {e}") from e
-        name = path.stem
-        _, body = _parse_skill_content(content, path)
-    else:
-        if error := validate_requested_skills([ref], max_skills=None):
-            raise ValueError(f"'{ref}' is not a file. {error}")
-        name = ref.rsplit("/", maxsplit=1)[-1]
-        body = load_skills([ref]).get(name, "")
-    body = body.strip()
-    if not body:
-        raise ValueError(f"Methodology '{ref}' is empty")
-    return methodology_tag(name), body
-
-
 _LOADED_SKILLS: set[str] = set()
 
 
