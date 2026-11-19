@@ -403,4 +403,11 @@ def subscription_model(model_name: str | None) -> str | None:
 
 
 def auth_mode(model_name: str | None) -> str:
-    return "subscription" if subscription_model(model_name) else "api_key"
+    if subscription_model(model_name):
+        return "subscription"
+    from strix.config import anthropic_wif
+    from strix.config.loader import load_settings
+
+    if anthropic_wif.applies(model_name, load_settings().llm.api_key):
+        return "workload_identity"
+    return "api_key"
