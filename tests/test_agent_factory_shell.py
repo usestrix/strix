@@ -101,12 +101,12 @@ def test_wrap_exec_command_describes_the_yield_cap() -> None:
     wrapped = factory._wrap_exec_command(_running_exec_tool("ok"))
 
     assert wrapped.description.startswith("Runs a command. The wait for output is capped at 30 s")
-    assert "cannot be read later" in wrapped.description
-    assert "tty=true" in wrapped.description
+    assert 'write_stdin(session_id=<id>, chars="")' in wrapped.description
+    assert "lost" not in wrapped.description
 
 
 @pytest.mark.asyncio
-async def test_wrap_exec_command_flags_a_running_non_tty_process() -> None:
+async def test_wrap_exec_command_points_a_capped_running_process_at_write_stdin() -> None:
     wrapped = factory._wrap_exec_command(_running_exec_tool(_RUNNING_RESULT))
 
     result = await wrapped.on_invoke_tool(
@@ -116,20 +116,18 @@ async def test_wrap_exec_command_flags_a_running_non_tty_process() -> None:
     assert result == (
         "Chunk ID: abc123\nWall time: 30.0012 seconds\n"
         "Process running with session ID 7\nOutput:\n"
-        "Note: yield_time_ms=90000 was capped at 30000 (30 s). this non-TTY process cannot be "
-        "polled and its later output is lost. Rerun it in the background "
-        "(`cmd > /tmp/out.log 2>&1 &`, then read the log) or with tty=true.\n"
+        "Note: yield_time_ms=90000 was capped at 30000 (30 s); the command is still running, "
+        'read it with write_stdin(session_id=<id>, chars="").\n'
     )
 
 
 @pytest.mark.asyncio
-async def test_wrap_exec_command_flags_a_running_non_tty_process_within_the_cap() -> None:
+async def test_wrap_exec_command_leaves_a_running_process_within_the_cap_alone() -> None:
     wrapped = factory._wrap_exec_command(_running_exec_tool(_RUNNING_RESULT))
 
     result = await wrapped.on_invoke_tool(cast("Any", None), json.dumps({"cmd": "sleep 60"}))
 
-    assert "Note: this non-TTY process cannot be polled" in result
-    assert "was capped" not in result
+    assert result == _RUNNING_RESULT
 
 
 @pytest.mark.asyncio
