@@ -17,6 +17,7 @@ from rich.text import Text
 
 from strix.config import codex, load_settings, persist_current
 from strix.core.paths import RUNS_DIR_NAME, run_dir_for
+from strix.i18n import t
 from strix.interface.cli_args import (
     FAIL_ON_SEVERITIES,
     ResumeError,
@@ -66,6 +67,16 @@ Additional commands:
   strix view [RUN]         View a completed or running scan
   strix completions SHELL  Generate zsh, bash, or fish tab completion
 """
+
+
+def _format_root_subcommand_help() -> str:
+    return (
+        f"{t('cli.subcommands_header')}\n"
+        f"  strix cloud ...          {t('cli.subcommand_cloud')}\n"
+        f"  strix auth ...           {t('cli.subcommand_auth')}\n"
+        f"  strix view [RUN]         {t('cli.subcommand_view')}\n"
+        f"  strix completions SHELL  {t('cli.subcommand_completions')}"
+    )
 
 
 def _exception_messages(exc: BaseException) -> tuple[str, ...]:
@@ -130,17 +141,16 @@ async def warm_up_llm() -> None:
             and not llm.api_base
         ):
             warn_text = Text()
-            warn_text.append("UNKNOWN MODEL NAME", style="bold yellow")
+            warn_text.append(t("cli.unknown_model"), style="bold yellow")
             warn_text.append("\n\n", style="white")
             warn_text.append(f"'{raw_model}'", style="bold cyan")
             warn_text.append(
-                " is not a known OpenAI model. Bare names route to OpenAI by default.\n"
-                "If you meant a non-OpenAI provider, use the '",
+                t("cli.unknown_model_body"),
                 style="white",
             )
             warn_text.append("<provider>/<model>", style="bold cyan")
             warn_text.append(
-                "' form, e.g. 'anthropic/claude-opus-4-7', 'deepseek/deepseek-v4-pro'.",
+                t("cli.unknown_model_hint"),
                 style="white",
             )
             console.print(
@@ -196,17 +206,17 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
 
     completion_text = Text()
     if scan_completed:
-        completion_text.append("Penetration test completed", style="bold #22c55e")
+        completion_text.append(t("cli.completion_title"), style="bold #22c55e")
     else:
-        completion_text.append("SESSION ENDED", style="bold #eab308")
+        completion_text.append(t("cli.session_ended"), style="bold #eab308")
 
     target_text = Text()
-    target_text.append("Target", style="dim")
+    target_text.append(t("cli.target_label"), style="dim")
     target_text.append("  ")
     if len(args.targets_info) == 1:
         target_text.append(args.targets_info[0]["original"], style="bold white")
     else:
-        target_text.append(f"{len(args.targets_info)} targets", style="bold white")
+        target_text.append(t("cli.targets_label", count=len(args.targets_info)), style="bold white")
         for target_info in args.targets_info:
             target_text.append("\n        ")
             target_text.append(target_info["original"], style="white")
@@ -220,14 +230,14 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
 
     results_text = Text()
     results_text.append("\n")
-    results_text.append("Output", style="dim")
+    results_text.append(t("cli.output_label"), style="dim")
     results_text.append("  ")
     results_text.append(str(results_path), style="#60a5fa")
     panel_parts.extend(["\n", results_text])
 
     view_text = Text()
     view_text.append("\n")
-    view_text.append("View", style="dim")
+    view_text.append(t("cli.view_label"), style="dim")
     view_text.append("    ")
     view_text.append(f"strix view {args.run_name}", style="#22c55e")
     panel_parts.extend(["\n", view_text])
@@ -235,7 +245,7 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
     if not scan_completed:
         resume_text = Text()
         resume_text.append("\n")
-        resume_text.append("Resume", style="dim")
+        resume_text.append(t("cli.resume_label"), style="dim")
         resume_text.append("  ")
         resume_text.append(f"strix --resume {args.run_name}", style="#22c55e")
         panel_parts.extend(["\n", resume_text])
@@ -318,16 +328,16 @@ def _print_model_connection_error(exc: BaseException) -> None:
     sub_hint = _subscription_error_hint(exc)
     if sub_hint is not None:
         border_style = "yellow"
-        error_text.append("MODEL NOT AVAILABLE ON SUBSCRIPTION", style="bold yellow")
+        error_text.append(t("cli.model_not_available"), style="bold yellow")
         error_text.append("\n\n", style="white")
         error_text.append(f"{sub_hint}\n", style="white")
         error_text.append(f"\nDetails: {exc}", style="dim white")
     else:
         border_style = "red"
-        error_text.append("LLM CONNECTION FAILED", style="bold red")
+        error_text.append(t("cli.llm_connection_failed"), style="bold red")
         error_text.append("\n\n", style="white")
-        error_text.append("Could not establish connection to the language model.\n", style="white")
-        error_text.append("Please check your configuration and try again.\n", style="white")
+        error_text.append(t("cli.llm_connection_error") + "\n", style="white")
+        error_text.append(t("cli.llm_check_config") + "\n", style="white")
         error_text.append(f"\nError: {exc}", style="dim white")
 
     panel = Panel(
@@ -365,13 +375,12 @@ def _fall_back_to_headless(args: argparse.Namespace) -> None:
     if args.needs_setup:
         report_error("no_terminal_for_setup")
         _print_error_panel(
-            "NO TERMINAL ATTACHED",
-            "The interactive interface needs a terminal and no target was given.\n"
-            "Pass -t <target> -n to run headless.",
+            t("cli.no_terminal_attached"),
+            t("cli.no_terminal_attached_body"),
         )
         sys.exit(1)
     args.non_interactive = True
-    Console().print("No terminal attached, running headless (same as -n).", style="dim")
+    Console().print(t("cli.running_headless_notice"), style="dim")
 
 
 def _pick_run_to_resume(args: argparse.Namespace) -> None:
@@ -413,7 +422,7 @@ def _bootstrap_scan(args: argparse.Namespace) -> None:
         prepare_run(args)
     except ValueError as e:
         report_error("scan_preparation_failed", e)
-        _print_error_panel("SCAN PREPARATION FAILED", str(e))
+        _print_error_panel(t("cli.scan_preparation_failed"), str(e))
         sys.exit(1)
     telemetry_start(args)
 
@@ -434,12 +443,17 @@ def main() -> None:
 
     setup_console_logging()
 
-    if len(sys.argv) == 2 and sys.argv[1] in ("-h", "--help"):
-        try:
-            parse_arguments()
-        except SystemExit as exc:
-            Console().print(_ROOT_SUBCOMMAND_HELP.strip(), markup=False)
-            raise SystemExit(exc.code) from None
+    raw_argv = sys.argv[1:]
+    pre_dd_argv = raw_argv[: raw_argv.index("--")] if "--" in raw_argv else raw_argv
+    if "-h" in pre_dd_argv or "--help" in pre_dd_argv:
+        subcommands = ("view", "auth", "completion", "completions", "cloud")
+        if len(sys.argv) < 2 or sys.argv[1] not in subcommands:
+            try:
+                parse_arguments()
+            except SystemExit as exc:
+                if exc.code == 0:
+                    Console().print(_format_root_subcommand_help(), markup=False)
+                raise SystemExit(exc.code) from None
 
     # `strix view [<run>]` is a viewer-only subcommand, dispatched before the
     # scan argument parser (which requires a target) and before any scan setup.
@@ -509,12 +523,14 @@ def main() -> None:
     except InteractiveSetupUnavailableError as exc:
         exit_reason = "error"
         report_error("interactive_setup_unavailable", exc)
-        _print_error_panel("INTERACTIVE SETUP UNAVAILABLE", str(exc))
+        _print_error_panel(t("cli.interactive_setup_unavailable"), str(exc))
         sys.exit(1)
     except InteractiveInterfaceExitedError as exc:
         exit_reason = "error"
         report_error("interactive_interface_exited", exc)
-        _print_error_panel("INTERACTIVE INTERFACE STOPPED", f"{exc}.\n{HEADLESS_HINT}")
+        _print_error_panel(
+            t("cli.interactive_interface_stopped"), f"{exc}.\n{t('cli.headless_hint')}"
+        )
         sys.exit(1)
     except KeyboardInterrupt:
         exit_reason = "interrupted"
