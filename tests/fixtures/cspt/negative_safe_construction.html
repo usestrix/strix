@@ -1,0 +1,29 @@
+<!doctype html>
+<!--
+  CSPT NEGATIVE — safe path construction (NOT CSPT)
+  Source: query parameter (?q=)
+  Sink:   fetch()
+  The request path is a CONSTANT ("/api/search"). The client value is only ever
+  attached as a query parameter via URLSearchParams, never concatenated into the
+  path, so it cannot introduce path traversal. A tainted query value is not CSPT.
+-->
+<html lang="en">
+<head><meta charset="utf-8" /><title>Search (safe)</title></head>
+<body>
+<h1>Search</h1>
+<pre id="out">loading…</pre>
+<script>
+  // SOURCE: query param, e.g. ?q=../../admin
+  const q = new URLSearchParams(location.search).get("q") || "";
+
+  // SAFE: constant path; the value is a query parameter, not a path segment.
+  const url = new URL("/api/search", location.origin);
+  url.searchParams.set("q", q);
+
+  fetch(url.toString(), { credentials: "include" })
+    .then((r) => r.text())
+    .then((t) => { document.getElementById("out").textContent = t; })
+    .catch((e) => { document.getElementById("out").textContent = String(e); });
+</script>
+</body>
+</html>
