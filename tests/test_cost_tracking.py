@@ -21,6 +21,7 @@ from strix.config.models import (
 )
 from strix.core.hooks import ReportUsageHooks
 from strix.llm import request_log
+from strix.report.pricing import resolve_litellm_model
 from strix.report.state import (
     ReportState,
     litellm_cost_callback,
@@ -168,6 +169,40 @@ def test_cost_callback_estimates_cost_with_bare_model_fallback() -> None:
         litellm_cost_callback(kwargs, response)
 
     report_state.record_observed_llm_cost.assert_called_once_with(0.025)
+
+
+@pytest.mark.parametrize("provider", ["github_copilot", "chatgpt", "openai"])
+def test_cost_callback_estimates_without_provider_authentication(provider: str) -> None:
+    model = f"{provider}/test-cost-model"
+    catalog = {
+        model: {
+            "litellm_provider": provider,
+            "mode": "chat",
+            "input_cost_per_token": 1e-6,
+            "output_cost_per_token": 2e-6,
+        }
+    }
+    report_state = MagicMock()
+    response = {"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
+    resolve_litellm_model.cache_clear()
+    try:
+        with (
+            patch.object(litellm, "model_cost", catalog),
+            patch("strix.report.state.get_global_report_state", return_value=report_state),
+            patch.object(
+                litellm,
+                "get_llm_provider",
+                side_effect=AssertionError(
+                    "cost estimation must not start provider authentication"
+                ),
+            ) as infer_provider,
+        ):
+            litellm_cost_callback({"model": model}, response)
+
+        report_state.record_observed_llm_cost.assert_called_once_with(pytest.approx(0.00002))
+        infer_provider.assert_not_called()
+    finally:
+        resolve_litellm_model.cache_clear()
 
 
 def test_cost_callback_records_nothing_when_no_cost_available() -> None:

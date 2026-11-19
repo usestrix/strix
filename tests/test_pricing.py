@@ -67,6 +67,38 @@ def test_resolver_returns_none_for_unresolvable_model() -> None:
     assert resolve_litellm_model("provider/not-a-real-model") is None
 
 
+@pytest.mark.parametrize("provider", ["github_copilot", "chatgpt", "openai"])
+def test_ledger_estimates_cost_without_provider_authentication(provider: str) -> None:
+    model = f"{provider}/test-cost-model"
+    catalog = {
+        model: {
+            "litellm_provider": provider,
+            "mode": "chat",
+            "input_cost_per_token": 1e-6,
+            "output_cost_per_token": 2e-6,
+        }
+    }
+    ledger = LLMUsageLedger()
+    resolve_litellm_model.cache_clear()
+    try:
+        with (
+            patch.object(litellm, "model_cost", catalog),
+            patch.object(
+                litellm,
+                "get_llm_provider",
+                side_effect=AssertionError(
+                    "cost estimation must not start provider authentication"
+                ),
+            ) as infer_provider,
+        ):
+            ledger.record(agent_id="a", usage=_usage(10, 5), model=model)
+
+        assert ledger.total_cost == pytest.approx(0.00002)
+        infer_provider.assert_not_called()
+    finally:
+        resolve_litellm_model.cache_clear()
+
+
 def test_ledger_uses_estimate_when_routed_provider_reports_no_cost() -> None:
     usage = Usage()
     usage.requests = 1
