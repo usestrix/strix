@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
 import httpx
 import pytest
@@ -130,7 +130,7 @@ async def _run_once(
         coordinator,
         "root",
         input_data="task",
-        run_config=cast("RunConfig", object()),
+        run_config=RunConfig(),
         context={},
         max_turns=5,
         session=session,

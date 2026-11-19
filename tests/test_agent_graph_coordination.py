@@ -91,7 +91,7 @@ async def test_every_terminal_non_interactive_status_is_unreachable(status: str)
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["running", "waiting"])
-async def test_message_to_live_child_is_delivered(status: str) -> None:
+async def test_message_to_live_child_is_queued(status: str) -> None:
     coordinator = await _graph(interactive=False)
     await coordinator.set_status("child", status)
 
@@ -103,7 +103,7 @@ async def test_message_to_live_child_is_delivered(status: str) -> None:
     )
 
     assert result["success"] is True
-    assert result["delivery_status"] == "delivered"
+    assert result["delivery_status"] == "queued"
     assert coordinator.pending_counts["child"] == 1
 
 
