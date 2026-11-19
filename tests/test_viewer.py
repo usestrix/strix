@@ -7,12 +7,15 @@ import os
 import sqlite3
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
+import pytest
+
 from strix.core.paths import latest_run_dir, runs_base_dir
 from strix.interface.viewer.cli import _state_label, run_view
-from strix.interface.viewer.server import serve
+from strix.interface.viewer.server import build_runs_payload, serve
 from strix.interface.viewer.transcript import (
     build_run_state,
     read_report_markdown,
@@ -23,9 +26,7 @@ from strix.interface.viewer.transcript import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from pathlib import Path
-
-    import pytest
+    from os import stat_result
 
 
 def _make_run(base: Path, name: str, *, status: str, end_time: str | None) -> Path:
@@ -84,6 +85,32 @@ def test_latest_run_dir_picks_newest_by_record_mtime(
     os.utime(newer / "run.json", (2_000_000_000, 2_000_000_000))
     os.utime(older / "run.json", (1_000_000_000, 1_000_000_000))
     assert latest_run_dir() == newer
+
+
+@pytest.mark.parametrize("entry_point", ["latest", "history"])
+def test_run_disappearing_during_listing_keeps_healthy_siblings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entry_point: str
+) -> None:
+    healthy = _make_run(tmp_path, "healthy", status="running", end_time=None)
+    removed = _make_run(tmp_path, "removed", status="running", end_time=None) / "run.json"
+    os.utime(removed, (1_000_000_000, 1_000_000_000))
+    os.utime(healthy / "run.json", (2_000_000_000, 2_000_000_000))
+    real_stat = Path.stat
+
+    def stat_then_remove(path: Path, *, follow_symlinks: bool = True) -> stat_result:
+        metadata = real_stat(path, follow_symlinks=follow_symlinks)
+        if path == removed:
+            removed.unlink()
+        return metadata
+
+    monkeypatch.setattr(Path, "stat", stat_then_remove)
+    if entry_point == "latest":
+        assert latest_run_dir(cwd=tmp_path) == healthy
+    else:
+        payload = build_runs_payload(runs_base_dir(cwd=tmp_path), verified=True)
+        assert payload["runs"][0]["name"] == healthy.name
+        refresh = build_runs_payload(runs_base_dir(cwd=tmp_path), verified=True)
+        assert [entry["name"] for entry in refresh["runs"]] == [healthy.name]
 
 
 def test_read_run_summary_finished_flag(tmp_path: Path) -> None:
