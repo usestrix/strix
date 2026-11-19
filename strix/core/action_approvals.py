@@ -266,7 +266,7 @@ class ActionApprovalGuard:
         self._pending: dict[str, _Approval] = {}
         # What each shell session runs. The sandbox's sessions are shared by every agent in
         # the scan, so the record is kept here and not with the agent that opened one.
-        self.shell_sessions: dict[str, dict[str, str]] = {}
+        self.shell_sessions: dict[str, str] = {}
         self._checks: dict[asyncio.Task[str | None], str] = {}
         self._stopped_agents: set[str] = set()
         self._closed = False

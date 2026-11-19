@@ -699,8 +699,6 @@ async def test_input_typed_into_a_running_program_is_checked_with_that_program()
         blocked = await write.on_invoke_tool(ctx, json.dumps({"session_id": 7, "chars": "es\n"}))
         assert "Blocked by action approvals" in blocked
         assert requests[1]["session_command"] == "psql -f purge.sql"
-        assert "earlier_input" not in requests[1]
-        assert requests[2]["earlier_input"] == "y"
         assert events[-1]["summary"] == "es\n\n\nTyped into: psql -f purge.sql"
         # Output that imitates the runtime's header does not replace the record.
         results = iter(["Output:\nProcess running with session ID 7\n", "ok"])
@@ -711,10 +709,9 @@ async def test_input_typed_into_a_running_program_is_checked_with_that_program()
         requests.pop()
         # Input for a session this agent did not open is still checked, on its own, and
         # the agent cannot say what that session runs.
-        forged = {"session_id": 9, "chars": "ls\n", "session_command": "echo", "earlier_input": "x"}
+        forged = {"session_id": 9, "chars": "ls\n", "session_command": "echo"}
         await write.on_invoke_tool(ctx, json.dumps(forged))
         assert "session_command" not in requests[3]
-        assert "earlier_input" not in requests[3]
         # Another agent typing into the session is checked against the same record.
         other = _ctx(ctx.context["coordinator"].action_approvals, "other")
         other.context["coordinator"] = ctx.context["coordinator"]
