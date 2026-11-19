@@ -38,7 +38,12 @@ if [ -n "${STRIX_CAIDO_ALLOWED_DOMAINS:-}" ]; then
   done
 fi
 
-caido-cli --listen 0.0.0.0:${CAIDO_PORT} \
+# Bridge mode publishes this port on the host loopback. Host networking sets
+# STRIX_CAIDO_LISTEN_ADDRESS=127.0.0.1 so --allow-guests is not reachable on
+# every host interface. Unset keeps the bridge listener.
+CAIDO_LISTEN_ADDRESS="${STRIX_CAIDO_LISTEN_ADDRESS:-0.0.0.0}"
+
+caido-cli --listen "${CAIDO_LISTEN_ADDRESS}:${CAIDO_PORT}" \
           --allow-guests \
           --no-logging \
           --no-open \

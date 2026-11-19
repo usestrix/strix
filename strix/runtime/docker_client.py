@@ -3,7 +3,7 @@ NET_ADMIN/NET_RAW capabilities + host-gateway.
 
 The SDK's ``DockerSandboxClient._create_container`` does not expose a hook for
 extending ``create_kwargs`` before ``containers.create`` is called. We subclass
-and reimplement the method body verbatim from the SDK source, with three
+and reimplement the method body verbatim from the SDK source, with five
 deltas:
 
 1. Drop the SDK's ``entrypoint=["tail"]`` override; supply ``["tail", "-f",
@@ -15,6 +15,12 @@ deltas:
    other raw-socket tools).
 3. Add ``host.docker.internal`` → host-gateway to ``extra_hosts`` so the
    agent can reach host-served apps.
+4. Honor ``STRIX_DOCKER_SANDBOX_NETWORK``. ``host`` omits published ports,
+   tells the entrypoint to bind Caido to loopback, and resolves exposed
+   ports on the daemon loopback. Any other name attaches that network and
+   resolves the container IP. Unset keeps the SDK published-port path.
+5. Merge ``STRIX_DOCKER_EXTRA_HOSTS`` (a JSON hostname-to-IP object) into
+   ``extra_hosts``. ``host.docker.internal`` stays reserved for host-gateway.
 
 Pinned to ``openai-agents==0.14.6``. Bumping the SDK requires
 re-merging the parent body. Track upstream for an injection hook.
@@ -23,6 +29,8 @@ re-merging the parent body. Track upstream for an injection hook.
 from __future__ import annotations
 
 import contextlib
+import ipaddress
+import json
 import logging
 import os
 import uuid
@@ -52,6 +60,14 @@ logger = logging.getLogger(__name__)
 
 
 _SANDBOX_NETWORK_ENV = "STRIX_DOCKER_SANDBOX_NETWORK"
+_EXTRA_HOSTS_ENV = "STRIX_DOCKER_EXTRA_HOSTS"
+_HOST_GATEWAY_HOSTNAME = "host.docker.internal"
+_HOST_NETWORK_NAME = "host"
+_DAEMON_LOOPBACK = "127.0.0.1"
+# Read by containers/docker-entrypoint.sh. Set only for host networking so the
+# unauthenticated Caido listener stays on loopback instead of 0.0.0.0.
+_CAIDO_LISTEN_ADDRESS_ENV = "STRIX_CAIDO_LISTEN_ADDRESS"
+_CAIDO_LOOPBACK_LABEL = "strix.sandbox.caido-loopback"
 
 
 def _sandbox_network() -> str | None:
@@ -59,11 +75,114 @@ def _sandbox_network() -> str | None:
     return value or None
 
 
-def _apply_sandbox_network(create_kwargs: dict[str, Any]) -> None:
+def _apply_host_network_listener(create_kwargs: dict[str, Any]) -> None:
+    """Point the entrypoint at loopback when the sandbox uses host networking.
+
+    ``docker-entrypoint.sh`` otherwise runs ``caido-cli --listen 0.0.0.0:48080``
+    with guest access enabled. Host networking would expose that proxy on every
+    host interface. Named and bridge networks keep the bridge listener.
+    """
+    raw_environment = create_kwargs.get("environment")
+    if isinstance(raw_environment, dict):
+        environment: dict[str, Any] = dict(cast("dict[str, Any]", raw_environment))
+    else:
+        environment = {}
+    environment[_CAIDO_LISTEN_ADDRESS_ENV] = _DAEMON_LOOPBACK
+    create_kwargs["environment"] = environment
+
+
+def _require_host_network_image(docker_client: Any, image: str) -> None:
+    """Reject host mode when a cached image may still bind Caido on 0.0.0.0."""
+    try:
+        attrs = docker_client.images.get(image).attrs
+    except docker_errors.ImageNotFound:
+        attrs = None
+    config = attrs.get("Config") if isinstance(attrs, dict) else None
+    labels = config.get("Labels") if isinstance(config, dict) else None
+    if isinstance(labels, dict) and labels.get(_CAIDO_LOOPBACK_LABEL) == "true":
+        return
+    raise ValueError(
+        f"{_SANDBOX_NETWORK_ENV}=host requires label {_CAIDO_LOOPBACK_LABEL}=true "
+        f"so {_CAIDO_LISTEN_ADDRESS_ENV} is honored. Cached older images bind "
+        "Caido to 0.0.0.0 with guest access."
+    )
+
+
+def _apply_sandbox_network(create_kwargs: dict[str, Any], docker_client: Any, image: str) -> None:
     network = _sandbox_network()
-    if network:
-        create_kwargs["network"] = network
-        create_kwargs.pop("ports", None)
+    if not network:
+        return
+    if network == _HOST_NETWORK_NAME:
+        _require_host_network_image(docker_client, image)
+    create_kwargs["network"] = network
+    create_kwargs.pop("ports", None)
+    if network == _HOST_NETWORK_NAME:
+        _apply_host_network_listener(create_kwargs)
+
+
+def _extra_host_mappings() -> dict[str, str]:
+    """Hostname → literal IP entries from ``STRIX_DOCKER_EXTRA_HOSTS``.
+
+    Unset or blank leaves the built-in host-gateway mapping untouched. A
+    malformed value raises before the container is created.
+    """
+    raw = os.environ.get(_EXTRA_HOSTS_ENV, "").strip()
+    if not raw:
+        return {}
+
+    try:
+        parsed: object = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"{_EXTRA_HOSTS_ENV} must be a JSON object mapping hostnames to "
+            f"IP addresses ({exc.msg})"
+        ) from exc
+
+    if not isinstance(parsed, dict):
+        got = "array" if isinstance(parsed, list) else type(parsed).__name__
+        raise TypeError(
+            f"{_EXTRA_HOSTS_ENV} must be a JSON object mapping hostnames to IP addresses, got {got}"
+        )
+
+    mappings: dict[str, str] = {}
+    for name, address in cast("dict[object, object]", parsed).items():
+        hostname = _extra_hostname(name)
+        mappings[hostname] = _extra_host_address(hostname, address)
+    return mappings
+
+
+def _extra_hostname(name: object) -> str:
+    if not isinstance(name, str):
+        raise TypeError(f"{_EXTRA_HOSTS_ENV} hostnames must be strings")
+    hostname = name.strip()
+    if not hostname:
+        raise ValueError(f"{_EXTRA_HOSTS_ENV} contains an empty hostname")
+    if hostname.lower() == _HOST_GATEWAY_HOSTNAME:
+        raise ValueError(
+            f"{_EXTRA_HOSTS_ENV} cannot replace the reserved {_HOST_GATEWAY_HOSTNAME} mapping"
+        )
+    return hostname
+
+
+def _extra_host_address(hostname: str, address: object) -> str:
+    if not isinstance(address, str):
+        raise TypeError(
+            f"{_EXTRA_HOSTS_ENV} value for {hostname!r} must be an IPv4 or IPv6 address string"
+        )
+    candidate = address.strip()
+    try:
+        ipaddress.ip_address(candidate)
+    except ValueError as exc:
+        raise ValueError(
+            f"{_EXTRA_HOSTS_ENV} value for {hostname!r} is not a literal IPv4 or IPv6 address"
+        ) from exc
+    return candidate
+
+
+def _apply_extra_hosts(create_kwargs: dict[str, Any]) -> None:
+    extra_hosts = create_kwargs.setdefault("extra_hosts", {})
+    extra_hosts[_HOST_GATEWAY_HOSTNAME] = "host-gateway"
+    extra_hosts.update(_extra_host_mappings())
 
 
 _SANDBOX_DEVICES_ENV = "STRIX_DOCKER_SANDBOX_DEVICES"
@@ -169,6 +288,11 @@ class StrixDockerSandboxSession(DockerSandboxSession):
                 cause=e,
             ) from e
 
+        # Host mode has no container IP. The entrypoint binds Caido to the
+        # daemon loopback on the requested port.
+        if self.sandbox_network == _HOST_NETWORK_NAME:
+            return ExposedPortEndpoint(host=_DAEMON_LOOPBACK, port=port, tls=False)
+
         attrs = getattr(self._container, "attrs", {}) or {}
         networks = attrs.get("NetworkSettings", {}).get("Networks", {})
         endpoint = networks.get(self.sandbox_network) or {}
@@ -256,10 +380,8 @@ class StrixDockerSandboxClient(DockerSandboxClient):
             if cap not in cap_add:
                 cap_add.append(cap)
 
-        extra_hosts = create_kwargs.setdefault("extra_hosts", {})
-        extra_hosts["host.docker.internal"] = "host-gateway"
-
-        _apply_sandbox_network(create_kwargs)
+        _apply_extra_hosts(create_kwargs)
+        _apply_sandbox_network(create_kwargs, self.docker_client, image)
         _apply_sandbox_devices(create_kwargs)
         _apply_resource_limits(create_kwargs)
         _apply_log_limits(create_kwargs)
