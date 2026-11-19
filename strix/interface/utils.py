@@ -5,6 +5,7 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -13,7 +14,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-import requests
+import certifi
+import urllib3
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -1119,14 +1121,89 @@ def resolve_diff_scope_context(
     )
 
 
-def _is_http_git_repo(url: str) -> bool:
-    check_url = f"{url.rstrip('/')}/info/refs?service=git-upload-pack"
+def _is_disallowed_probe_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def _resolve_pinned_probe_ip(hostname: str, port: int) -> str | None:
+    """Resolve `hostname` once and return an allowed literal IP to connect to.
+
+    The caller must open its connection to this exact IP rather than letting
+    the HTTP client re-resolve `hostname` itself. Checking the hostname and
+    then connecting to it separately (as a plain `requests.get(url)` call
+    would) leaves a DNS-rebinding gap: a malicious DNS server can answer the
+    validation lookup with a public IP and the connection's own lookup,
+    moments later, with a private one, since nothing pins the two lookups to
+    the same answer.
+    """
+    hostname = hostname.strip("[]")
     try:
-        with requests.get(check_url, headers={"User-Agent": "git/2.43.0"}, timeout=10) as resp:
-            if resp.status_code >= 400:
-                return resp.status_code == 401
-            return "x-git-upload-pack-advertisement" in resp.headers.get("Content-Type", "")
-    except (requests.RequestException, ValueError):
+        ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        pass
+    else:
+        return None if _is_disallowed_probe_ip(ip) else str(ip)
+
+    try:
+        addr_infos = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+    except (OSError, UnicodeError):
+        return None
+
+    for _family, _socktype, _proto, _canon, sockaddr in addr_infos:
+        candidate = ipaddress.ip_address(sockaddr[0])
+        if not _is_disallowed_probe_ip(candidate):
+            return str(candidate)
+
+    return None
+
+
+def _is_http_git_repo(url: str) -> bool:
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if not hostname or parsed.scheme not in ("http", "https"):
+        return False
+
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    pinned_ip = _resolve_pinned_probe_ip(hostname, port)
+    if pinned_ip is None:
+        return False
+
+    request_path = f"{parsed.path.rstrip('/')}/info/refs?service=git-upload-pack"
+    headers = {"User-Agent": "git/2.43.0", "Host": hostname}
+
+    try:
+        pool: urllib3.HTTPConnectionPool
+        if parsed.scheme == "https":
+            pool = urllib3.HTTPSConnectionPool(
+                pinned_ip,
+                port,
+                server_hostname=hostname,
+                assert_hostname=hostname,
+                ca_certs=certifi.where(),
+                timeout=10,
+                retries=False,
+            )
+        else:
+            pool = urllib3.HTTPConnectionPool(pinned_ip, port, timeout=10, retries=False)
+
+        with pool:
+            resp = pool.request(
+                "GET", request_path, headers=headers, redirect=False, preload_content=False
+            )
+            try:
+                if resp.status != 200:
+                    return False
+                return "x-git-upload-pack-advertisement" in resp.headers.get("Content-Type", "")
+            finally:
+                resp.release_conn()
+    except (urllib3.exceptions.HTTPError, OSError, ValueError):
         return False
 
 
