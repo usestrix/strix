@@ -47,6 +47,8 @@ VALID_OUTCOMES: tuple[str, ...] = (
 
 _OUTCOMES_REQUIRING_EVIDENCE = frozenset({"ruled_out", "not_applicable", "needs_follow_up"})
 
+MAX_FOLLOW_UP_RETRIES = 3
+
 
 def _caller_identity(ctx: RunContextWrapper) -> tuple[str | None, str | None]:
     """Return the (agent_id, agent_name) of the agent invoking this tool."""
@@ -147,6 +149,34 @@ def outcome_counts() -> dict[str, int]:
         outcome = str(entry.get("outcome", "")).lower()
         counts[outcome] = counts.get(outcome, 0) + 1
     return {o: counts[o] for o in VALID_OUTCOMES if o in counts}
+
+
+def claim_follow_up_retries(max_retries: int = MAX_FOLLOW_UP_RETRIES) -> list[dict[str, Any]]:
+    """Spend one retry on every open ``needs_follow_up`` row that has one left.
+
+    Called by the finish tools, which refuse to finish while this returns rows.
+    Each row is capped separately, so a row that cannot be resolved here (no
+    credentials, wrong platform) stops blocking without starving the others.
+    """
+    claimed: list[dict[str, Any]] = []
+    with _coverage_lock:
+        for entry_id, entry in _coverage_storage.items():
+            retries = int(entry.get("follow_up_retries", 0))
+            if entry.get("outcome") != "needs_follow_up" or retries >= max_retries:
+                continue
+            entry["follow_up_retries"] = retries + 1
+            claimed.append(
+                {
+                    "entry_id": entry_id,
+                    "surface": entry.get("surface", ""),
+                    "risk_area": entry.get("risk_area", ""),
+                    "evidence": entry.get("evidence", ""),
+                    "retry": retries + 1,
+                }
+            )
+        if claimed:
+            _persist_locked()
+    return claimed
 
 
 def _validate(
