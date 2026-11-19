@@ -92,3 +92,22 @@ def test_repository_context_derives_commit_and_branch_from_clone(tmp_path: Path)
     assert ctx["commitSha"] == head
     assert ctx["branch"] == "main"
     assert ctx["ref"] == "refs/heads/main"
+
+
+def test_has_source_target_only_for_repository_or_local_code_targets() -> None:
+    state = ReportState(run_name="t")
+    state.run_record["targets_info"] = [
+        {"type": "web_application", "details": {"target_url": "https://example.com"}},
+        {"type": "ip_address", "details": {"target_ip": "10.0.0.1"}},
+    ]
+    assert state._has_source_target() is False
+
+    state.run_record["targets_info"].append(
+        {"type": "local_code", "details": {"target_path": "/src"}}
+    )
+    assert state._has_source_target() is True
+
+    state.run_record["targets_info"] = [
+        {"type": "repository", "details": {"target_repo": "https://github.com/acme/widget"}}
+    ]
+    assert state._has_source_target() is True
