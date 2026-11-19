@@ -25,7 +25,7 @@ from strix.interface.viewer.transcript import (
 
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterator, Mapping
     from os import stat_result
 
 
@@ -88,28 +88,46 @@ def test_latest_run_dir_picks_newest_by_record_mtime(
 
 
 @pytest.mark.parametrize("entry_point", ["latest", "history"])
+@pytest.mark.parametrize("remove_before_stat", [False, True], ids=["after-stat", "before-stat"])
 def test_run_disappearing_during_listing_keeps_healthy_siblings(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entry_point: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    entry_point: str,
+    remove_before_stat: bool,
 ) -> None:
     healthy = _make_run(tmp_path, "healthy", status="running", end_time=None)
     removed = _make_run(tmp_path, "removed", status="running", end_time=None) / "run.json"
+    base = runs_base_dir(cwd=tmp_path)
     os.utime(removed, (1_000_000_000, 1_000_000_000))
     os.utime(healthy / "run.json", (2_000_000_000, 2_000_000_000))
     real_stat = Path.stat
+    real_iterdir = Path.iterdir
 
-    def stat_then_remove(path: Path, *, follow_symlinks: bool = True) -> stat_result:
+    def removed_first(path: Path) -> Iterator[Path]:
+        if path == base:
+            yield removed.parent
+            yield healthy
+        else:
+            yield from real_iterdir(path)
+
+    def stat_during_removal(path: Path, *, follow_symlinks: bool = True) -> stat_result:
+        if path == removed and remove_before_stat:
+            removed.unlink(missing_ok=True)
         metadata = real_stat(path, follow_symlinks=follow_symlinks)
-        if path == removed:
+        if path == removed and not remove_before_stat:
             removed.unlink()
         return metadata
 
-    monkeypatch.setattr(Path, "stat", stat_then_remove)
+    monkeypatch.setattr(Path, "iterdir", removed_first)
+    monkeypatch.setattr(Path, "stat", stat_during_removal)
     if entry_point == "latest":
         assert latest_run_dir(cwd=tmp_path) == healthy
     else:
-        payload = build_runs_payload(runs_base_dir(cwd=tmp_path), verified=True)
+        payload = build_runs_payload(base, verified=True)
         assert payload["runs"][0]["name"] == healthy.name
-        refresh = build_runs_payload(runs_base_dir(cwd=tmp_path), verified=True)
+        if remove_before_stat:
+            assert [entry["name"] for entry in payload["runs"]] == [healthy.name]
+        refresh = build_runs_payload(base, verified=True)
         assert [entry["name"] for entry in refresh["runs"]] == [healthy.name]
 
 
