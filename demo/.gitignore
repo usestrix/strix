@@ -1,0 +1,4 @@
+# Datos generados por el demo local
+data/
+*.db
+*.db-journal

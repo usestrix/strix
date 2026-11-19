@@ -1,0 +1,13 @@
+# Used by BuildKit for `docker build -f frontal/Dockerfile .` (context = repo root).
+# Allow-list: the repo root also holds strix_runs/, Workspace/, .venv/, ...
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!scripts/tui_sidecar_hook.py
+!strix/
+!frontal/app/
+!frontal/requirements.txt
+**/__pycache__
+**/*.py[cod]
+strix/interface/viewer/frontend/

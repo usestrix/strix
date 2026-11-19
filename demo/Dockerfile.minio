@@ -1,0 +1,14 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL \
+    https://dl.min.io/server/minio/release/linux-amd64/archive/minio.RELEASE.2025-09-07T16-13-09Z \
+    -o /usr/local/bin/minio \
+    && chmod +x /usr/local/bin/minio
+
+VOLUME ["/data"]
+
+ENTRYPOINT ["minio"]

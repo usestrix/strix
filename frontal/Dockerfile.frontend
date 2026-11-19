@@ -1,0 +1,24 @@
+# Strix frontend: the web console (static HTML + vanilla JS) behind nginx, which
+# also reverse-proxies the API and the transcript viewer to the backend
+# (frontal/Dockerfile). No Python, no Strix: it only needs to reach the backend.
+#
+# Build — the context is the REPO ROOT, like the backend image:
+#   docker build -f frontal/Dockerfile.frontend -t <REGISTRY>/strix-frontend:<TAG> .
+#
+# Run:
+#   docker run --rm -p 8000:8080 -e BACKEND_URL=http://<backend-host>:8000 <REGISTRY>/strix-frontend:<TAG>
+
+FROM nginxinc/nginx-unprivileged:1.29-alpine
+
+# Where the backend listens: a FULL name (the per-request resolver ignores search
+# domains). Default = the strix-frontal Service in strix-apps; compose overrides it.
+ENV BACKEND_URL=http://strix-frontal.strix-apps.svc.cluster.local:80 \
+    NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
+
+COPY frontal/frontend/default.conf.template /etc/nginx/templates/default.conf.template
+COPY frontal/app/console.html /usr/share/nginx/html/console.html
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget -q -O /dev/null http://127.0.0.1:8080/frontend-health || exit 1

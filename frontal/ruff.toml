@@ -1,0 +1,11 @@
+extend = "../pyproject.toml"
+
+[lint]
+# B008: FastAPI's dependency injection *is* `Depends(...)` in argument defaults.
+# TC002/TC003: both FastAPI and SQLAlchemy resolve annotations at runtime
+# (get_type_hints on route signatures, Mapped[...] on models), so moving these
+# imports into a type-checking block breaks dependency and column resolution.
+extend-ignore = ["B008", "TC002", "TC003"]
+
+[lint.isort]
+known-first-party = ["frontal", "strix"]

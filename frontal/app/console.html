@@ -1,0 +1,1652 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Strix Console</title>
+<!-- Self-contained on purpose: no CDN, so it works inside an air-gapped cluster. -->
+<style>
+  /* Sewing IOP DS (Inditex design system) - light theme tokens.
+     Values taken from @inditex/sewingiopdsweb-styles (index.css): --ids-color-*,
+     --ids-typo-*, --ids-size-*. The console is a single self-contained file, so
+     the tokens are inlined instead of pulling the npm package. */
+  :root {
+    --bg: #fff;                 /* ids-color-bg-default */
+    --panel: #fff;
+    --panel-2: #f7f7f7;         /* ids-color-bg-low */
+    --border: #e3e3e3;          /* ids-color-border-low */
+    --border-2: #757575;        /* ids-color-border-states-hover */
+    --text: #000;               /* ids-color-content-default */
+    --text-2: #363636;          /* ids-color-content-states-pressed */
+    --muted: #757575;           /* ids-color-content-low */
+    --muted-strong: #5c5c5c;    /* content-low on bg-low: #757575 only reaches 4.30 there */
+    --disabled: #b3b3b3;        /* ids-color-content-states-disabled */
+    --accent-strong: #000;      /* ids-comp-button-primary-default */
+    --accent-hover: #434343;    /* ids-comp-button-primary-hover */
+    --focus: #0170e9;           /* ids-color-border-states-focus */
+    /* Severity/status. The hues are the corporate console ones (spa-strixweb:
+       components/tags/tags.css, dashboard.css), darkened where the original
+       failed WCAG AA as 13px text: #e8710a is 3.09:1 and #b58900 is 3.21:1 on
+       white, so they use the closest IOP DS token instead. */
+    --critical: #b3261e;        /* 6.54:1 on white */
+    --high: #b65321;            /* ids-color-alt-orange-high, 4.55:1 */
+    --medium: #8a6a00;          /* #b58900 darkened, 4.87:1 */
+    --low: #1a73e8;             /* 4.51:1 */
+    --info: #5f6368;            /* 6.05:1 */
+    --ok: #188038;              /* 5.02:1 */
+    --warn: #8a6a00;
+    --warn-bg: #fdf8e3;
+    --bad: #b3261e;
+    --bad-bg: #fdecec;
+    --run: #1b5ea7;             /* ids-color-alt-blue-high */
+    --run-bg: #ebf5ff;          /* ids-color-alt-blue-low */
+    /* Non-text fills keep the corporate hexes exactly: the severity bar and its
+       legend dots are graphics, not 13px labels. */
+    --sevbar-critical: #b3261e;
+    --sevbar-high: #e8710a;
+    --sevbar-medium: #f2c200;
+    --sevbar-low: #1a73e8;
+    --radius: 4px;              /* ids-size-radius-rounded */
+    --mono: NotoSansMono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    --sans: "Helvetica Now Text SW10", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--text); font: 400 14px/22px var(--sans); }
+  /* ids-field focus ring: 2px in --ids-color-border-states-focus */
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  /* Clickable spans/divs get role+tabindex from makeClickablesAccessible(). */
+  [role="button"]:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  /* In IOP DS only links inside reading text are underlined; menu items and
+     action links are plain labels that change colour on hover. */
+  a { color: var(--text); text-decoration: none; }
+  .prose a, .hint a, p a, td a, dd a, .b-note a { text-decoration: underline; text-underline-offset: 2px; }
+  a:hover { color: var(--text-2); }
+  .prose a:hover, .hint a:hover { color: var(--accent-hover); }
+  code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
+  /* ids-typo-label-l: 13/20, uppercase */
+  .label-l { font: 400 13px/20px var(--sans); letter-spacing: 0; text-transform: uppercase; }
+
+  /* ── Layout ── */
+  .shell { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
+  nav.side {
+    position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column;
+    border-right: 1px solid var(--border); background: var(--panel); padding: 18px 12px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 16px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+  .brand b { font: 600 16px/20px var(--sans); letter-spacing: .18em; text-transform: uppercase; }
+  .brand small { color: var(--muted-strong); font: 400 12px/18px var(--sans); display: block; }
+  /* ids-menu-item: label-l uppercase, 40px min height; active is bold with a
+     4px square indicator, as in the corporate menu. */
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 0;
+    color: var(--text); cursor: pointer; margin-bottom: 2px; min-height: 40px;
+    font: 400 13px/20px var(--sans); letter-spacing: 0; text-transform: uppercase;
+  }
+  .nav-item:hover { color: var(--muted); }  /* ids-menu-item hover: content-states-hover */
+  .nav-item.active { color: var(--text); font-weight: 600; position: relative; }
+  .nav-item.active:hover { color: var(--text); }
+  /* ids-menu-item__name:before: a 4px square, vertically centred. */
+  .nav-item.active::before { content: ""; position: absolute; left: -10px; top: 50%; transform: translateY(-50%); width: 4px; height: 4px; background: var(--text); }
+  .nav-item svg { width: 16px; height: 16px; flex: none; }
+  .nav-item .count { margin-left: auto; font: 400 11px/16px var(--sans); color: var(--muted); text-transform: none; }
+  .side-foot { margin-top: auto; padding: 10px; border-top: 1px solid var(--border); font: 400 12px/18px var(--sans); color: var(--muted); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
+  .dot.on { background: var(--ok); }
+  .dot.off { background: var(--bad); }
+
+  main { min-width: 0; }
+  .topbar {
+    display: flex; align-items: center; gap: 12px; padding: 20px 32px 10px;
+    border-bottom: 0; position: sticky; top: 0; background: var(--bg); z-index: 5;
+  }
+  /* ids-typo-title-s: 20/28, weight 400, uppercase */
+  /* ids-typo-title-m: 24/32 — the corporate page title. Uppercase like label-l. */
+  .topbar h1 { font: 400 24px/32px var(--sans); margin: 0; letter-spacing: 0; text-transform: uppercase; }
+  .topbar .crumbs { color: var(--muted); font: 400 12px/18px var(--sans); }
+  .topbar .crumbs:not(:empty)::before { content: "/"; margin-right: 6px; color: var(--disabled); }
+  .topbar .spacer { flex: 1; }
+  .content { padding: 20px 32px 64px; max-width: 1400px; }
+
+  /* ── Controls ── */
+  /* ids-button: 40px min-height, label-l (13/20 uppercase), radius 4 */
+  /* ids-button secondary: 1px border in content-default; hover bg-low */
+  button, .btn {
+    font: 400 13px/20px var(--sans); letter-spacing: 0; text-transform: uppercase;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    min-height: 40px; background: transparent; color: var(--text);
+    border: 1px solid var(--text-2); border-radius: var(--radius); padding: 8px 16px;
+    cursor: pointer; white-space: nowrap; transition: background-color .15s, color .15s, border-color .15s;
+  }
+  button:hover, .btn:hover { background: var(--panel-2); text-decoration: none; }
+  button:active, .btn:active { background: var(--panel-2); border-color: var(--text); }
+  button.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; }
+  button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  button.danger { color: var(--bad); border-color: var(--bad); }
+  button.danger:hover { background: var(--bad-bg); }
+  button.ghost { background: transparent; border-color: transparent; color: var(--text-2); padding-inline: 0; }
+  button.ghost:hover { background: transparent; color: var(--text); }
+  button.ghost.danger { color: var(--bad); border-color: transparent; }
+  button.sm { min-height: 32px; padding: 4px 10px; font-size: 12px; }
+  button:disabled { opacity: 1; color: var(--disabled); border-color: var(--border); background: var(--panel-2); cursor: not-allowed; }
+  button.primary:disabled { background: var(--panel-2); border-color: var(--panel-2); color: var(--disabled); }
+  /* ids-field: 40px, underlined with a 1px bottom border; 2px focus ring in blue */
+  /* ids-text-field: hairline bottom border in content-high (not pure black);
+     focus = 2px border-states-focus. */
+  input, select, textarea {
+    font: 400 14px/22px var(--sans); background: var(--bg); color: var(--text); width: 100%;
+    border: 0; border-bottom: 1px solid var(--text-2); border-radius: 0;
+    padding: 8px 0; min-height: 40px; outline: none;
+  }
+  input:focus, select:focus, textarea:focus { border-bottom: 2px solid var(--focus); padding-bottom: 7px; }
+  input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
+  select { cursor: pointer; }
+  input[type="checkbox"], input[type="radio"] { width: auto; min-height: 0; accent-color: var(--text); }
+  textarea { font-family: var(--mono); font-size: 13px; resize: vertical; min-height: 120px; }
+  label.field { display: block; }
+  /* ids-field-label: label-l uppercase in content-low */
+  label.field > span { display: block; font: 400 13px/20px var(--sans); text-transform: uppercase; color: var(--muted); margin-bottom: 5px; }
+  .hint { font: 400 12px/18px var(--sans); color: var(--muted); margin-top: 4px; }
+
+  /* ── Surfaces ── */
+  /* ids-card: hairline border, and on hover the top/bottom edges darken as
+     inset lines instead of an outer glow — that is exactly the corporate
+     component's hover treatment. */
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); position: relative; }
+  .card.hov:hover { box-shadow: inset 0 1px 0 0 var(--border-2), inset 0 -1px 0 0 var(--border-2); }
+  .card-h { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  /* ids-typo-label-l-high: 13/20, weight 600, uppercase */
+  .card-h h3 { margin: 0; font: 600 13px/20px var(--sans); letter-spacing: .4px; text-transform: uppercase; }
+  .card-b { padding: 16px; }
+  .grid { display: grid; gap: 16px; }
+  .g-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .g-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .g-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  @media (max-width: 1100px) { .g-4 { grid-template-columns: repeat(2, minmax(0,1fr)); } .g-2, .g-3 { grid-template-columns: 1fr; } }
+  @media (max-width: 760px) { .shell { grid-template-columns: 1fr; } nav.side { position: static; height: auto; } .content { padding: 16px; } .topbar { padding: 12px 16px; } }
+
+  /* ids-kpi: title-s value with the 24×4px indicator bar under the label. The
+     indicator is exactly the ids-kpi__indicator: 24px wide, 4px tall, sitting
+     on the component's own baseline, disabled-grey until danger. */
+  .kpi { position: relative; padding: 20px 20px 18px; transition: background-color .15s; }
+  .kpi:hover { background: var(--panel-2); }
+  .kpi .label { display: flex; align-items: center; gap: 8px; font: 400 13px/20px var(--sans); letter-spacing: 0; text-transform: uppercase; color: var(--muted); }
+  .kpi .label::after { content: ""; width: 24px; height: 3px; background: var(--disabled); margin-left: 2px; }
+  .kpi.kpi-crit .label::after { background: var(--critical); }
+  /* ids-typo-title-l: 32/40, weight 400, tabular figures */
+  .kpi .value { font: 400 32px/40px var(--sans); margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .kpi .sub { font: 400 12px/18px var(--sans); color: var(--muted); }
+
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  th { color: var(--muted-strong); font: 600 11px/16px var(--sans); letter-spacing: .4px; text-transform: uppercase; background: var(--panel-2); position: sticky; top: 0; }
+  tbody tr:last-child td { border-bottom: none; }
+  tr.click { cursor: pointer; transition: background-color .12s; }
+  tr.click:hover { background: var(--panel-2); }
+  tr.click:hover td { background: var(--panel-2); }
+  td.num { font-variant-numeric: tabular-nums; }
+  .table-wrap { overflow-x: auto; }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+
+  /* ids-tag (kind="ghost"): plain label in the tag colour, no border or pill.
+     The colours are the ones the corporate console maps to each value. */
+  /* ids-tag: the label carries the colour, and the small 10px dot in the icon
+     slot mirrors what the corporate tags__tag renders for severity. */
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px; padding: 2px 0;
+    font: 400 13px/20px var(--sans); letter-spacing: 0; text-transform: uppercase;
+    border: 0; white-space: nowrap; background: transparent;
+  }
+  .badge::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: currentColor; flex: none; }
+  .sev-critical { color: var(--critical); }
+  .sev-high { color: var(--high); }
+  .sev-medium { color: var(--medium); }
+  .sev-low { color: var(--low); }
+  .sev-info { color: var(--info); }
+  .st-completed, .st-fixed { color: var(--ok); }
+  .st-failed, .st-open, .st-still_vulnerable { color: var(--bad); }
+  .st-running { color: var(--run); }
+  .st-queued, .st-inconclusive, .st-doubtful { color: var(--warn); }
+  .st-confirmed { color: var(--bad); }
+  .st-accepted, .st-false_positive, .st-observed, .st-refuted { color: var(--text-2); }
+  .triage-btns { display: inline-flex; gap: 6px; }
+  .triage-btns button.on { border-color: var(--text); background: var(--panel-2); }
+  .kind { color: var(--text-2); font-weight: 400; text-transform: uppercase; }
+  .pulse::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+
+  .sevbar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: var(--panel-2); }
+  .sevbar span { display: block; height: 100%; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; font: 400 12px/18px var(--sans); color: var(--text-2); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+  /* Severity counts: solid pill in the severity colour, white text (tags__count). */
+  .sevcounts { display: inline-flex; gap: 4px; }
+  .sevcounts .badge { padding: 0 6px; min-width: 20px; justify-content: center; border-radius: 10px; color: #fff; background: var(--info); }
+  .sevcounts .badge::before { display: none; }
+  /* status badges keep the plain label-marker look too (they already have text) */
+  .badge[class*=" st-"]::before, .badge[class^="st-"]::before { content: none; }
+  .pulse::before { content: ""; width: 6px !important; height: 6px !important; border-radius: 50% !important; background: currentColor; animation: pulse 1.4s infinite; }
+  .sevcounts .badge.sev-critical { background: var(--critical); }
+  .sevcounts .badge.sev-high { background: var(--high); }
+  .sevcounts .badge.sev-medium { background: var(--medium); }
+  .sevcounts .badge.sev-low { background: var(--low); }
+
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .between { justify-content: space-between; }
+  .muted { color: var(--muted); }
+  /* 12px text reads on card/low backgrounds too, so it uses the darkened muted. */
+  .small { font-size: 12px; color: var(--muted-strong); }
+  .kpi .sub, .side-foot { color: var(--muted-strong); }
+  .mt { margin-top: 16px; } .mt2 { margin-top: 24px; } .mb { margin-bottom: 16px; }
+  .trunc { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ids-tab-bar: uppercase label-l, 2px black indicator */
+  .tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--border); margin: 20px 0 16px; }
+  .tab { padding: 12px 0; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; font: 400 13px/20px var(--sans); letter-spacing: 0; text-transform: uppercase; margin-bottom: -1px; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--text); font-weight: 600; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  /* ids-option-picker-item: square outline, label-l, 40px min height. The catalog
+     labels are full sentences, so they stay in sentence case (uppercase only on
+     short tags such as the section headers). */
+  /* ids-option-picker--ghost item: hairline outline, pressed = bg-states-pressed */
+  .chip { display: inline-flex; align-items: center; min-height: 40px; padding: 8px 16px; border-radius: var(--radius); border: 1px solid var(--border); cursor: pointer; font: 400 13px/20px var(--sans); letter-spacing: 0; color: var(--text-2); background: transparent; transition: border-color .15s, color .15s, background-color .15s; }
+  .chip:hover { border-color: var(--border-2); color: var(--text); background: var(--panel-2); }
+  .chip.active { border-color: var(--text); color: var(--text); background: var(--panel-2); font-weight: 600; }
+
+  .meta { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px 24px; }
+  .meta dt { color: var(--muted); font: 400 11px/16px var(--sans); letter-spacing: .4px; text-transform: uppercase; }
+  .meta dd { margin: 2px 0 0; word-break: break-word; }
+  .banner { border-radius: var(--radius); padding: 12px 16px; border: 1px solid; display: flex; gap: 12px; align-items: flex-start; }
+  .banner.run { border-color: var(--run); background: var(--run-bg); }
+  .banner.bad { border-color: var(--bad); background: var(--bad-bg); }
+  .banner.warn { border-color: var(--warn); background: var(--warn-bg); }
+
+  pre {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px;
+    white-space: pre-wrap; word-break: break-word; max-height: 480px; overflow: auto; margin: 0;
+  }
+  .section { margin-top: 22px; }
+  .section h4 { margin: 0 0 8px; font: 600 11px/16px var(--sans); letter-spacing: .4px; text-transform: uppercase; color: var(--muted); }
+  /* The corporate markdown renderer keeps the source case: headings are sentences. */
+  .prose { color: var(--text-2); line-height: 1.5; overflow-wrap: anywhere; }
+  .prose h1, .prose h2, .prose h3, .prose h4 { color: var(--text); margin: 1.4em 0 .5em; line-height: 1.3; font-weight: 400; }
+  .prose h1 { font: 400 24px/32px var(--sans); } .prose h2 { font: 400 20px/28px var(--sans); border-bottom: 1px solid var(--border); padding-bottom: 6px; } .prose h3 { font: 600 14px/22px var(--sans); }
+  .prose p { margin: .6em 0; } .prose ul, .prose ol { padding-left: 22px; }
+  .prose code { background: var(--panel-2); padding: 1px 5px; border-radius: 2px; }
+  .prose pre code { background: none; padding: 0; }
+  .prose table { margin: 10px 0; border-collapse: collapse; }
+  .prose th, .prose td { padding: 6px 10px; border: 1px solid var(--border); text-align: left; }
+  .prose th { position: static; background: var(--panel-2); }
+  .prose blockquote { border-left: 3px solid var(--border); margin: 8px 0; padding: 2px 12px; color: var(--muted); }
+
+  .timeline { list-style: none; padding: 0; margin: 0; }
+  .timeline li { position: relative; padding: 0 0 16px 22px; border-left: 1px solid var(--border); margin-left: 6px; }
+  .timeline li:last-child { border-left-color: transparent; }
+  .timeline li::before { content: ""; position: absolute; left: -6px; top: 3px; width: 11px; height: 11px; border-radius: 50%; background: var(--panel); border: 2px solid var(--border-2); }
+  .timeline li.v-still_vulnerable::before, .timeline li.v-observed::before { border-color: var(--bad); }
+  .timeline li.v-fixed::before { border-color: var(--ok); }
+  .timeline li.v-inconclusive::before, .timeline li.v-doubtful::before { border-color: var(--warn); }
+  .timeline li.v-confirmed::before, .timeline li.v-true_positive::before { border-color: var(--bad); }
+  .timeline li.v-refuted::before, .timeline li.v-false_positive::before { border-color: var(--ok); }
+
+  /* ── Wizard ── */
+  dialog {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 0; width: min(880px, 94vw); max-height: 92vh;
+  }
+  dialog::backdrop { background: rgb(0 0 0 / 50%); }
+  .dlg-h { padding: 18px 22px; border-bottom: 1px solid var(--border); display: flex; align-items: center; }
+  .dlg-h h2 { margin: 0; font: 400 20px/28px var(--sans); text-transform: uppercase; }
+  .dlg-b { padding: 6px 22px 22px; overflow-y: auto; max-height: calc(92vh - 140px); }
+  .dlg-f { padding: 14px 22px; border-top: 1px solid var(--border); display: flex; gap: 10px; justify-content: flex-end; align-items: center; }
+  .step { margin-top: 24px; }
+  .step-t { display: flex; align-items: center; gap: 10px; font: 600 13px/20px var(--sans); letter-spacing: .4px; text-transform: uppercase; margin-bottom: 10px; }
+  /* The step header toggles (Escribir / Builder) are ids-option-picker ghost
+     buttons at toolbar size: 32px, not the 40px form controls. */
+  .step-t .chip { min-height: 32px; padding: 4px 12px; font-size: 12px; }
+  .step-n { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font: 600 11px/16px var(--sans); background: var(--text); color: #fff; }
+  .options { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+  .option { position: relative; border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; cursor: pointer; background: var(--bg); transition: border-color .15s, background-color .15s, box-shadow .15s; }
+  .option:hover { border-color: var(--border-2); background: var(--bg); box-shadow: 0 1px 0 0 var(--panel-2) inset, 0 -1px 0 0 var(--panel-2) inset; }
+  .option:active { background: var(--panel-2); }
+  /* ids-option-picker-item--selected: border + bg in their pressed states.
+     No side bar: that is not how the corporate picker marks selection. */
+  .option.active { border-color: var(--text-2); background: var(--panel-2); }
+
+  .option b { display: block; font: 600 13px/20px var(--sans); letter-spacing: .4px; text-transform: uppercase; margin-bottom: 2px; }
+  .option span { display: block; font: 400 12px/17px var(--sans); color: var(--muted-strong); }
+  details summary { cursor: pointer; color: var(--text-2); font-weight: 600; font-size: 13px; }
+  .err { color: var(--bad); font-size: 13px; }
+  .toast {
+    position: fixed; bottom: 22px; right: 22px; background: var(--panel); border: 1px solid var(--text);
+    border-radius: var(--radius); padding: 12px 16px; max-width: 420px; z-index: 50; box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+  }
+  .toast.bad { border-color: var(--bad); }
+  .bulkbar { position: sticky; bottom: 16px; margin-top: 16px; display: flex; gap: 10px; align-items: center;
+    background: var(--panel); border: 1px solid var(--text); border-radius: var(--radius); padding: 10px 14px; }
+
+  /* ── Instruction builder ── */
+  .builder { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  /* The preview keeps its own scroll: in "Vista" the prose is as long as the instruction. */
+  .b-side { position: sticky; top: 84px; display: flex; flex-direction: column; max-height: calc(100vh - 100px); }
+  .b-side .card-h { flex: none; }
+  .b-side .card-b { overflow: auto; min-height: 0; }
+  .b-side pre { max-height: none; overflow: visible; }
+  @media (max-width: 1100px) {
+    .builder { grid-template-columns: 1fr; }
+    .b-side { position: static; max-height: none; }
+    .b-side .card-b { overflow: visible; }
+  }
+  /* The same builder embedded in the new-scan dialog: narrower panel, no page chrome. */
+  .w-bwrap .builder { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+  .w-bwrap .b-side { position: sticky; top: 0; max-height: calc(92vh - 250px); }
+  .w-bwrap .options { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+  .w-bwrap .b-note { font: 400 12px/18px var(--sans); }
+  .w-emb-actions { display: flex; gap: 8px; align-items: center; margin: 10px 0 0; }
+  /* Section header: the numbered title already orders the form, so the count is
+     the only extra context worth carrying. */
+  .builder .card-h { padding: 12px 16px; }
+  .builder .card-h h3 { font: 600 12px/18px var(--sans); }
+  .sec-count { margin-left: auto; font: 400 11px/16px var(--sans); color: var(--muted); text-transform: none; letter-spacing: 0; }
+  /* A lone field is :first-child and :last-child at once, so only collapse the
+     padding when the card really has siblings. */
+  .bf { padding: 18px 0; }
+  .bf + .bf { border-top: 1px solid var(--border); }
+  .bf:not(:only-child):first-child { padding-top: 0; }
+  .bf:not(:only-child):last-child { padding-bottom: 0; }
+  .bf-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px; flex-wrap: wrap; }
+  /* Long field labels read as sentences; only the section headers are uppercase. */
+  .bf-head b { font: 600 14px/21px var(--sans); }
+  /* The {{PLACEHOLDER}} is for whoever maintains the template, not for the person
+     filling it in: keep it available but out of the reading path. */
+  .bf-head .ph { font-family: var(--mono); font-size: 10px; letter-spacing: 0; color: var(--muted); text-transform: none; }
+  .bf-sp { flex: 1; }
+  .bf-na { display: inline-flex; align-items: center; gap: 5px; font: 400 12px/18px var(--sans); color: var(--muted); cursor: pointer; white-space: nowrap; }
+  .bf-na:hover { color: var(--text); }
+  .bf-na input { width: auto; min-height: 0; }
+  /* Two lines instead of one grey paragraph: what to write, then the constraint. */
+  .bf .hint { margin: 0 0 9px; display: flex; flex-direction: column; gap: 1px; font: 400 12px/17px var(--sans); }
+  .bf .bf-req { color: var(--muted); }
+  .bf .bf-req::before { content: "→ "; color: var(--disabled); }
+  .bf textarea.bf-text { font-family: var(--sans); font-size: 14px; min-height: 64px; }
+  .bf.bad input:not([type="checkbox"]), .bf.bad textarea { border-bottom-color: var(--bad); }
+  .bf.bad .chip { border-color: var(--bad); }
+  .bf.bad .chip.active { border-color: var(--text); box-shadow: inset 0 0 0 1px var(--text); }
+  .bf.bad .bf-na { color: var(--bad); }
+  .bf.bad .bf-head b { color: var(--bad); }
+  .bf .chip b { color: var(--text); margin-right: 2px; }
+  .bf .custom { margin-top: 8px; }
+  mark { background: #f2c200; color: #000; border-radius: 2px; padding: 0 2px; }
+  .b-issues { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .b-issues a { font: 400 12px/18px var(--sans); cursor: pointer; border: 1px solid var(--border-2); border-radius: 0; padding: 2px 9px; text-decoration: none; }
+  .b-issues a:hover { border-color: var(--text); color: var(--text); }
+  /* The rules of the form are read once, before the first field. A hairline on
+     the left keeps them attached to the form without competing with the cards. */
+  .b-note { padding: 10px 0 10px 14px; border-left: 1px solid var(--border); color: var(--text-2); font: 400 13px/20px var(--sans); }
+  .b-note b { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <nav class="side">
+    <div class="brand">
+      <svg width="28" height="28" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="4" fill="#000" />
+        <path d="M8 11l4-4 4 3 4-3 4 4v7a8 8 0 0 1-16 0z" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round" />
+        <circle cx="12.5" cy="15" r="1.8" fill="#fff" /><circle cx="19.5" cy="15" r="1.8" fill="#fff" />
+        <path d="M14.5 19.5l1.5 1.5 1.5-1.5" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" />
+      </svg>
+      <div><b>STRIX</b><small>Consola de pentesting</small></div>
+    </div>
+    <a class="nav-item" data-nav="dashboard" href="#/">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+      Panel</a>
+    <a class="nav-item" data-nav="scans" href="#/scans">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      Escaneos <span class="count" id="nav-running"></span></a>
+    <a class="nav-item" data-nav="findings" href="#/findings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M12 8v5M12 16h.01"/></svg>
+      Vulnerabilidades <span class="count" id="nav-open"></span></a>
+    <a class="nav-item" data-nav="assets" href="#/assets">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="6" rx="1"/><rect x="3" y="14" width="18" height="6" rx="1"/><path d="M7 7h.01M7 17h.01"/></svg>
+      Activos</a>
+    <a class="nav-item" data-nav="instructions" href="#/instructions">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>
+      Instrucciones</a>
+    <div class="side-foot">
+      <div><span class="dot" id="kafka-dot"></span><span id="kafka-label">Kafka…</span></div>
+      <div class="mono small mt" id="kafka-topics" style="margin-top:6px"></div>
+    </div>
+  </nav>
+
+  <main>
+    <div class="topbar">
+      <div><div class="crumbs" id="crumbs"></div><h1 id="title">Panel</h1></div>
+      <div class="spacer"></div>
+      <div id="top-actions" class="row"></div>
+      <button class="primary" onclick="openWizard()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+        Nuevo escaneo</button>
+    </div>
+    <div class="content" id="view"></div>
+  </main>
+</div>
+
+<dialog id="wizard">
+  <div class="dlg-h"><h2>Nuevo escaneo</h2><div class="spacer" style="flex:1"></div><button class="ghost" onclick="closeWizard()">✕</button></div>
+  <div class="dlg-b">
+    <div class="step">
+      <div class="step-t"><span class="step-n">1</span>Objetivo</div>
+      <div class="grid g-2">
+        <label class="field"><span>Activo</span>
+          <select id="w-app" onchange="wizardAppChanged()"></select></label>
+        <label class="field"><span>Target (URL, dominio, IP o repositorio)</span>
+          <input id="w-target" placeholder="http://juice-shop:3000" oninput="wizardTargetChanged()" /></label>
+      </div>
+      <div id="w-newapp" class="grid g-2 mt" style="display:none">
+        <label class="field"><span>Nombre del activo nuevo</span><input id="w-name" placeholder="Juice Shop (dev)" /></label>
+        <label class="field"><span>Entorno</span><input id="w-env" placeholder="dev / pre / pro" /></label>
+      </div>
+      <div class="hint">El target debe ser alcanzable desde los pods del orquestador. Escanea solo sistemas que estés autorizado a probar.</div>
+    </div>
+
+    <div class="step">
+      <div class="step-t"><span class="step-n">2</span>Tipo de prueba</div>
+      <div class="options" id="w-templates"></div>
+    </div>
+
+    <div class="step">
+      <div class="step-t"><span class="step-n">3</span>Profundidad</div>
+      <div class="options" id="w-modes"></div>
+    </div>
+
+    <div class="step">
+      <div class="step-t"><span class="step-n">4</span>Instrucción para el agente<div style="flex:1"></div>
+        <span class="chips">
+          <span class="chip active" id="w-mode-free" role="button" tabindex="0" onclick="wizardInstrSource('free')">Escribir</span>
+          <span class="chip" id="w-mode-builder" role="button" tabindex="0" onclick="wizardInstrSource('builder')">Builder</span>
+        </span></div>
+      <div id="w-instr-free">
+        <textarea id="w-instruction" rows="7" placeholder="Vacío = metodología por defecto de Strix" oninput="S.wizard.instructionTouched=true;schedulePreview()"></textarea>
+        <div class="hint">Se envía como <code>instruction</code> y llega a Strix como <code>--instruction</code>. Sé concreto: qué probar, dónde, y cuándo parar.
+          Para una instrucción completa (Web, API, Autorización y sus variantes ampliadas) con alcance, cuentas y límites, cambia a <b>Builder</b>.</div>
+      </div>
+      <div id="w-instr-builder" style="display:none"></div>
+    </div>
+
+    <div class="step">
+      <div class="step-t"><span class="step-n">5</span>Límites</div>
+      <div class="grid g-2">
+        <label class="field"><span>Presupuesto máximo (USD)</span>
+          <input id="w-budget" type="number" min="0.1" step="0.5" placeholder="sin límite" oninput="schedulePreview()" /></label>
+        <label class="field"><span>Scope mode (solo repositorios)</span>
+          <select id="w-scope" onchange="schedulePreview()">
+            <option value="">por defecto</option><option value="auto">auto</option>
+            <option value="diff">diff</option><option value="full">full</option>
+          </select></label>
+      </div>
+    </div>
+
+    <div class="step">
+      <details id="w-preview-box" open>
+        <summary>Mensaje que se enviará a Kafka <span class="mono muted" id="w-topic"></span></summary>
+        <pre id="w-preview" class="mt" style="margin-top:10px"></pre>
+      </details>
+    </div>
+  </div>
+  <div class="dlg-f">
+    <span class="err" id="w-error"></span>
+    <div style="flex:1"></div>
+    <button onclick="closeWizard()">Cancelar</button>
+    <button class="primary" id="w-launch" onclick="launchFromWizard()">Lanzar escaneo</button>
+  </div>
+</dialog>
+
+<dialog id="confirm" style="width:min(460px,94vw)">
+  <div class="dlg-h"><h2 id="c-title"></h2></div>
+  <div class="dlg-b"><p id="c-body" class="prose"></p><div id="c-extra"></div></div>
+  <div class="dlg-f"><button onclick="document.getElementById('confirm').close('cancel')">Cancelar</button><button class="primary" id="c-ok">Confirmar</button></div>
+</dialog>
+
+<script>
+"use strict";
+
+// ── State ────────────────────────────────────────────────────────────────
+const S = {
+  config: null,
+  route: { name: "dashboard", params: [] },
+  tab: {},                 // per-page selected tab
+  findingFilter: { status: "open", severity: "", app: "" },
+  selected: new Set(),     // finding ids selected on the findings page
+  hasActive: false,        // current view shows a queued/running scan → poll
+  wizard: { template: "full", mode: "quick" },
+};
+const SEV = ["critical", "high", "medium", "low"];
+const SEV_COLOR = { critical: "var(--sevbar-critical)", high: "var(--sevbar-high)", medium: "var(--sevbar-medium)", low: "var(--sevbar-low)" };
+const STATUS_ES = { queued: "en cola", running: "en ejecución", completed: "completado", failed: "fallido",
+  open: "abierta", fixed: "corregida", accepted: "aceptada", false_positive: "falso positivo", doubtful: "dudosa",
+  still_vulnerable: "sigue vulnerable", inconclusive: "no concluyente", observed: "observada",
+  confirmed: "confirmada", refuted: "refutada" };
+const KIND_ES = { scan: "Escaneo", retest: "Retest", verify: "Verificación", external: "Externo" };
+const TRIAGE_ES = { true_positive: "Verdadero positivo", false_positive: "Falso positivo", doubtful: "Dudoso" };
+// Decided only through the triage buttons (they need a reason / launch a scan).
+const TRIAGE_ONLY = ["false_positive", "doubtful"];
+const LIFECYCLE = ["open", "fixed", "accepted"];
+const MIN_FP_JUSTIFICATION = 10;
+const MODE_ES = { quick: "Rápido", standard: "Estándar", deep: "Profundo" };
+
+// ── Helpers ──────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    headers: opts.body ? { "content-type": "application/json" } : {},
+    ...opts,
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  if (res.status === 204) return null;
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    let msg = data && data.detail;
+    if (Array.isArray(msg)) msg = msg.map((d) => `${(d.loc || []).slice(-1)[0]}: ${d.msg}`).join("; ");
+    throw new Error(msg || `HTTP ${res.status}`);
+  }
+  return data;
+}
+function toast(msg, bad = false) {
+  const el = document.createElement("div");
+  el.className = "toast" + (bad ? " bad" : "");
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), bad ? 7000 : 3500);
+}
+function fmtDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso.endsWith("Z") || /[+-]\d\d:\d\d$/.test(iso) ? iso : iso + "Z");
+  return d.toLocaleString("es-ES", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+function ago(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso.endsWith("Z") || /[+-]\d\d:\d\d$/.test(iso) ? iso : iso + "Z");
+  const s = Math.max(0, (Date.now() - d.getTime()) / 1000);
+  if (s < 60) return "hace un momento";
+  if (s < 3600) return `hace ${Math.floor(s / 60)} min`;
+  if (s < 86400) return `hace ${Math.floor(s / 3600)} h`;
+  return `hace ${Math.floor(s / 86400)} d`;
+}
+function duration(a, b) {
+  if (!a) return "—";
+  const p = (x) => new Date(x.endsWith("Z") || /[+-]\d\d:\d\d$/.test(x) ? x : x + "Z").getTime();
+  const s = Math.max(0, ((b ? p(b) : Date.now()) - p(a)) / 1000);
+  if (s < 60) return `${Math.round(s)} s`;
+  if (s < 3600) return `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`;
+  return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`;
+}
+const money = (v) => (v === null || v === undefined || v === "" ? "—" : `$${Number(v).toFixed(2)}`);
+const sevBadge = (s) => `<span class="badge sev-${esc(s)}">${esc(s || "—")}</span>`;
+function statusBadge(s) {
+  const live = s === "running" || s === "queued";
+  return `<span class="badge st-${esc(s)} ${live ? "pulse" : ""}">${esc(STATUS_ES[s] || s || "—")}</span>`;
+}
+const kindBadge = (k) => `<span class="badge kind">${esc(KIND_ES[k] || k)}</span>`;
+function sevCounts(c) {
+  c = c || {};
+  const parts = SEV.filter((s) => c[s]).map((s) => `<span class="badge sev-${s}" title="${s}">${c[s]}</span>`);
+  return parts.length ? `<span class="sevcounts">${parts.join("")}</span>` : `<span class="muted">0</span>`;
+}
+
+// Minimal, escape-first markdown renderer (reports are model-generated text).
+function md(src) {
+  const lines = String(src || "").replace(/\r/g, "").split("\n");
+  let out = "", i = 0, liOpen = false;
+  // Open lists, innermost last: the builder inserts nested bullets (multi-line values).
+  const lists = [];
+  const inline = (t) => esc(t)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  const closeLi = () => { if (liOpen) { out += "</li>"; liOpen = false; } };
+  const closeLists = (indent = -1) => {
+    while (lists.length && lists[lists.length - 1].indent > indent) {
+      closeLi();
+      out += `</${lists.pop().type}>`;
+      // The item that held the nested list also ends here.
+      closeLi();
+    }
+  };
+  const closeAll = () => { closeLists(-1); closeLi(); };
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^```/.test(line)) {
+      closeAll();
+      const buf = [];
+      i++;
+      while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]);
+      i++;
+      out += `<pre><code>${esc(buf.join("\n"))}</code></pre>`;
+      continue;
+    }
+    let m;
+    if ((m = line.match(/^(#{1,4})\s+(.*)$/))) { closeAll(); out += `<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`; i++; continue; }
+    if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) {
+      closeAll();
+      const cells = (l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+      out += "<div class='table-wrap'><table><thead><tr>" + cells(line).map((c) => `<th>${inline(c)}</th>`).join("") + "</tr></thead><tbody>";
+      i += 2;
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) {
+        out += "<tr>" + cells(lines[i]).map((c) => `<td>${inline(c)}</td>`).join("") + "</tr>";
+        i++;
+      }
+      out += "</tbody></table></div>";
+      continue;
+    }
+    if ((m = line.match(/^(\s*)([-*]|\d+[.)])\s+(.*)$/))) {
+      const indent = m[1].length;
+      const type = /\d/.test(m[2]) ? "ol" : "ul";
+      const top = lists[lists.length - 1];
+      if (top && indent > top.indent) {
+        // Deeper item: a nested list inside the item that is still open.
+        out += `<${type}>`;
+        lists.push({ indent, type });
+      } else {
+        closeLists(indent);
+        const cur = lists[lists.length - 1];
+        if (cur) {
+          closeLi();
+          if (cur.type !== type) {
+            out += `</${lists.pop().type}><${type}>`;
+            lists.push({ indent, type });
+          }
+        } else {
+          out += `<${type}>`;
+          lists.push({ indent, type });
+        }
+      }
+      out += `<li>${inline(m[3])}`;
+      liOpen = true;
+      i++;
+      continue;
+    }
+    if ((m = line.match(/^>\s?(.*)$/))) { closeAll(); out += `<blockquote>${inline(m[1])}</blockquote>`; i++; continue; }
+    if (/^\s*(---|\*\*\*)\s*$/.test(line)) { closeAll(); out += "<hr style='border:0;border-top:1px solid var(--border)'>"; i++; continue; }
+    if (!line.trim()) { closeAll(); i++; continue; }
+    closeAll();
+    const para = [line];
+    i++;
+    while (i < lines.length && lines[i].trim() && !/^(#{1,4}\s|```|\s*[-*]\s|\s*\d+[.)]\s|>|\s*\|)/.test(lines[i])) para.push(lines[i++]);
+    out += `<p>${inline(para.join(" "))}</p>`;
+  }
+  closeAll();
+  return out;
+}
+
+// ── Router ───────────────────────────────────────────────────────────────
+function parseRoute() {
+  const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  const name = parts[0] || "dashboard";
+  return { name, params: parts.slice(1) };
+}
+async function render() {
+  S.route = parseRoute();
+  bDialog = false;
+  document.querySelectorAll("[data-nav]").forEach((el) =>
+    el.classList.toggle("active", el.dataset.nav === (S.route.name === "dashboard" ? "dashboard" : S.route.name)));
+  $("top-actions").innerHTML = "";
+  $("crumbs").textContent = "";
+  S.hasActive = false;
+  const view = $("view");
+  try {
+    const { name, params } = S.route;
+    if (name === "scans" && params[0]) await viewScan(view, +params[0]);
+    else if (name === "scans") await viewScans(view);
+    else if (name === "findings" && params[0]) await viewFinding(view, +params[0]);
+    else if (name === "findings") await viewFindings(view);
+    else if (name === "assets" && params[0]) await viewAsset(view, +params[0]);
+    else if (name === "assets") await viewAssets(view);
+    else if (name === "instructions") await viewBuilder(view);
+    else await viewDashboard(view);
+    // Deep link to the wizard: #/new or #/new/<app_id>
+    if (name === "new") openWizard(params[0] ? +params[0] : null);
+  } catch (e) {
+    view.innerHTML = `<div class="banner bad"><div><b>Error</b><div>${esc(e.message)}</div></div></div>`;
+  }
+  makeClickablesAccessible();
+  refreshSide();
+}
+
+// Chips, options and tabs are <span>/<div> with onclick. They must still be
+// reachable and operable with the keyboard: role=button + tabindex + Enter/Space.
+// Native controls and elements that already declare it are left alone.
+function makeClickablesAccessible(root = document) {
+  root.querySelectorAll("[onclick]").forEach((el) => {
+    const tag = el.tagName.toLowerCase();
+    if (tag === "button" || tag === "a" || tag === "input" || tag === "select" || tag === "textarea") return;
+    if (el.dataset.a11y) return;
+    el.dataset.a11y = "1";
+    if (!el.hasAttribute("role")) el.setAttribute("role", "button");
+    if (!el.hasAttribute("tabindex")) el.tabIndex = 0;
+    if (!el.hasAttribute("aria-pressed") && el.classList.contains("chip")) {
+      el.setAttribute("aria-pressed", el.classList.contains("active") ? "true" : "false");
+    }
+    el.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      // A nested control (e.g. the chip inside an option) handles its own keys.
+      if (event.target !== el) return;
+      event.preventDefault();
+      el.click();
+    });
+  });
+}
+function setTitle(title, crumbs = "") {
+  $("title").textContent = title;
+  $("crumbs").innerHTML = crumbs;
+  document.title = `${title} · Strix`;
+}
+
+async function refreshSide() {
+  try {
+    const [cfg, stats] = await Promise.all([api("/manage/config"), api("/manage/stats")]);
+    S.config = cfg;
+    $("kafka-dot").className = "dot " + (cfg.kafka_connected ? "on" : "off");
+    $("kafka-label").textContent = cfg.kafka_connected ? "Kafka conectado" : "Kafka desconectado";
+    $("kafka-topics").innerHTML = `→ ${esc(cfg.topics.request)}<br>← ${esc(cfg.topics.result)}`;
+    const running = (stats.scans_by_status.running || 0) + (stats.scans_by_status.queued || 0);
+    $("nav-running").textContent = running ? `${running} activos` : "";
+    const open = Object.values(stats.open_by_severity).reduce((a, b) => a + b, 0);
+    $("nav-open").textContent = open || "";
+  } catch { /* side panel is cosmetic */ }
+}
+
+// ── Shared fragments ─────────────────────────────────────────────────────
+function scansTable(scans, { showApp = true } = {}) {
+  if (!scans.length) return `<div class="empty">Todavía no hay escaneos. Pulsa <b>Nuevo escaneo</b> para lanzar el primero.</div>`;
+  if (scans.some((s) => s.status === "queued" || s.status === "running")) S.hasActive = true;
+  return `<div class="table-wrap"><table><thead><tr>
+    <th>#</th>${showApp ? "<th>Activo</th>" : ""}<th>Target</th><th>Tipo</th><th>Modo</th><th>Estado</th>
+    <th>Hallazgos</th><th>Coste</th><th>Lanzado</th><th>Duración</th></tr></thead><tbody>
+    ${scans.map((s) => `<tr class="click" onclick="go('#/scans/${s.id}')">
+      <td class="muted mono">${s.id}</td>
+      ${showApp ? `<td>${esc(s.app_name)}</td>` : ""}
+      <td class="mono trunc" title="${esc(s.target)}">${esc(s.target)}</td>
+      <td>${kindBadge(s.kind)}</td>
+      <td>${esc(MODE_ES[s.scan_mode] || s.scan_mode)}</td>
+      <td>${statusBadge(s.status)}</td>
+      <td>${s.status === "completed" || s.status === "failed" ? sevCounts(s.severity_counts) : '<span class="muted">—</span>'}</td>
+      <td class="num">${money(s.cost)}</td>
+      <td class="muted">${ago(s.created_at)}</td>
+      <td class="muted">${s.status === "queued" ? "—" : duration(s.started_at || s.created_at, s.ended_at)}</td>
+    </tr>`).join("")}</tbody></table></div>`;
+}
+function findingsTable(findings, { selectable = false, showApp = true, extraCol = null } = {}) {
+  if (!findings.length) return `<div class="empty">No hay vulnerabilidades con estos filtros.</div>`;
+  return `<div class="table-wrap"><table><thead><tr>
+    ${selectable ? `<th style="width:34px"><input type="checkbox" style="width:auto" onchange="toggleAll(this.checked)" /></th>` : ""}
+    <th>Ref</th><th>Severidad</th><th>Título</th>${showApp ? "<th>Activo</th>" : ""}<th>Endpoint</th><th>CWE</th>
+    <th>Estado</th>${extraCol ? `<th>${extraCol.title}</th>` : "<th>Último retest</th>"}</tr></thead><tbody>
+    ${findings.map((f) => `<tr class="click" onclick="if(event.target.type!=='checkbox')go('#/findings/${f.id}')">
+      ${selectable ? `<td><input type="checkbox" style="width:auto" data-fid="${f.id}" ${S.selected.has(f.id) ? "checked" : ""} onchange="toggleSel(${f.id}, this.checked)" /></td>` : ""}
+      <td class="mono muted">${esc(f.ref)}</td>
+      <td>${sevBadge(f.severity)}</td>
+      <td>${esc(f.title)}</td>
+      ${showApp ? `<td class="muted">${esc(f.app_name)}</td>` : ""}
+      <td class="mono small trunc">${f.endpoint ? esc((f.method ? f.method + " " : "") + f.endpoint) : '<span class="muted">—</span>'}</td>
+      <td class="mono small">${esc(f.cwe || "—")}</td>
+      <td>${statusBadge(f.status)}${f.triage === "true_positive" ? ' <span class="badge st-confirmed" title="Verdadero positivo">✓</span>' : ""}</td>
+      <td>${extraCol ? extraCol.render(f) : f.last_verdict ? statusBadge(f.last_verdict) : '<span class="muted">—</span>'}</td>
+    </tr>`).join("")}</tbody></table></div>`;
+}
+function go(hash) { location.hash = hash; }
+
+// ── Views ────────────────────────────────────────────────────────────────
+async function viewDashboard(view) {
+  setTitle("Panel");
+  const [stats, scans, findings] = await Promise.all([
+    api("/manage/stats"), api("/manage/scans?limit=8"), api("/manage/findings?status=open"),
+  ]);
+  const open = stats.open_by_severity;
+  const totalOpen = SEV.reduce((a, s) => a + (open[s] || 0), 0) + (open.info || 0);
+  const active = (stats.scans_by_status.running || 0) + (stats.scans_by_status.queued || 0);
+  const fixed = stats.findings_by_status.fixed || 0;
+  view.innerHTML = `
+    <div class="grid g-4">
+      <div class="card kpi ${totalOpen ? "kpi-crit" : ""}"><div class="label">Vulnerabilidades abiertas</div><div class="value">${totalOpen}</div>
+        <div class="sub">${open.critical || 0} críticas · ${open.high || 0} altas</div></div>
+      <div class="card kpi"><div class="label">Escaneos activos</div><div class="value">${active}</div>
+        <div class="sub">${stats.scans_by_status.completed || 0} completados · ${stats.scans_by_status.failed || 0} fallidos</div></div>
+      <div class="card kpi"><div class="label">Corregidas (verificadas por retest)</div><div class="value">${fixed}</div>
+        <div class="sub">${stats.findings_by_status.accepted || 0} aceptadas · ${stats.findings_by_status.false_positive || 0} falsos positivos · ${stats.findings_by_status.doubtful || 0} dudosas</div></div>
+      <div class="card kpi"><div class="label">Activos · Coste LLM</div><div class="value">${stats.apps}</div>
+        <div class="sub">${money(stats.total_cost)} acumulado</div></div>
+    </div>
+    <div class="card hov mt">
+      <div class="card-h"><h3>Vulnerabilidades abiertas por severidad</h3></div>
+      <div class="card-b">
+        ${totalOpen ? `<div class="sevbar">${SEV.map((s) => open[s] ? `<span style="width:${(100 * open[s]) / totalOpen}%;background:${SEV_COLOR[s]}" title="${s}: ${open[s]}"></span>` : "").join("")}</div>
+        <div class="legend">${SEV.map((s) => `<span><i style="background:${SEV_COLOR[s]}"></i>${s} <b>${open[s] || 0}</b></span>`).join("")}</div>`
+        : `<div class="muted">Sin vulnerabilidades abiertas.</div>`}
+      </div>
+    </div>
+    <div class="grid g-2 mt">
+      <div class="card"><div class="card-h"><h3>Escaneos recientes</h3><div style="flex:1"></div><a href="#/scans" class="small">Ver todos →</a></div>
+        ${scansTable(scans.slice(0, 8), { showApp: false })}</div>
+      <div class="card"><div class="card-h"><h3>Prioridad: abiertas más graves</h3><div style="flex:1"></div><a href="#/findings" class="small">Ver todas →</a></div>
+        ${findings.length ? `<div class="table-wrap"><table><tbody>${findings.slice(0, 8).map((f) => `
+          <tr class="click" onclick="go('#/findings/${f.id}')"><td>${sevBadge(f.severity)}</td>
+          <td>${esc(f.title)}<div class="muted small">${esc(f.app_name)}</div></td></tr>`).join("")}</tbody></table></div>`
+          : `<div class="empty">Nada pendiente 🎉</div>`}</div>
+    </div>`;
+}
+
+async function viewScans(view) {
+  setTitle("Escaneos");
+  const filter = S.tab.scans || "";
+  const scans = await api("/manage/scans?limit=200" + (filter ? `&status=${filter}` : ""));
+  const chip = (v, l) => `<span class="chip ${filter === v ? "active" : ""}" onclick="S.tab.scans='${v}';render()">${l}</span>`;
+  view.innerHTML = `
+    <div class="row mb">${chip("", "Todos")}${chip("queued,running", "Activos")}${chip("completed", "Completados")}${chip("failed", "Fallidos")}</div>
+    <div class="card">${scansTable(scans)}</div>`;
+}
+
+async function viewScan(view, id) {
+  const s = await api(`/manage/scans/${id}`);
+  setTitle(`${KIND_ES[s.kind] || "Escaneo"} #${s.id}`, `<a href="#/scans">Escaneos</a> / <a href="#/assets/${s.app_id}">${esc(s.app_name)}</a>`);
+  const live = s.status === "queued" || s.status === "running";
+  S.hasActive = live;
+  const tab = S.tab[`scan${id}`] || "findings";
+  const vulnFindings = s.findings.filter((f) => f.verdict !== "fixed" && f.verdict !== "inconclusive");
+  const actions = [];
+  if (s.has_artifacts && S.config?.viewer_available)
+    actions.push(`<a class="btn" href="/runs/${s.id}" target="_blank" rel="noopener">Ver ejecución del agente ↗</a>`);
+  if (vulnFindings.length && !live)
+    actions.push(`<button onclick="retestFindings(${s.app_id}, [${vulnFindings.map((f) => f.id).join(",")}])">Retest de estos hallazgos</button>`);
+  if (!live) actions.push(`<button onclick="rerun(${s.id})">Relanzar</button>`);
+  if (live) actions.push(`<button class="danger" onclick="markFailed(${s.id})">Marcar como fallido</button>`);
+  $("top-actions").innerHTML = actions.join("");
+
+  let banner = "";
+  if (s.status === "queued")
+    banner = `<div class="banner warn mb"><div><b>En cola.</b> La petición está en <code>${esc(S.config?.topics.request || "audit.request")}</code>; esperando a que KEDA levante un pod del orquestador.
+      <div class="muted small">Si el orquestador no publica eventos <code>audit.status</code>, el estado pasará directamente a completado al llegar el resultado.</div></div></div>`;
+  else if (s.status === "running")
+    banner = `<div class="banner run mb"><div><b>En ejecución</b> desde ${fmtDate(s.started_at)} (${duration(s.started_at)}). Los resultados aparecerán aquí al publicarse en <code>${esc(S.config?.topics.result || "audit.result")}</code>.</div></div>`;
+  else if (s.status === "failed")
+    banner = `<div class="banner bad mb"><div><b>El escaneo ha fallado.</b><div class="mono small" style="margin-top:4px">${esc(s.error || "sin detalle")}</div></div></div>`;
+  else if (!s.has_artifacts && s.status === "completed")
+    banner = `<div class="banner warn mb"><div>Solo hay el resumen del evento Kafka: los artefactos (informe, PoC completas) no se pudieron descargar de MinIO. Revisa la configuración de almacenamiento del frontal.</div></div>`;
+
+  const counts = s.severity_counts || {};
+  view.innerHTML = `${banner}
+    <div class="card card-b">
+      <div class="row between"><div class="mono" style="font-size:15px">${esc(s.target)}</div>
+        <div class="row">${kindBadge(s.kind)} ${statusBadge(s.status)}</div></div>
+      <dl class="meta mt">
+        <div><dt>Modo</dt><dd>${esc(MODE_ES[s.scan_mode] || s.scan_mode)}</dd></div>
+        <div><dt>Lanzado</dt><dd>${fmtDate(s.created_at)}</dd></div>
+        <div><dt>Duración</dt><dd>${s.status === "queued" ? "—" : duration(s.started_at || s.created_at, s.ended_at)}</dd></div>
+        <div><dt>Coste / presupuesto</dt><dd>${money(s.cost)} / ${s.max_budget ? money(s.max_budget) : "sin límite"}</dd></div>
+        <div><dt>Request id</dt><dd class="mono small">${esc(s.request_id || "—")}</dd></div>
+        <div><dt>Run</dt><dd class="mono small">${esc(s.run_name || "—")}</dd></div>
+        ${s.parent_scan_id ? `<div><dt>Relanzado desde</dt><dd><a href="#/scans/${s.parent_scan_id}">#${s.parent_scan_id}</a></dd></div>` : ""}
+        <div><dt>Hallazgos</dt><dd>${sevCounts(counts)}</dd></div>
+      </dl>
+    </div>
+    <div class="tabs">
+      ${[["findings", `Hallazgos (${s.findings.length})`], ["report", "Informe"], ["request", "Petición y resultado"]]
+        .map(([k, l]) => `<div class="tab ${tab === k ? "active" : ""}" onclick="S.tab['scan${id}']='${k}';render()">${l}</div>`).join("")}
+    </div>
+    <div id="scan-tab"></div>`;
+
+  const box = $("scan-tab");
+  if (tab === "findings") {
+    const extra = s.kind === "retest" || s.kind === "verify" ? { title: "Veredicto", render: (f) => statusBadge(f.verdict) } : null;
+    box.innerHTML = `<div class="card">${s.findings.length ? findingsTable(s.findings, { showApp: false, extraCol: extra })
+      : `<div class="empty">${live ? "Esperando resultados…" : "Este escaneo no reportó vulnerabilidades."}</div>`}</div>`;
+  } else if (tab === "report") {
+    if (!s.has_artifacts) { box.innerHTML = `<div class="card empty">${live ? "El informe estará disponible al terminar." : "No hay informe para este escaneo."}</div>`; return; }
+    box.innerHTML = `<div class="card card-b muted">Cargando informe…</div>`;
+    const r = await api(`/manage/scans/${id}/report`).catch((e) => ({ markdown: "", error: e.message }));
+    box.innerHTML = `<div class="card card-b prose">${r.markdown ? md(r.markdown) : `<span class="muted">${esc(r.error || "Informe vacío.")}</span>`}</div>`;
+  } else {
+    box.innerHTML = `
+      <div class="section"><h4>Instrucción</h4>${s.instruction ? `<pre>${esc(s.instruction)}</pre>` : `<div class="muted">Sin instrucción (metodología por defecto).</div>`}</div>
+      <div class="section"><h4>Mensaje publicado en ${esc(S.config?.topics.request || "audit.request")}</h4><pre>${esc(JSON.stringify(s.request_payload, null, 2))}</pre></div>
+      <div class="section"><h4>Resultado recibido en ${esc(S.config?.topics.result || "audit.result")}</h4>
+        ${s.result && Object.keys(s.result).length ? `<pre>${esc(JSON.stringify(s.result, null, 2))}</pre>` : `<div class="muted">Aún no ha llegado.</div>`}</div>`;
+  }
+}
+
+async function viewFindings(view) {
+  setTitle("Vulnerabilidades");
+  const f = S.findingFilter;
+  const apps = await api("/manage/apps");
+  const qs = new URLSearchParams();
+  if (f.status) qs.set("status", f.status);
+  if (f.severity) qs.set("severity", f.severity);
+  if (f.app) qs.set("app_id", f.app);
+  const findings = await api("/manage/findings?" + qs);
+  const visible = new Set(findings.map((x) => x.id));
+  [...S.selected].forEach((sid) => { if (!visible.has(sid)) S.selected.delete(sid); });
+  const chip = (v, l) => `<span class="chip ${f.status === v ? "active" : ""}" onclick="S.findingFilter.status='${v}';render()">${l}</span>`;
+  view.innerHTML = `
+    <div class="row between mb">
+      <div class="chips">${chip("open", "Abiertas")}${chip("fixed", "Corregidas")}${chip("accepted", "Aceptadas")}${chip("doubtful", "Dudosas")}${chip("false_positive", "Falsos positivos")}${chip("", "Todas")}</div>
+      <div class="row">
+        <select style="width:auto" onchange="S.findingFilter.severity=this.value;render()">
+          <option value="">Todas las severidades</option>
+          ${SEV.map((s) => `<option value="${s}" ${f.severity === s ? "selected" : ""}>${s}</option>`).join("")}
+        </select>
+        <select style="width:auto" onchange="S.findingFilter.app=this.value;render()">
+          <option value="">Todos los activos</option>
+          ${apps.map((a) => `<option value="${a.id}" ${String(f.app) === String(a.id) ? "selected" : ""}>${esc(a.name)}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    <div class="card">${findingsTable(findings, { selectable: true })}</div>
+    <div id="bulk"></div>`;
+  S._findings = findings;
+  renderBulk();
+}
+function toggleSel(id, on) { on ? S.selected.add(id) : S.selected.delete(id); renderBulk(); }
+function toggleAll(on) {
+  (S._findings || []).forEach((f) => (on ? S.selected.add(f.id) : S.selected.delete(f.id)));
+  document.querySelectorAll("[data-fid]").forEach((el) => (el.checked = on));
+  renderBulk();
+}
+function renderBulk() {
+  const box = $("bulk");
+  if (!box) return;
+  const n = S.selected.size;
+  box.innerHTML = n ? `<div class="bulkbar"><b>${n} seleccionada${n > 1 ? "s" : ""}</b><div style="flex:1"></div>
+    <button class="primary" onclick="retestSelected()">Retest</button>
+    <select style="width:auto" onchange="bulkStatus(this.value)"><option value="">Marcar como…</option>
+      <option value="open">abierta</option><option value="fixed">corregida</option><option value="accepted">riesgo aceptado</option>
+      <option value="true_positive">verdadero positivo</option><option value="false_positive">falso positivo…</option></select>
+    <button class="ghost" onclick="S.selected.clear();render()">Limpiar</button></div>` : "";
+}
+async function retestSelected() {
+  const byApp = {};
+  (S._findings || []).filter((f) => S.selected.has(f.id)).forEach((f) => (byApp[f.app_id] ||= []).push(f.id));
+  const groups = Object.entries(byApp);
+  const ok = await confirmDlg("Lanzar retest",
+    `Se lanzará <b>${groups.length}</b> retest${groups.length > 1 ? "s (uno por activo)" : ""} en modo rápido para ${S.selected.size} hallazgo(s). El agente reproducirá cada PoC y dará un veredicto.`);
+  if (!ok) return;
+  let last = null;
+  for (const [appId, ids] of groups) {
+    try { last = await api(`/manage/apps/${appId}/retest`, { method: "POST", body: { finding_ids: ids, scan_mode: "quick" } }); }
+    catch (e) { toast(`Retest del activo ${appId}: ${e.message}`, true); }
+  }
+  S.selected.clear();
+  if (last) { toast("Retest enviado a Kafka"); go(groups.length === 1 ? `#/scans/${last.id}` : "#/scans"); }
+}
+async function bulkStatus(value) {
+  if (!value) return;
+  const ids = [...S.selected];
+  let call;
+  if (value === "true_positive" || value === "false_positive") {
+    const t = await triageDlg(value, ids.length);
+    if (!t) return render();
+    call = (id) => api(`/manage/findings/${id}/triage`, { method: "POST", body: { decision: value, ...t } });
+  } else {
+    call = (id) => api(`/manage/findings/${id}`, { method: "PATCH", body: { status: value } });
+  }
+  const results = await Promise.allSettled(ids.map(call));
+  const failed = results.filter((r) => r.status === "rejected");
+  const label = TRIAGE_ES[value] ? TRIAGE_ES[value].toLowerCase() : STATUS_ES[value];
+  toast(`${ids.length - failed.length} hallazgo(s) marcados como ${label}`);
+  if (failed.length) toast(`${failed.length} sin cambiar: ${failed[0].reason.message}`, true);
+  S.selected.clear();
+  render();
+}
+
+async function viewFinding(view, id) {
+  const f = await api(`/manage/findings/${id}`);
+  const d = f.data || {};
+  setTitle(f.title, `<a href="#/findings">Vulnerabilidades</a> / <a href="#/assets/${f.app_id}">${esc(f.app_name)}</a> / ${esc(f.ref)}`);
+  const tbtn = (decision, label) => `<button class="${f.triage === decision ? "on" : ""}" title="${TRIAGE_ES[decision]}" onclick="triageFinding(${f.id}, '${decision}')">${label}</button>`;
+  $("top-actions").innerHTML = `
+    <span class="triage-btns">${tbtn("true_positive", "✓ Verdadero")}${tbtn("false_positive", "✕ Falso positivo")}${tbtn("doubtful", "? Dudoso")}</span>
+    ${TRIAGE_ONLY.includes(f.status) ? "" : `<select style="width:auto" onchange="setFindingStatus(${f.id}, this.value)">
+      ${LIFECYCLE.map((s) => `<option value="${s}" ${f.status === s ? "selected" : ""}>${STATUS_ES[s]}</option>`).join("")}
+    </select>`}
+    <button onclick="retestFindings(${f.app_id}, [${f.id}])">Retest</button>`;
+  const lastVerify = [...f.history].reverse().find((h) => h.scan_kind === "verify" && h.verdict !== "observed");
+  let triageBanner = "";
+  if (f.status === "doubtful" && f.verifying_scan_id) {
+    triageBanner = `<div class="banner run mt"><div>Verificación en curso: Strix está comprobando solo este hallazgo en el <a href="#/scans/${f.verifying_scan_id}">escaneo #${f.verifying_scan_id}</a>.</div></div>`;
+    S.hasActive = true;
+  } else if (f.status === "doubtful" && lastVerify?.verdict === "refuted") {
+    triageBanner = `<div class="banner warn mt"><div><b>Strix propone falso positivo</b> (<a href="#/scans/${lastVerify.scan_id}">verificación #${lastVerify.scan_id}</a>). Revisa su evidencia y, si estás de acuerdo, márcalo como falso positivo.
+      ${lastVerify.evidence ? `<div class="small mono mt" style="color:var(--text-2);max-height:140px;overflow:auto">${esc(lastVerify.evidence)}</div>` : ""}</div></div>`;
+  } else if (f.status === "doubtful" && lastVerify) {
+    triageBanner = `<div class="banner warn mt"><div>La <a href="#/scans/${lastVerify.scan_id}">verificación #${lastVerify.scan_id}</a> no fue concluyente: decide a mano o vuelve a marcarlo como dudoso con más contexto.</div></div>`;
+  } else if (f.status === "doubtful") {
+    triageBanner = `<div class="banner warn mt"><div>Marcado como dudoso. La verificación no llegó a lanzarse o falló: pulsa <b>Dudoso</b> para relanzarla.</div></div>`;
+  }
+  const sec = (title, text, code = false) => text ? `<div class="section"><h4>${title}</h4>${code ? `<pre>${esc(text)}</pre>` : `<div class="prose">${md(text)}</div>`}</div>` : "";
+  let cvssBreakdown = d.cvss_breakdown;
+  if (typeof cvssBreakdown === "object" && cvssBreakdown) cvssBreakdown = Object.entries(cvssBreakdown).map(([k, v]) => `${k}: ${v}`).join(" · ");
+  view.innerHTML = `
+    <div class="card card-b">
+      <div class="row">${sevBadge(f.severity)} ${statusBadge(f.status)} ${f.triage === "true_positive" ? `<span class="badge st-confirmed">✓ ${esc(TRIAGE_ES[f.triage])}</span>` : ""} ${f.last_verdict ? `<span class="muted small">última verificación:</span> ${statusBadge(f.last_verdict)}` : ""}</div>
+      <dl class="meta mt">
+        <div><dt>Activo</dt><dd><a href="#/assets/${f.app_id}">${esc(f.app_name)}</a></dd></div>
+        <div><dt>Endpoint</dt><dd class="mono small">${esc(f.endpoint ? (f.method ? f.method + " " : "") + f.endpoint : "—")}</dd></div>
+        <div><dt>CVSS</dt><dd>${esc(f.cvss ?? "—")}</dd></div>
+        <div><dt>CWE</dt><dd class="mono">${esc(f.cwe || "—")}</dd></div>
+        <div><dt>Confianza</dt><dd>${esc(d.confidence || "—")}</dd></div>
+        <div><dt>Esfuerzo de corrección</dt><dd>${esc(d.fix_effort || "—")}</dd></div>
+        <div><dt>Detectada en</dt><dd><a href="#/scans/${f.first_seen_scan_id}">#${f.first_seen_scan_id}</a></dd></div>
+        <div><dt>Vista por última vez</dt><dd><a href="#/scans/${f.last_seen_scan_id}">#${f.last_seen_scan_id}</a></dd></div>
+      </dl>
+    </div>
+    ${triageBanner}
+    <div class="grid g-3 mt" style="grid-template-columns: minmax(0,2fr) minmax(0,1fr)">
+      <div>
+        ${sec("Descripción", d.description)}
+        ${sec("Impacto", d.impact)}
+        ${sec("Análisis técnico", d.technical_analysis)}
+        ${sec("Reproducción", d.poc_description)}
+        ${sec("PoC", d.poc_script_code, true)}
+        ${sec("Evidencia", d.evidence, true)}
+        ${sec("Remediación", d.remediation_steps)}
+        ${sec("Cómo verificar la corrección", d.fix_verification)}
+        ${sec("Justificación de la confianza", d.confidence_rationale)}
+        ${cvssBreakdown ? `<div class="section"><h4>Vector CVSS</h4><div class="mono small">${esc(cvssBreakdown)}</div></div>` : ""}
+        ${!d.description && !d.poc_script_code ? `<div class="banner warn mt"><div>Solo hay el resumen del evento Kafka para este hallazgo; el detalle completo llega con los artefactos de MinIO.</div></div>` : ""}
+      </div>
+      <div>
+        <div class="section"><h4>Triage</h4>
+          ${f.triage_log.length ? `<ul class="timeline">${f.triage_log.slice().reverse().map((t) => `<li class="v-${esc(t.decision)}">
+            <div class="row"><b>${esc(TRIAGE_ES[t.decision] || t.decision)}</b>${t.scan_id ? ` <a href="#/scans/${t.scan_id}" class="small">#${t.scan_id}</a>` : ""}</div>
+            <div class="muted small">${esc(t.author || "anónimo")} · ${fmtDate(t.created_at)}</div>
+            ${t.justification ? `<div class="small" style="margin-top:4px;color:var(--text-2);white-space:pre-wrap;max-height:160px;overflow:auto">${esc(t.justification)}</div>` : ""}
+          </li>`).join("")}</ul>` : `<div class="muted small">Sin revisar.</div>`}
+        </div>
+        <div class="section"><h4>Historial</h4>
+          <ul class="timeline">${f.history.map((h) => `<li class="v-${esc(h.verdict)}">
+            <div class="row"><a href="#/scans/${h.scan_id}">${esc(KIND_ES[h.scan_kind] || "Escaneo")} #${h.scan_id}</a> ${statusBadge(h.verdict)}</div>
+            <div class="muted small">${fmtDate(h.observed_at)}</div>
+            ${h.evidence ? `<div class="small mono" style="margin-top:4px;color:var(--text-2);max-height:120px;overflow:auto">${esc(h.evidence)}</div>` : ""}
+          </li>`).join("")}</ul>
+        </div>
+      </div>
+    </div>`;
+}
+async function setFindingStatus(id, status) {
+  try {
+    await api(`/manage/findings/${id}`, { method: "PATCH", body: { status } });
+    toast(`Marcada como ${STATUS_ES[status]}`);
+  } catch (e) { toast(e.message, true); }
+  render();
+}
+
+function storedAuthor() { try { return localStorage.getItem("strix.author") || ""; } catch { return ""; } }
+function rememberAuthor(v) { try { localStorage.setItem("strix.author", v); } catch { /* private mode */ } }
+
+// Triage dialog. Resolves {justification, author} or null when cancelled.
+async function triageDlg(decision, count = 1) {
+  const many = count > 1 ? ` (${count} hallazgos)` : "";
+  const copy = {
+    true_positive: ["Marcar como verdadero positivo" + many, "Confirmas que la vulnerabilidad es real.", "Comentario (opcional)"],
+    false_positive: ["Marcar como falso positivo" + many,
+      "El hallazgo dejará de contar como abierto y no se reabrirá en escaneos futuros. <b>La justificación es obligatoria</b>: queda registrada con tu nombre.",
+      `Justificación (obligatoria, mínimo ${MIN_FP_JUSTIFICATION} caracteres)`],
+    doubtful: ["Marcar como dudoso",
+      "Se lanzará un escaneo en modo rápido que comprobará <b>solo esta vulnerabilidad</b> e intentará refutarla. Si la confirma, pasa a verdadero positivo; si la refuta, te propondrá marcarla como falso positivo.",
+      "¿Qué te hace dudar? (opcional, se le pasa al agente)"],
+  }[decision];
+  const extra = $("c-extra");
+  extra.innerHTML = `
+    <label class="field mt"><span>${copy[2]}</span><textarea id="t-just" rows="5" style="min-height:90px;font-family:inherit"></textarea></label>
+    <label class="field mt"><span>Tu nombre</span><input id="t-author" value="${esc(storedAuthor())}" /></label>`;
+  const ok = $("c-ok");
+  const check = () => {
+    ok.disabled = decision === "false_positive" && $("t-just").value.trim().length < MIN_FP_JUSTIFICATION;
+  };
+  $("t-just").oninput = check;
+  check();
+  setTimeout(() => $("t-just").focus(), 0);
+  const confirmed = await confirmDlg(copy[0], copy[1]);
+  const result = { justification: $("t-just").value.trim() || null, author: $("t-author").value.trim() || null };
+  extra.innerHTML = "";
+  ok.disabled = false;
+  if (!confirmed) return null;
+  if (result.author) rememberAuthor(result.author);
+  return result;
+}
+async function triageFinding(id, decision) {
+  const t = await triageDlg(decision);
+  if (!t) return;
+  try {
+    const r = await api(`/manage/findings/${id}/triage`, { method: "POST", body: { decision, ...t } });
+    if (r.scan) toast(`Verificación lanzada (escaneo #${r.scan.id})`);
+    else toast(`Marcada como ${TRIAGE_ES[decision].toLowerCase()}`);
+  } catch (e) { toast(e.message, true); }
+  render();
+}
+
+async function viewAssets(view) {
+  setTitle("Activos");
+  const apps = await api("/manage/apps");
+  view.innerHTML = `
+    <div class="card card-b mb">
+      <div class="row" style="align-items:flex-end">
+        <label class="field" style="flex:1;min-width:180px"><span>Nombre</span><input id="a-name" placeholder="Juice Shop (dev)" /></label>
+        <label class="field" style="flex:2;min-width:240px"><span>Target</span><input id="a-target" placeholder="http://juice-shop:3000" /></label>
+        <label class="field" style="width:140px"><span>Entorno</span><input id="a-env" placeholder="dev" /></label>
+        <button class="primary" onclick="createAsset()">Añadir activo</button>
+      </div>
+    </div>
+    <div class="card">${apps.length ? `<div class="table-wrap"><table><thead><tr><th>Nombre</th><th>Target</th><th>Entorno</th><th>Abiertas</th><th>Escaneos</th><th></th></tr></thead><tbody>
+      ${apps.map((a) => `<tr class="click" onclick="if(event.target.tagName!=='BUTTON')go('#/assets/${a.id}')">
+        <td><b>${esc(a.name)}</b></td><td class="mono small">${esc(a.target)}</td><td class="muted">${esc(a.environment || "—")}</td>
+        <td>${a.open_findings ? `<span class="badge st-open">${a.open_findings}</span>` : '<span class="muted">0</span>'}</td>
+        <td class="num">${a.scan_count}</td>
+        <td style="text-align:right"><button class="sm" onclick="openWizard(${a.id})">Escanear</button></td></tr>`).join("")}
+      </tbody></table></div>` : `<div class="empty">Añade tu primer activo (o lanza un escaneo y se creará solo).</div>`}</div>`;
+}
+async function createAsset() {
+  try {
+    const a = await api("/manage/apps", { method: "POST", body: { name: $("a-name").value.trim(), target: $("a-target").value.trim(), environment: $("a-env").value.trim() || null } });
+    toast("Activo creado");
+    go(`#/assets/${a.id}`);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function viewAsset(view, id) {
+  const [a, scans, findings] = await Promise.all([
+    api(`/manage/apps/${id}`), api(`/manage/apps/${id}/scans`), api(`/manage/apps/${id}/findings`),
+  ]);
+  setTitle(a.name, `<a href="#/assets">Activos</a>`);
+  $("top-actions").innerHTML = `
+    <button class="ghost danger" onclick="deleteAsset(${a.id})">Eliminar</button>
+    ${a.open_findings ? `<button onclick="retestFindings(${a.id}, null)">Retest de todo lo abierto (${a.open_findings})</button>` : ""}
+    <button onclick="openWizard(${a.id})">Escanear este activo</button>`;
+  const tab = S.tab[`asset${id}`] || "findings";
+  view.innerHTML = `
+    <div class="card card-b"><dl class="meta">
+      <div><dt>Target</dt><dd class="mono">${esc(a.target)}</dd></div>
+      <div><dt>Entorno</dt><dd>${esc(a.environment || "—")}</dd></div>
+      <div><dt>Abiertas</dt><dd>${a.open_findings}</dd></div>
+      <div><dt>Escaneos</dt><dd>${a.scan_count}</dd></div></dl></div>
+    <div class="tabs">
+      ${[["findings", `Vulnerabilidades (${findings.length})`], ["scans", `Escaneos (${scans.length})`]]
+        .map(([k, l]) => `<div class="tab ${tab === k ? "active" : ""}" onclick="S.tab['asset${id}']='${k}';render()">${l}</div>`).join("")}
+    </div>
+    <div class="card">${tab === "scans" ? scansTable(scans, { showApp: false }) : findingsTable(findings, { showApp: false })}</div>`;
+  if (scans.some((s) => s.status === "queued" || s.status === "running")) S.hasActive = true;
+}
+async function deleteAsset(id) {
+  if (!(await confirmDlg("Eliminar activo", "Se borrarán el activo, sus escaneos y su historial de vulnerabilidades. Los artefactos en MinIO no se tocan."))) return;
+  await api(`/manage/apps/${id}`, { method: "DELETE" });
+  toast("Activo eliminado");
+  go("#/assets");
+}
+
+// ── Actions ──────────────────────────────────────────────────────────────
+function confirmDlg(title, body) {
+  const dlg = $("confirm");
+  $("c-title").textContent = title;
+  $("c-body").innerHTML = body;
+  dlg.returnValue = "";
+  dlg.showModal();
+  return new Promise((resolve) => {
+    $("c-ok").onclick = () => dlg.close("ok");
+    dlg.onclose = () => resolve(dlg.returnValue === "ok");
+  });
+}
+async function retestFindings(appId, ids) {
+  const n = ids ? ids.length : "todos los";
+  if (!(await confirmDlg("Lanzar retest", `Se enviará un retest en modo rápido de <b>${n}</b> hallazgo(s) abiertos. El agente reproducirá la PoC original, probará variantes y dará un veredicto: <i>sigue vulnerable</i>, <i>corregida</i> o <i>no concluyente</i>.`))) return;
+  try {
+    const s = await api(`/manage/apps/${appId}/retest`, { method: "POST", body: { finding_ids: ids, scan_mode: "quick" } });
+    toast("Retest enviado a Kafka");
+    go(`#/scans/${s.id}`);
+  } catch (e) { toast(e.message, true); }
+}
+async function rerun(id) {
+  if (!(await confirmDlg("Relanzar", "Se publicará de nuevo la misma petición (target, modo, instrucción y presupuesto) como un escaneo nuevo."))) return;
+  try { const s = await api(`/manage/scans/${id}/rerun`, { method: "POST" }); toast("Escaneo relanzado"); go(`#/scans/${s.id}`); }
+  catch (e) { toast(e.message, true); }
+}
+async function markFailed(id) {
+  if (!(await confirmDlg("Marcar como fallido", "Úsalo si el pod del orquestador murió: el orquestador confirma el mensaje antes de escanear, así que ese escaneo nunca enviará resultado. Si el resultado llega después, se aplicará igualmente."))) return;
+  await api(`/manage/scans/${id}/mark-failed`, { method: "POST" });
+  render();
+}
+
+// ── Wizard ───────────────────────────────────────────────────────────────
+let previewTimer = null;
+// preset: {instruction, mode} from the instruction builder.
+async function openWizard(appId = null, preset = null) {
+  if (!S.config) S.config = await api("/manage/config");
+  const apps = await api("/manage/apps");
+  S._apps = apps;
+  const sel = $("w-app");
+  sel.innerHTML = apps.map((a) => `<option value="${a.id}">${esc(a.name)} — ${esc(a.target)}</option>`).join("") + `<option value="new">＋ Nuevo activo…</option>`;
+  sel.value = appId ? String(appId) : apps.length ? String(apps[0].id) : "new";
+  $("w-error").textContent = "";
+  $("w-instruction").value = "";
+  $("w-budget").value = S.config.default_max_budget ?? "";
+  $("w-scope").value = "";
+  $("w-topic").textContent = "→ " + S.config.topics.request;
+  S.wizard = { template: "full", mode: "quick", instructionTouched: false, instr: "free" };
+  wizardAppChanged();
+  applyTemplate("full");
+  if (preset) {
+    S.wizard = { template: null, mode: preset.mode || "standard", instructionTouched: true, instr: "free" };
+    $("w-instruction").value = preset.instruction;
+    renderWizardOptions();
+    schedulePreview();
+  }
+  $("wizard").showModal();
+  // The embedded builder renders after showModal(): it needs the dialog laid
+  // out to size its columns.
+  wizardBuilderMounted(false);
+}
+function closeWizard() { $("wizard").close(); }
+
+// The builder embedded in the wizard shares state and handlers with the
+// standalone page. On first use it copies the free-text instruction (if any)
+// into the builder's project-name-less context is NOT attempted: the builder
+// fills its own fields, and the free text and builder output replace each other.
+async function wizardBuilderMounted(render = true) {
+  const box = $("w-instr-builder");
+  if (!box) return;
+  if (S.wizard.instr !== "builder") { box.style.display = "none"; box.innerHTML = ""; return; }
+  box.style.display = "";
+  bDialog = true;
+  try { await bEnsure(); } catch (e) { box.innerHTML = `<div class="banner bad"><div>${esc(e.message)}</div></div>`; bDialog = false; return; }
+  if (!box.dataset.ready || box.dataset.tpl !== S.builder.template) {
+    box.classList.add("w-bwrap");
+    box.innerHTML = `${bPageHTML()}
+      <div class="w-emb-actions">
+        <button class="ghost" onclick="builderReset()">Restablecer</button>
+        <button onclick="builderWizardUse()">Usar esta instrucción →</button>
+        <span class="muted small">Se rellena aquí y, al confirmar, sale en el mensaje de Kafka.</span>
+      </div>`;
+    box.dataset.ready = "1";
+    box.dataset.tpl = S.builder.template;
+  } else {
+    // Same template: keep the DOM, only re-sync the section markup (fields may
+    // have moved after a server re-render).
+    const inner = bPageHTML();
+    const tpl = box.querySelector(".builder");
+    const tplNew = new DOMParser().parseFromString(`<div id="x">${inner}</div>`, "text/html").querySelector(".builder");
+    tpl.replaceWith(tplNew);
+  }
+  makeClickablesAccessible(box);
+  renderWizardOptions();
+  if (render) builderRender(true);
+}
+
+function wizardInstrSource(kind) {
+  S.wizard.instr = kind;
+  const free = $("w-instr-free"), emb = $("w-instr-builder");
+  const on = kind === "free";
+  free.style.display = on ? "" : "none";
+  if (emb) {
+    emb.style.display = on ? "none" : "";
+    if (!on) { emb.innerHTML = ""; emb.dataset.ready = ""; emb.dataset.tpl = ""; }
+  }
+  $("w-mode-free").classList.toggle("active", on);
+  $("w-mode-builder").classList.toggle("active", !on);
+  if (on) { schedulePreview(); }
+  else wizardBuilderMounted(true).catch((e) => toast(e.message, true));
+}
+
+// Pull the builder output into the wizard text and switch to free mode so the
+// user can tweak it before launching.
+async function builderWizardUse() {
+  const text = await builderReady();
+  if (!text) return;
+  S.wizard.instructionTouched = true;
+  wizardInstrSource("free");
+  $("w-instruction").value = text;
+  schedulePreview();
+  toast("Instrucción del builder aplicada. Revisa el mensaje en el paso 5.");
+}
+function wizardAppChanged() {
+  const v = $("w-app").value;
+  $("w-newapp").style.display = v === "new" ? "" : "none";
+  const app = (S._apps || []).find((a) => String(a.id) === v);
+  $("w-target").value = app ? app.target : "";
+  wizardTargetChanged();
+}
+function wizardTargetChanged() {
+  // Keep the {target} placeholder of an untouched template in sync.
+  if (!S.wizard.instructionTouched) applyTemplate(S.wizard.template, true);
+  schedulePreview();
+}
+function renderWizardOptions() {
+  $("w-templates").innerHTML = S.config.templates.map((t) =>
+    `<div class="option ${S.wizard.template === t.id ? "active" : ""}" onclick="applyTemplate('${t.id}')"><b>${esc(t.name)}</b><span>${esc(t.description)}</span></div>`).join("");
+  $("w-modes").innerHTML = S.config.scan_modes.map((m) =>
+    `<div class="option ${S.wizard.mode === m.id ? "active" : ""}" onclick="S.wizard.mode='${m.id}';renderWizardOptions();schedulePreview()"><b>${esc(m.name)}</b><span>${esc(m.description)}</span></div>`).join("");
+}
+function applyTemplate(id, keepMode = false) {
+  const t = S.config.templates.find((x) => x.id === id);
+  if (!t) return;
+  S.wizard.template = id;
+  if (!keepMode) S.wizard.mode = t.scan_mode;
+  const target = $("w-target").value.trim() || "<target>";
+  $("w-instruction").value = t.instruction.replaceAll("{target}", target);
+  S.wizard.instructionTouched = false;
+  renderWizardOptions();
+  schedulePreview();
+}
+function wizardBody() {
+  const budget = $("w-budget").value.trim();
+  return {
+    target: $("w-target").value.trim(),
+    scan_mode: S.wizard.mode,
+    instruction: $("w-instruction").value.trim() || null,
+    max_budget: budget ? Number(budget) : null,
+    scope_mode: $("w-scope").value || null,
+  };
+}
+function schedulePreview() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(async () => {
+    try {
+      const r = await api("/manage/scans/preview", { method: "POST", body: wizardBody() });
+      $("w-preview").textContent = JSON.stringify(r.payload, null, 2);
+      $("w-error").textContent = "";
+    } catch (e) { $("w-preview").textContent = "—"; }
+  }, 250);
+}
+async function launchFromWizard() {
+  const btn = $("w-launch");
+  const body = wizardBody();
+  $("w-error").textContent = "";
+  if (!body.target) { $("w-error").textContent = "Indica un target."; return; }
+  if (/<[A-ZÁÉÍÓÚ]+>/.test(body.instruction || "")) { $("w-error").textContent = "Rellena los <PLACEHOLDERS> de la instrucción."; return; }
+  if (/\{\{(SELECT|TEXT)_[A-Z0-9_]+\}\}/.test(body.instruction || "")) { $("w-error").textContent = "La instrucción tiene {{PLACEHOLDERS}} sin resolver: complétala en el builder."; return; }
+  btn.disabled = true;
+  try {
+    let appId = $("w-app").value;
+    if (appId === "new") {
+      const name = $("w-name").value.trim() || body.target;
+      const app = await api("/manage/apps", { method: "POST", body: { name, target: body.target, environment: $("w-env").value.trim() || null } });
+      appId = app.id;
+    }
+    const scan = await api(`/manage/apps/${appId}/scans`, { method: "POST", body });
+    closeWizard();
+    toast(`Escaneo #${scan.id} publicado en ${S.config.topics.request}`);
+    go(`#/scans/${scan.id}`);
+  } catch (e) {
+    $("w-error").textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Instruction builder ──────────────────────────────────────────────────
+// Fills the six V9 templates (Web, API, Authorization and their expanded variants).
+// The server renders the text (/manage/instruction-builder/render); values persist
+// per browser.
+const BUILDER_KEY = "strix.builder";
+// The builder lives on its own page and, with bDialog, inside the new-scan
+// dialog. Same markup and handlers; only the element ids differ so the two
+// never collide — bEl() maps ids to the active context.
+let bDialog = false;
+const bEl = (id) => (bDialog ? "wb-" : "b-") + id; // "f-"/"e-" = field/error of ph
+let builderTimer = null;
+function loadBuilder() { try { return JSON.parse(localStorage.getItem(BUILDER_KEY) || "null"); } catch { return null; } }
+function saveBuilder() {
+  // A value the server flagged as a possible secret stays in memory only: it must
+  // not survive in browser storage.
+  const flagged = S.builder.flagged || {};
+  const values = Object.fromEntries(Object.entries(S.builder.values).filter(([ph]) => !flagged[ph]));
+  try { localStorage.setItem(BUILDER_KEY, JSON.stringify({ template: S.builder.template, values })); } catch { /* private mode */ }
+}
+const bTemplate = () => S.builderCfg.templates.find((t) => t.id === S.builder.template) || S.builderCfg.templates[0];
+const bFields = () => bTemplate().sections.flatMap((s) => s.fields);
+const bVal = (ph) => (S.builder.values[ph] ||= {});
+function bTouched(ph) {
+  const v = S.builder.values[ph] || {};
+  return !!(v.na || (v.value || "").trim() || (v.selected || []).length || (v.custom || "").trim());
+}
+function builderDefaults() {
+  // Catalog defaults (conservative safety selections) apply once per field.
+  Object.entries(S.builderCfg.fields).forEach(([ph, f]) => {
+    if (f.default && !S.builder.values[ph]) S.builder.values[ph] = { selected: [...f.default] };
+  });
+}
+
+async function viewBuilder(view) {
+  setTitle("Builder de instrucciones", "Instrucciones");
+  bDialog = false;
+  await bEnsure();
+  $("top-actions").innerHTML = `
+    <button class="ghost" onclick="builderReset()">Restablecer</button>
+    <button onclick="builderCopy()">Copiar</button>
+    <button onclick="builderDownload()">Descargar .md</button>
+    <button class="primary" onclick="builderUse()">Usar en un escaneo →</button>`;
+  view.innerHTML = bPageHTML();
+  builderRender(true);
+}
+
+// Everything the builder needs that is not page-specific: config, state and
+// the catalog defaults. Shared by the standalone page and the dialog.
+async function bEnsure() {
+  if (!S.builderCfg) S.builderCfg = await api("/manage/instruction-builder");
+  if (!S.builder) {
+    const saved = loadBuilder() || {};
+    S.builder = { template: saved.template || "web", values: saved.values || {}, result: null, showAll: false, out: "text", flagged: {} };
+  }
+  builderDefaults();
+}
+
+function bPageHTML() {
+  const tpl = bTemplate();
+  return `
+    <div class="options">${S.builderCfg.templates.map((t) => `
+      <div class="option ${t.id === tpl.id ? "active" : ""}" onclick="builderTemplate('${t.id}')"><b>${esc(t.name)}</b><span>${esc(t.description)}</span></div>`).join("")}
+    </div>
+    <div class="b-note mb"><b>Las selecciones son obligatorias.</b> Si una no aplica, márcala <b>N/A</b> con un motivo concreto. Los campos de texto son opcionales: si los dejas vacíos, su línea desaparece de la instrucción. No inventes datos ni pongas contraseñas, tokens o datos reales. Los campos comunes se conservan al cambiar de plantilla.</div>
+    <div class="builder">
+      <div>${tpl.sections.map((s) => `
+        <div class="card mb"><div class="card-h"><h3>${esc(s.title)}</h3><span class="sec-count">${s.fields.length} campo${s.fields.length > 1 ? "s" : ""}</span></div>
+          <div class="card-b">${s.fields.map(builderField).join("")}</div></div>`).join("")}
+      </div>
+      <div class="b-side card" id="${bEl("outbox")}">
+        <div class="card-h"><h3>Instrucción</h3><span class="muted small" id="${bEl("progress")}"></span><div style="flex:1"></div>
+          <span class="chips">${[["text", "Texto"], ["view", "Vista"]].map(([k, l]) =>
+            `<span class="chip ${S.builder.out === k ? "active" : ""}" data-out="${k}" onclick="builderOut('${k}')">${l}</span>`).join("")}</span></div>
+        <div class="card-b">
+          <div id="${bEl("status")}"></div>
+          <div id="${bEl("out")}" class="mt"></div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function builderField(ph) {
+  const f = S.builderCfg.fields[ph];
+  if (!f) return `<div class="bf"><span class="err">Sin definición: ${esc(ph)}</span></div>`;
+  const v = S.builder.values[ph] || {};
+  // A field that cannot be N/A must never render the reason box, even if an old
+  // saved value still carries na=true.
+  const isNa = v.na && f.allow_na !== false;
+  const head = (extra = "") => `<div class="bf-head"><b>${esc(f.label)}</b><span class="mono ph">{{${esc(ph)}}}</span>${extra}</div>`;
+  const required = S.builderCfg.mandatory.includes(ph);
+  const na = !required
+    ? `<span class="muted small">opcional · vacío = sin línea</span>`
+    : f.allow_na === false ? ""
+    : `<label class="bf-na"><input type="checkbox" ${isNa ? "checked" : ""} onchange="builderNa('${ph}', this.checked)" /> N/A</label>`;
+  const hint = `<div class="hint"><span>${esc(f.fill_in)}</span><span class="bf-req">${esc(f.required)}</span></div>`;
+  let body;
+  if (isNa) {
+    body = `<input value="${esc(v.na_reason || "")}" placeholder="Motivo concreto por el que no aplica (mín. ${S.builderCfg.min_na_reason} caracteres)" oninput="builderInput('${ph}','na_reason',this.value)" />`;
+  } else if (f.type === "select") {
+    const sel = v.selected || [];
+    body = `<div class="chips">${f.options.map((o) => {
+      const i = sel.indexOf(o.id);
+      return `<span class="chip ${i >= 0 ? "active" : ""}" title="${esc(o.id)}" onclick="builderToggle('${ph}','${o.id}')">${f.ordered && i >= 0 ? `<b>${i + 1}</b>` : ""}${esc(o.label)}</span>`;
+    }).join("")}</div>
+      ${f.allow_custom ? `<input class="custom" value="${esc(v.custom || "")}" placeholder="${esc(f.custom_label || `Texto adicional (opcional). P. ej.: ${f.example}`)}" oninput="builderInput('${ph}','custom',this.value)" />` : ""}`;
+  } else if (f.kind === "text") {
+    body = `<textarea class="bf-text" rows="3" placeholder="P. ej.: ${esc(f.example)}" oninput="builderInput('${ph}','value',this.value)">${esc(v.value || "")}</textarea>`;
+  } else {
+    body = `<input ${f.kind === "number" ? 'type="number" min="1" step="1"' : ""} value="${esc(v.value || "")}" placeholder="P. ej.: ${esc(f.example)}" oninput="builderInput('${ph}','value',this.value)" />`;
+  }
+  const sub = f.type === "select" ? `<span class="muted small">${f.selection === "single" ? "una opción" : f.ordered ? "varias, en orden de clic" : "varias"}</span>` : "";
+  return `<div class="bf" id="${bEl("f-")}${ph}">${head(sub + `<span class="bf-sp"></span>` + na)}${hint}${body}<div class="err small" id="${bEl("e-")}${ph}" style="margin-top:4px"></div></div>`;
+}
+function builderRefreshField(ph) {
+  const el = $(`${bEl("f-")}${ph}`);
+  if (el) el.outerHTML = builderField(ph);
+}
+function builderTemplate(id) {
+  S.builder.template = id;
+  S.builder.showAll = false;
+  saveBuilder();
+  if (bDialog) wizardBuilderMounted(true).catch((e) => toast(e.message, true));
+  else render();
+}
+function builderOut(kind) {
+  S.builder.out = kind;
+  document.querySelectorAll(`#${bEl("outbox")} .chip[data-out]`).forEach((el) => el.classList.toggle("active", el.dataset.out === kind));
+  builderShowResult();
+}
+function builderInput(ph, key, value) { bVal(ph)[key] = value; builderRender(); }
+function builderNa(ph, on) { bVal(ph).na = on; builderRefreshField(ph); builderRender(); }
+function builderToggle(ph, id) {
+  const f = S.builderCfg.fields[ph];
+  const v = bVal(ph);
+  let sel = v.selected || [];
+  if (sel.includes(id)) sel = sel.filter((x) => x !== id);
+  else if (f.selection === "single") sel = [id];
+  else if (f.options.find((o) => o.id === id)?.exclusive) sel = [id];
+  else {
+    const group = f.options.find((o) => o.id === id)?.group;
+    if (group) sel = sel.filter((x) => f.options.find((o) => o.id === x)?.group !== group);
+    sel = [...sel, id];
+  }
+  v.selected = sel;
+  builderRefreshField(ph);
+  builderRender();
+}
+function builderRender(now = false) {
+  clearTimeout(builderTimer);
+  builderTimer = setTimeout(() => builderFresh().catch((e) => {
+    if ($(bEl("status"))) $(bEl("status")).innerHTML = `<div class="banner bad"><div>${esc(e.message)}</div></div>`;
+  }), now ? 0 : 250);
+}
+function builderShowResult() {
+  const r = S.builder.result;
+  if (!r || !$(bEl("out")) || r.template !== S.builder.template) return;
+  const fields = bFields();
+  const issues = Object.keys(r.issues);
+  const required = fields.filter((ph) => S.builderCfg.mandatory.includes(ph));
+  $(bEl("progress")).textContent = `${required.length - issues.length} / ${required.length} campos`;
+  fields.forEach((ph) => {
+    const el = $(`${bEl("e-")}${ph}`);
+    if (!el) return;
+    const show = r.issues[ph] && (bTouched(ph) || S.builder.showAll);
+    el.textContent = show ? r.issues[ph] : "";
+    $(`${bEl("f-")}${ph}`).classList.toggle("bad", !!show);
+  });
+  const label = (ph) => S.builderCfg.fields[ph]?.label || ph;
+  const warn = r.warnings.map((w) => `<div class="banner bad mb"><div><b>${esc(label(w.field))}</b>: ${esc(w.message)}</div></div>`).join("");
+  $(bEl("status")).innerHTML = warn + (r.complete
+    ? `<div class="banner run"><div><b>Lista.</b> Todos los placeholders están resueltos.</div></div>`
+    : `<div class="banner warn"><div><b>Faltan ${issues.length} campo${issues.length > 1 ? "s" : ""}</b>
+        <div class="b-issues">${issues.map((ph) => `<a onclick="builderFocus('${ph}')">${esc(label(ph))}</a>`).join("")}</div></div></div>`);
+  const mark = (html) => html.replace(/\{\{[A-Z0-9_]+\}\}/g, (m) => `<mark>${m}</mark>`);
+  $(bEl("out")).innerHTML = S.builder.out === "view"
+    ? `<div class="prose">${mark(md(r.instruction))}</div>`
+    : `<pre>${mark(esc(r.instruction))}</pre>`;
+}
+function builderFocus(ph) {
+  S.builder.showAll = true;
+  builderShowResult();
+  const el = $(`${bEl("f-")}${ph}`);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  el.querySelector("input:not([type=checkbox]), textarea")?.focus({ preventScroll: true });
+}
+// The finished instruction, or null (and the gaps highlighted) if incomplete.
+async function builderReady() {
+  try { await builderFresh(); } catch (e) { toast(e.message, true); return null; }
+  const r = S.builder.result;
+  if (!r.complete) {
+    S.builder.showAll = true;
+    builderShowResult();
+    const n = Object.keys(r.issues).length;
+    toast(`Faltan ${n} campo${n > 1 ? "s" : ""} por completar (o marcar N/A con motivo).`, true);
+    builderFocus(Object.keys(r.issues)[0]);
+    return null;
+  }
+  if (r.warnings.length && !(await confirmDlg("Posibles secretos",
+    "La instrucción parece contener credenciales o tokens. Se publicará en Kafka y la leerá el LLM. ¿Seguir de todos modos?"))) return null;
+  return r.instruction;
+}
+async function builderFresh() {
+  // Called directly by copy/use/download so they never act on a stale debounce.
+  clearTimeout(builderTimer);
+  const values = {};
+  bFields().forEach((ph) => { if (S.builder.values[ph]) values[ph] = S.builder.values[ph]; });
+  const seq = (S.builder.seq = (S.builder.seq || 0) + 1);
+  const r = await api("/manage/instruction-builder/render", { method: "POST", body: { template: S.builder.template, values } });
+  if (seq !== S.builder.seq) return; // a newer render is on its way
+  S.builder.result = r;
+  // After the render, so the secret warnings are known before persisting.
+  S.builder.flagged = Object.fromEntries(r.warnings.map((w) => [w.field, true]));
+  saveBuilder();
+  builderShowResult();
+}
+async function builderUse() {
+  const text = await builderReady();
+  if (text) openWizard(null, { instruction: text, mode: bTemplate().scan_mode });
+}
+async function builderCopy() {
+  const text = await builderReady();
+  if (!text) return;
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    // Clipboard API needs a secure context; plain http inside the cluster does not have one.
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+  }
+  toast("Instrucción copiada");
+}
+async function builderDownload() {
+  const text = await builderReady();
+  if (!text) return;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
+  a.download = `instruction-${S.builder.template}.md`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+async function builderReset() {
+  if (!(await confirmDlg("Restablecer", "Se borran todos los valores del builder (de todas las plantillas) en este navegador."))) return;
+  S.builder.values = {};
+  S.builder.showAll = false;
+  S.builder.flagged = {};
+  saveBuilder();
+  if (bDialog) { document.getElementById("w-instr-builder").dataset.ready = ""; wizardBuilderMounted(true).catch(() => {}); }
+  else render();
+}
+
+// ── Boot ─────────────────────────────────────────────────────────────────
+window.addEventListener("hashchange", () => { S.selected.clear(); render(); });
+setInterval(() => {
+  const modalOpen = $("wizard").open || $("confirm").open;
+  if (S.hasActive && !modalOpen && !document.hidden) render();
+}, 5000);
+setInterval(() => { if (!document.hidden) refreshSide(); }, 15000);
+api("/manage/config").then((c) => { S.config = c; render(); }).catch(() => render());
+</script>
+</body>
+</html>

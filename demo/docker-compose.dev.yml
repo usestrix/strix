@@ -1,0 +1,95 @@
+# Infra local para probar el frontal + worker/launcher (Camino A).
+#
+# Levanta Kafka (KRaft, sin ZooKeeper), Postgres, MinIO (S3) y OWASP Juice Shop
+# como target de práctica. El frontal y el worker/launcher corren en el HOST
+# (uv run ...) y se conectan a estos servicios por localhost.
+#
+#   docker compose -f demo/docker-compose.dev.yml up -d
+#   docker compose -f demo/docker-compose.dev.yml down        # (-v para borrar datos)
+
+services:
+  kafka:
+    image: apache/kafka:3.9.2
+    hostname: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      # KRaft single-node: broker + controller
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+
+      # Listener para el controller, comunicación interna y acceso desde el host.
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LISTENERS: CONTROLLER://:29093,PLAINTEXT://:19092,PLAINTEXT_HOST://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092,PLAINTEXT_HOST://localhost:9092
+
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+
+      # Single-node: factor de replicación 1.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+      # ID fijo para el cluster KRaft.
+      CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
+
+      # Persistencia.
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+  postgres:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: strix
+      POSTGRES_PASSWORD: strix
+      POSTGRES_DB: strix
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U strix"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio12345
+    volumes:
+      - minio_data:/data
+
+  minio-init:
+    image: pgsty/mc:RELEASE.2026-09-16T00-00-00Z
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 minio minio12345; do sleep 1; done;
+      mc mb --ignore-existing local/strix-artifacts;
+      echo 'bucket strix-artifacts listo';
+      "
+
+  # Target de práctica (OWASP Juice Shop) en http://localhost:3000
+  juice-shop:
+    image: bkimminich/juice-shop
+    ports:
+      - "3000:3000"
+
+volumes:
+  kafka_data:
+  pg_data:
+  minio_data:

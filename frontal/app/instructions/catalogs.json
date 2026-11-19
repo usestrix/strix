@@ -1,0 +1,633 @@
+{
+  "_comment": "Options for every {{SELECT_*}} placeholder of the instruction templates. selection: single | multi. ordered: the order of selection is meaningful. allow_custom: free text is appended after the selected options. instruction: the sentence inserted in the instruction. default: pre-selected ids (conservative safety defaults only). requires_review: the operator must confirm the value.",
+  "SELECT_PRIORITIES": {
+    "label": "Investigation priorities (in order)",
+    "fill_in": "Select the ordered investigation priorities from the matching catalogs.json entry. Preserve the catalog IDs and selection rules.",
+    "required": "an ordered list from catalogs.json that reflects business risk and engagement goals.",
+    "example": "authorization first, then sensitive-data exposure, then input validation.",
+    "selection": "multi",
+    "options": [
+      {
+        "id": "untrusted_entrypoints",
+        "label": "Untrusted entry points",
+        "instruction": "Prioritize entry points reachable by unauthenticated or ordinary users"
+      },
+      {
+        "id": "trust_boundaries",
+        "label": "Roles and tenant boundaries",
+        "instruction": "Prioritize crossings of role, ownership and tenant boundaries"
+      },
+      {
+        "id": "sensitive_assets",
+        "label": "Sensitive assets",
+        "instruction": "Prioritize paths involving the sensitive assets identified in the project context"
+      },
+      {
+        "id": "critical_flows",
+        "label": "Critical business flows",
+        "instruction": "Prioritize the supplied critical business flows"
+      },
+      {
+        "id": "recent_changes",
+        "label": "Recent changes",
+        "instruction": "Prioritize the supplied changes without expanding the configured source scope"
+      }
+    ],
+    "ordered": true,
+    "allow_custom": true,
+    "default": [
+      "trust_boundaries",
+      "sensitive_assets"
+    ]
+  },
+  "SELECT_API_TYPE": {
+    "label": "API style or interface type",
+    "fill_in": "Select the authorized API interface types from the matching catalogs.json entry. Preserve the catalog IDs and selection rules.",
+    "required": "all applicable API-type IDs from catalogs.json.",
+    "example": "REST and GraphQL.",
+    "selection": "multi",
+    "options": [
+      {
+        "id": "rest",
+        "label": "REST",
+        "instruction": "REST or REST-like HTTP API."
+      },
+      {
+        "id": "graphql",
+        "label": "GraphQL",
+        "instruction": "GraphQL API."
+      },
+      {
+        "id": "soap",
+        "label": "SOAP",
+        "instruction": "SOAP web service."
+      },
+      {
+        "id": "grpc",
+        "label": "gRPC",
+        "instruction": "gRPC service."
+      },
+      {
+        "id": "websocket",
+        "label": "WebSocket",
+        "instruction": "WebSocket interface."
+      },
+      {
+        "id": "other",
+        "label": "Other",
+        "instruction": "Another explicitly described API or interface type."
+      }
+    ],
+    "allow_custom": true
+  },
+  "SELECT_USER_TYPES": {
+    "label": "User types",
+    "fill_in": "Select the relevant user populations from the matching catalogs.json entry. Preserve the catalog IDs and selection rules.",
+    "required": "all applicable user-type IDs from catalogs.json, including unauthenticated and privileged actors where authorized.",
+    "example": "anonymous, customer, support operator and administrator.",
+    "selection": "multi",
+    "options": [
+      {
+        "id": "customers",
+        "label": "Customers",
+        "instruction": "Customers using the application to access the organization's products or services"
+      },
+      {
+        "id": "employees",
+        "label": "Employees",
+        "instruction": "Employees using the application for internal business tasks"
+      },
+      {
+        "id": "collaborators",
+        "label": "External collaborators",
+        "instruction": "External collaborators, suppliers or partners using designated business workflows"
+      },
+      {
+        "id": "public_visitors",
+        "label": "Public visitors",
+        "instruction": "Public visitors using features that do not require an account"
+      },
+      {
+        "id": "corporate_standard",
+        "label": "Standard corporate user",
+        "instruction": "Standard corporate user."
+      },
+      {
+        "id": "corporate_admin",
+        "label": "Corporate administrator or manager",
+        "instruction": "Corporate administrator or manager."
+      },
+      {
+        "id": "external_user",
+        "label": "External user",
+        "instruction": "External user."
+      },
+      {
+        "id": "no_user_self_registration",
+        "label": "No supplied user; registration permitted",
+        "instruction": "No user is supplied and creation of a test user is permitted."
+      }
+    ],
+    "allow_custom": true
+  },
+  "SELECT_INTERNET_EXPOSURE": {
+    "label": "Declared Internet exposure",
+    "fill_in": "Select the declared exposure model from the matching catalogs.json entry. Preserve the catalog IDs and selection rules.",
+    "required": "the applicable catalogs.json value for external, internal, mixed or unknown exposure, based on supplied evidence.",
+    "example": "mixed: public login and private administration paths.",
+    "selection": "single",
+    "options": [
+      {
+        "id": "internet_reachable",
+        "label": "Internet reachable",
+        "instruction": "The specified application is declared reachable from the Internet; this does not imply unauthenticated access or authorize other assets"
+      },
+      {
+        "id": "restricted_network",
+        "label": "Private or restricted network",
+        "instruction": "The specified application is declared reachable only through a private network, VPN or approved network access control; verify relevant exposure assumptions within scope"
+      },
+      {
+        "id": "mixed",
+        "label": "Mixed exposure",
+        "instruction": "The application has both Internet-reachable and restricted surfaces; use the per-asset exposure details in the authorized scope and do not assume a shared exposure level"
+      },
+      {
+        "id": "unknown",
+        "label": "Not established",
+        "instruction": "Internet exposure has not been established; do not treat missing deployment evidence as proof of private-network isolation"
+      }
+    ],
+    "allow_custom": true,
+    "default": [
+      "unknown"
+    ]
+  },
+  "SELECT_ASSET_SENSITIVITY": {
+    "label": "Asset sensitivity",
+    "fill_in": "Select the sensitivity of affected assets and data from the matching catalogs.json entry. Preserve the catalog IDs and selection rules.",
+    "required": "the applicable catalogs.json classification supported by the engagement context.",
+    "example": "high: personal and financial records.",
+    "selection": "single",
+    "options": [
+      {
+        "id": "public",
+        "label": "Public",
+        "instruction": "The relevant information is intentionally public; integrity and availability may still matter"
+      },
+      {
+        "id": "internal",
+        "label": "Internal",
+        "instruction": "The relevant information is intended for internal users only; this does not establish network exposure"
+      },
+      {
+        "id": "confidential",
+        "label": "Confidential",
+        "instruction": "The assets include confidential personal, customer or commercial information"
+      },
+      {
+        "id": "restricted",
+        "label": "Restricted",
+        "instruction": "The assets include highly restricted data, signing material or privileged credentials"
+      },
+      {
+        "id": "unknown",
+        "label": "Not established",
+        "instruction": "Asset sensitivity has not been established; do not assume data is public"
+      }
+    ],
+    "allow_custom": true,
+    "default": [
+      "unknown"
+    ]
+  },
+  "SELECT_ASSESSMENT_TYPE": {
+    "label": "Assessment approach",
+    "fill_in": "Select the assessment approach from the matching catalogs.json entry. Preserve the catalog IDs and selection rules.",
+    "required": "the applicable catalogs.json value, such as black-box, white-box or combined, consistent with available access.",
+    "example": "combined: source review plus controlled live validation.",
+    "selection": "single",
+    "options": [
+      {
+        "id": "source_only",
+        "label": "Source review only",
+        "instruction": "Review authorized source only; do not test live deployments or connect to target services"
+      },
+      {
+        "id": "live",
+        "label": "Live service assessment",
+        "instruction": "Assess only the explicitly authorized live services using the supplied access and activity limits"
+      },
+      {
+        "id": "combined",
+        "label": "Source and live service assessment",
+        "instruction": "Correlate authorized source with the explicitly authorized live deployment; neither expands the other scope"
+      }
+    ],
+    "allow_custom": true
+  },
+  "SELECT_PROTOCOLS": {
+    "label": "Authorized protocols and transports",
+    "fill_in": "Select the authorized protocols and transports from the matching catalogs.json entry. Preserve the catalog IDs and selection rules.",
+    "required": "all applicable protocol IDs from catalogs.json, limited to the explicit scope.",
+    "example": "HTTPS and WebSocket over the staging host.",
+    "selection": "multiple",
+    "options": [
+      {
+        "id": "https",
+        "label": "HTTPS",
+        "instruction": "HTTPS, only on the specified hosts, ports and paths"
+      },
+      {
+        "id": "http",
+        "label": "HTTP",
+        "instruction": "HTTP, only on the specified hosts, ports and paths; do not send credentials over plaintext unless explicitly approved"
+      },
+      {
+        "id": "websocket",
+        "label": "WebSocket",
+        "instruction": "WebSocket, only using explicitly specified ws/wss endpoints"
+      },
+      {
+        "id": "grpc",
+        "label": "gRPC",
+        "instruction": "gRPC, only on the specified endpoints with the explicitly approved transport security"
+      },
+      {
+        "id": "none",
+        "label": "No network testing",
+        "instruction": "No application protocol testing or target network access is authorized",
+        "exclusive": true
+      }
+    ],
+    "allow_custom": true
+  },
+  "SELECT_EXCLUSIONS": {
+    "label": "Out-of-scope assets, environments and data",
+    "fill_in": "Select assets, environments, operations and data that are out of scope from the matching catalogs.json entry. Preserve the catalog IDs and selection rules.",
+    "required": "explicit exclusions from catalogs.json plus project-specific boundaries where permitted.",
+    "example": "production, third-party identity provider and real customer records.",
+    "selection": "multi",
+    "options": [
+      {
+        "id": "third_parties",
+        "label": "Third-party services",
+        "instruction": "Exclude testing of third-party services, including identity, payment and messaging providers"
+      },
+      {
+        "id": "production",
+        "label": "Production assets",
+        "instruction": "Exclude production assets and production data"
+      },
+      {
+        "id": "administrative",
+        "label": "Administrative control planes",
+        "instruction": "Exclude infrastructure management and administrative control planes"
+      },
+      {
+        "id": "non_test_data",
+        "label": "Non-test accounts and tenants",
+        "instruction": "Exclude accounts, tenants and data not explicitly designated for testing"
+      }
+    ],
+    "allow_custom": true,
+    "default": [
+      "third_parties",
+      "production",
+      "non_test_data"
+    ]
+  },
+  "SELECT_PROHIBITED_ACTIONS": {
+    "label": "Prohibited activities",
+    "fill_in": "Select activities prohibited even on in-scope assets from the matching catalogs.json entry. Preserve the catalog IDs and selection rules.",
+    "required": "all prohibited-action IDs from catalogs.json and engagement-specific restrictions.",
+    "example": "no denial of service, brute force, destructive changes or bulk extraction.",
+    "selection": "multi",
+    "options": [
+      {
+        "id": "availability_attacks",
+        "label": "DoS and load testing",
+        "instruction": "Do not perform denial-of-service, stress or load testing"
+      },
+      {
+        "id": "credential_attacks",
+        "label": "Credential guessing",
+        "instruction": "Do not perform brute force, credential stuffing or password spraying"
+      },
+      {
+        "id": "destructive_changes",
+        "label": "Destructive or privileged changes",
+        "instruction": "Do not delete data, change permissions or make irreversible state changes"
+      },
+      {
+        "id": "external_effects",
+        "label": "Real-world side effects",
+        "instruction": "Do not trigger real payments, deliveries, emails or external webhooks"
+      },
+      {
+        "id": "bulk_collection",
+        "label": "Bulk data collection",
+        "instruction": "Do not collect entire datasets or extract data beyond the evidence handling limits"
+      },
+      {
+        "id": "persistence",
+        "label": "Persistence and lateral movement",
+        "instruction": "Do not establish persistence or pivot to other systems"
+      },
+      {
+        "id": "new_user_registration",
+        "label": "Registering new users",
+        "instruction": "Do not register new users."
+      },
+      {
+        "id": "purchase_process",
+        "label": "Purchase processes",
+        "instruction": "Do not perform purchase processes."
+      }
+    ],
+    "allow_custom": true,
+    "default": [
+      "availability_attacks",
+      "credential_attacks",
+      "destructive_changes",
+      "external_effects",
+      "bulk_collection",
+      "persistence"
+    ]
+  },
+  "SELECT_AUTHENTICATION_METHOD": {
+    "label": "Authentication system",
+    "fill_in": "Select the authentication mechanism used by the target from the matching catalogs.json entry. Preserve the catalog IDs and selection rules.",
+    "required": "the applicable catalogs.json value supported by supplied or observed evidence; do not infer the provider.",
+    "example": "OIDC with MFA for privileged roles.",
+    "selection": "single",
+    "options": [
+      {
+        "id": "openam",
+        "label": "OpenAM",
+        "instruction": "Authentication uses OpenAM; use relevant available skills and the supplied access procedure. Do not infer the realm, endpoints, token format or authorization model from the provider name"
+      },
+      {
+        "id": "entra_id",
+        "label": "Microsoft Entra ID",
+        "instruction": "Authentication uses Microsoft Entra ID; use relevant available skills and the supplied access procedure. Do not infer the tenant, app registration, grant flow or authorization model from the provider name"
+      },
+      {
+        "id": "ecommerce",
+        "label": "Ecommerce",
+        "instruction": "Authentication uses the project's Ecommerce authentication system; use relevant available skills and the supplied access procedure. Do not assume a specific vendor, protocol or login flow"
+      },
+      {
+        "id": "local",
+        "label": "Application-local",
+        "instruction": "Authentication is implemented locally by the application; follow the explicitly supplied local login, identity verification and session renewal instructions. Do not invent missing steps"
+      },
+      {
+        "id": "user_password",
+        "label": "Username and password",
+        "instruction": "Authentication uses a username and password according to the supplied access procedure."
+      }
+    ],
+    "allow_custom": true,
+    "default": [
+      "openam"
+    ]
+  },
+  "SELECT_OPERATIONAL_LIMITS": {
+    "label": "Operational limits",
+    "fill_in": "Select aggregate safety and traffic limits from the matching catalogs.json entry. Preserve the catalog IDs and selection rules.",
+    "required": "catalog selections and exact engagement limits for rate, concurrency, retries, lockouts, payload size and tool use.",
+    "example": "maximum 2 requests per second and 1 concurrent active scanner.",
+    "selection": "single",
+    "options": [
+      {
+        "id": "offline",
+        "label": "No target network traffic",
+        "instruction": "Do not send traffic to target services; use only approved offline source checks"
+      },
+      {
+        "id": "minimal",
+        "label": "Minimal traffic",
+        "instruction": "Across all agents, allow at most 1 request/second and 1 in-flight request; no automatic retries after HTTP 429, account lockout or repeated service errors"
+      },
+      {
+        "id": "low",
+        "label": "Low traffic",
+        "instruction": "Across all agents, allow at most 2 requests/second and 2 in-flight requests; no automatic retries after HTTP 429, account lockout or repeated service errors"
+      },
+      {
+        "id": "unlimited",
+        "label": "No specific traffic limit",
+        "instruction": "No specific traffic limit is declared; all other safety and stop conditions still apply."
+      }
+    ],
+    "allow_custom": true,
+    "requires_review": true,
+    "custom_label": "Restricciones concretas del cliente (p. ej.: máximo 2 req/s, 1 escáner, sin reintentos tras 429, ventana de 22:00 a 06:00).",
+    "custom_prefix": "engagement-specific limits"
+  },
+  "SELECT_COLLECTION_LIMITS": {
+    "label": "Evidence collection limits",
+    "fill_in": "Select evidence collection and retention limits from the matching catalogs.json entry. Preserve the catalog IDs and selection rules.",
+    "required": "allowed evidence types, redaction requirements, maximum volume, storage location and retention constraints.",
+    "example": "redacted request/response pairs only; no full database exports.",
+    "selection": "multiple",
+    "options": [
+      {
+        "id": "metadata_only",
+        "label": "Metadata only",
+        "instruction": "Retain only redacted metadata and source references; do not retain response bodies, screenshots, downloaded files or business records. Do not intentionally retrieve excluded data. These restrictions apply to all agents and capture tools; if a tool cannot comply, do not use it and record the limitation",
+        "group": "volume"
+      },
+      {
+        "id": "one_synthetic_record",
+        "label": "One synthetic record per finding",
+        "instruction": "Retain only the minimum redacted evidence needed, with at most one authorized synthetic business record per finding across all agents, files and capture tools. Do not collect real records or bulk datasets. If this prevents validation, record the limitation rather than exceeding the limit",
+        "group": "volume"
+      },
+      {
+        "id": "three_synthetic_records",
+        "label": "Up to three synthetic records per finding",
+        "instruction": "Retain only the minimum redacted evidence needed, with at most three authorized synthetic business records per finding across all agents, files and capture tools. Do not collect real records or bulk datasets. If this prevents validation, record the limitation rather than exceeding the limit",
+        "group": "volume"
+      },
+      {
+        "id": "minimum_necessary",
+        "label": "Minimum necessary information",
+        "instruction": "Collect only the minimum information necessary."
+      },
+      {
+        "id": "no_real_data",
+        "label": "No real data",
+        "instruction": "Do not collect real data."
+      },
+      {
+        "id": "redact_passwords",
+        "label": "Redact passwords",
+        "instruction": "Redact passwords from retained evidence."
+      },
+      {
+        "id": "redact_personal_data",
+        "label": "Redact personal data",
+        "instruction": "Redact personal data from retained evidence."
+      }
+    ],
+    "allow_custom": true,
+    "requires_review": true,
+    "custom_label": "Restricciones concretas del cliente (p. ej.: solo pares petición/respuesta redactados, sin volcados de base de datos, retención de 30 días).",
+    "custom_prefix": "engagement-specific collection restrictions"
+  },
+  "SELECT_STOP_CONDITIONS": {
+    "label": "Stop conditions",
+    "fill_in": "Select conditions that require testing to stop from the matching catalogs.json entry. Preserve the catalog IDs and selection rules.",
+    "required": "all applicable catalog conditions plus project-specific escalation triggers.",
+    "example": "stop on HTTP 429, lockout, service degradation, unexpected real data or uncertain scope.",
+    "selection": "multi",
+    "options": [
+      {
+        "id": "unexpected_real_data",
+        "label": "Unexpected real data",
+        "instruction": "Stop the affected activity on unexpected access to real or sensitive non-test data; do not continue collecting it"
+      },
+      {
+        "id": "service_degradation",
+        "label": "Service degradation",
+        "instruction": "Stop target traffic on degradation or repeated service errors plausibly attributable to testing"
+      },
+      {
+        "id": "rate_limit_lockout",
+        "label": "Rate limit or account lockout",
+        "instruction": "Stop the affected activity on HTTP 429 or account lockout; require approval before resuming"
+      },
+      {
+        "id": "scope_uncertainty",
+        "label": "Scope or permission uncertainty",
+        "instruction": "Stop the affected activity when ownership, scope or permission is uncertain"
+      },
+      {
+        "id": "window_expired",
+        "label": "Testing window ended",
+        "instruction": "Stop testing when the authorized window expires or authorization is withdrawn"
+      },
+      {
+        "id": "no_response",
+        "label": "No response",
+        "instruction": "Stop the affected activity when the service does not respond."
+      },
+      {
+        "id": "response_time",
+        "label": "Unacceptable response time",
+        "instruction": "Stop the affected activity when response times indicate possible degradation."
+      },
+      {
+        "id": "blocking",
+        "label": "Blocking",
+        "instruction": "Stop the affected activity when access, an account, or the testing path is blocked."
+      }
+    ],
+    "allow_custom": true,
+    "default": [
+      "unexpected_real_data",
+      "service_degradation",
+      "rate_limit_lockout",
+      "scope_uncertainty",
+      "window_expired"
+    ]
+  },
+  "SELECT_REPORT_LANGUAGE": {
+    "label": "Report language",
+    "fill_in": "Select the required report language from the matching catalogs.json entry. Preserve the catalog IDs and selection rules.",
+    "required": "one supported language selection from catalogs.json.",
+    "example": "English.",
+    "selection": "single",
+    "options": [
+      {
+        "id": "en",
+        "label": "English",
+        "instruction": "English"
+      },
+      {
+        "id": "es",
+        "label": "Spanish",
+        "instruction": "Spanish"
+      },
+      {
+        "id": "pt",
+        "label": "Portuguese",
+        "instruction": "Portuguese"
+      }
+    ],
+    "allow_custom": true,
+    "default": [
+      "en"
+    ]
+  },
+  "SELECT_AUDIENCE": {
+    "label": "Intended audience",
+    "fill_in": "Select the intended report audience from the matching catalogs.json entry. Preserve the catalog IDs and selection rules.",
+    "required": "all applicable audience IDs from catalogs.json.",
+    "example": "security and engineering.",
+    "selection": "multi",
+    "options": [
+      {
+        "id": "security",
+        "label": "Security team",
+        "instruction": "Security engineers and AppSec reviewers"
+      },
+      {
+        "id": "engineering",
+        "label": "Engineering team",
+        "instruction": "Developers and technical maintainers responsible for remediation"
+      },
+      {
+        "id": "product",
+        "label": "Product and business owners",
+        "instruction": "Product and business owners responsible for the affected workflows"
+      },
+      {
+        "id": "leadership",
+        "label": "Leadership and risk owners",
+        "instruction": "Leadership and risk owners who need a concise explanation of demonstrated impact"
+      }
+    ],
+    "allow_custom": true,
+    "default": [
+      "security",
+      "engineering"
+    ]
+  },
+  "SELECT_SUMMARY_FOCUS": {
+    "label": "Summary focus",
+    "fill_in": "Select the desired summary emphasis from the matching catalogs.json entry. Preserve the catalog IDs and selection rules.",
+    "required": "applicable catalogs.json values without suppressing findings, evidence or limitations.",
+    "example": "remediation, risk and coverage limitations.",
+    "selection": "multi",
+    "options": [
+      {
+        "id": "technical",
+        "label": "Technical findings",
+        "instruction": "Emphasize demonstrated weaknesses and affected components without replacing native report fields"
+      },
+      {
+        "id": "business_impact",
+        "label": "Business impact",
+        "instruction": "Explain demonstrated consequences for the supplied business workflows and assets without inflating technical severity"
+      },
+      {
+        "id": "remediation",
+        "label": "Remediation planning",
+        "instruction": "Highlight remediation recommendations and relevant dependencies without authorizing source changes"
+      },
+      {
+        "id": "coverage",
+        "label": "Coverage and limitations",
+        "instruction": "Highlight assessed scope, coverage limitations and unresolved proof gaps using the engine's native records"
+      }
+    ],
+    "allow_custom": true,
+    "default": [
+      "remediation",
+      "coverage"
+    ]
+  }
+}

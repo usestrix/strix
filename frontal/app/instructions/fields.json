@@ -1,0 +1,166 @@
+{
+  "_comment": "Free-text {{TEXT_*}} placeholders. kind: line (single line) | text (multi-line) | number (positive integer). A TEXT_ is optional: left empty, the line that carries it is removed. Set mandatory: true only where the instruction cannot exist without it.",
+  "TEXT_PROJECT_NAME": {
+    "label": "Project name",
+    "kind": "line",
+    "fill_in": "Document the project or service name and, optionally, the assessment identifier using project-specific information.",
+    "required": "a concise, non-secret name that uniquely identifies the engagement.",
+    "example": "Billing Portal - staging authorization review.",
+    "mandatory": true,
+    "allow_na": false
+  },
+  "TEXT_QUESTIONS_AND_RULES": {
+    "label": "Specific questions, critical workflows and business rules",
+    "kind": "text",
+    "fill_in": "Document specific questions, critical workflows and business rules using project-specific information.",
+    "required": "clear, testable questions and expected invariants, without secrets.",
+    "example": "Can a standard user approve a payment above the configured limit?."
+  },
+  "TEXT_AUTHORIZATION_TEST_CASES": {
+    "label": "Specific authorization test cases",
+    "kind": "text",
+    "fill_in": "Document explicit authorization test cases using project-specific information.",
+    "required": "acting label, target, action, expected decision, policy source, safe prerequisites and cleanup for each case.",
+    "example": "USER_A attempts to read ORDER_B; expected DENY per access matrix row 12."
+  },
+  "TEXT_APPLICATION_DESCRIPTION": {
+    "label": "Application description and main workflows",
+    "kind": "text",
+    "fill_in": "Document the application or API purpose and principal workflows using project-specific information.",
+    "required": "a project-specific description of users, business purpose, main flows and important trust boundaries.",
+    "example": "Customer portal for invoice submission, review and approval."
+  },
+  "TEXT_OTHER_API_TYPE": {
+    "label": "Other API style",
+    "kind": "text",
+    "fill_in": "Document an API style selected as other using project-specific information.",
+    "required": "a precise description of the interface, transport, framing and contract artifacts.",
+    "example": "custom TCP message protocol documented in protocol-v2.pdf."
+  },
+  "TEXT_API_ENVIRONMENTS_AND_VERSIONS": {
+    "label": "API environments and lifecycle status",
+    "kind": "text",
+    "fill_in": "Document API environments, versions and lifecycle status using project-specific information.",
+    "required": "active, deprecated, staging, production and shadow versions, with base paths and status.",
+    "example": "v2 active in staging; v1 deprecated but in scope for read-only checks."
+  },
+  "TEXT_API_DEPENDENCIES": {
+    "label": "API trust boundaries and dependencies",
+    "kind": "text",
+    "fill_in": "Document API trust boundaries and dependencies using project-specific information.",
+    "required": "gateways, upstream and downstream services, callbacks and third-party integrations, including scope status.",
+    "example": "API Gateway routes to Orders Service; payment provider is out of scope."
+  },
+  "TEXT_AUTHORIZATION_MODEL": {
+    "label": "Authorization model",
+    "kind": "text",
+    "fill_in": "Document the expected authorization design using project-specific information.",
+    "required": "roles, scopes, ownership rules, tenant boundaries, policy source and decision points; distinguish documented from inferred rules.",
+    "example": "customers access only owned orders; tenant admins access orders in their tenant."
+  },
+  "TEXT_ACCESS_MATRIX": {
+    "label": "Expected access-control matrix",
+    "kind": "text",
+    "fill_in": "Document the expected access-control matrix using project-specific information.",
+    "required": "actors or roles versus functions, resources, actions, ownership and tenant context, with allow or deny decisions and policy source.",
+    "example": "USER_A may read ORDER_A but must be denied access to ORDER_B."
+  },
+  "TEXT_CRITICAL_BUSINESS_FLOWS": {
+    "label": "Critical business flows",
+    "kind": "text",
+    "fill_in": "Document business flows with material authorization impact using project-specific information.",
+    "required": "ordered workflows, actors, assets, invariants and potential consequences.",
+    "example": "invoice approval and payment-release workflow."
+  },
+  "TEXT_FUNCTIONALITY_CRITICALITY": {
+    "label": "Functionality criticality",
+    "kind": "text",
+    "fill_in": "Document the criticality of functions under test using project-specific information.",
+    "required": "function-level business impact and rationale, distinguishing security from availability or usability concerns.",
+    "example": "payment release: critical; profile display: medium."
+  },
+  "TEXT_ADDITIONAL_RESOURCES": {
+    "label": "Additional workspace resources",
+    "kind": "text",
+    "fill_in": "Document additional workspace resources and when to use them using project-specific information.",
+    "required": "file names or references, their purpose, authority and consultation point; exclude secrets.",
+    "example": "Architecture.md for trust boundaries; roles.csv for expected permissions."
+  },
+  "TEXT_AUTHORIZED_TARGETS": {
+    "label": "Authorized targets and testing window",
+    "kind": "text",
+    "fill_in": "Document the exact authorized testing targets and window using project-specific information.",
+    "required": "precise URLs, hosts, ports, paths, repositories, branches, accounts, tenants, environments and approved window as applicable.",
+    "example": "https://staging.example.test, repository app/main, tenant TEST-01."
+  },
+  "TEXT_ACCOUNTS_AND_ROLES": {
+    "label": "Accounts, roles and tenants",
+    "kind": "text",
+    "fill_in": "Document designated test identities and authorization context using project-specific information.",
+    "required": "non-secret account labels, roles, privilege tiers, tenants, ownership context, permitted workflows and restrictions.",
+    "example": "USER_A: customer in TENANT_A; ADMIN_A: tenant administrator."
+  },
+  "TEXT_ACCESS_PROCEDURE": {
+    "label": "Credential access and login procedure",
+    "kind": "text",
+    "fill_in": "Document the approved credential and access procedure using project-specific information.",
+    "required": "how to obtain credentials securely, log in, complete MFA, renew sessions, log out and recover access; never include reusable secrets.",
+    "example": "Retrieve credentials from the approved vault, complete MFA, and use isolated browser profiles."
+  },
+  "TEXT_TEST_DATA": {
+    "label": "Authorized synthetic test data and ownership",
+    "kind": "text",
+    "fill_in": "Document authorized synthetic test data and ownership using project-specific information.",
+    "required": "approved records, identifiers, owners, allowed mutations, cleanup requirements and prohibited real data.",
+    "example": "ORDER_A owned by USER_A; creation and deletion allowed in staging."
+  },
+  "TEXT_API_DEFINITION": {
+    "label": "API contract or machine-readable definition",
+    "kind": "text",
+    "fill_in": "Document the machine-readable API contract using project-specific information.",
+    "required": "artifact name, format, version and location for OpenAPI, GraphQL SDL, WSDL/XSD, proto or equivalent.",
+    "example": "openapi-v2.yaml from the approved workspace."
+  },
+  "TEXT_VALID_REQUESTS_JSON": {
+    "label": "Valid-request corpus",
+    "kind": "text",
+    "fill_in": "Document the sanitized valid-request corpus using project-specific information.",
+    "required": "representative valid requests per operation with method, target, headers, parameters, body, role, sequence and expected response class; exclude secrets.",
+    "example": "valid-requests.json covering create, read, update and delete operations."
+  },
+  "TEXT_API_CLIENT_COLLECTION": {
+    "label": "Client collection and environment",
+    "kind": "text",
+    "fill_in": "Document the approved API client collection and environment using project-specific information.",
+    "required": "collection format, file reference, non-secret variables, base URLs and usage limitations.",
+    "example": "orders.postman_collection.json with staging.postman_environment.json."
+  },
+  "TEXT_ENDPOINT_INVENTORY": {
+    "label": "Endpoint and operation inventory",
+    "kind": "text",
+    "fill_in": "Document the authorized endpoint and operation inventory using project-specific information.",
+    "required": "versions, methods or operations, administrative and batch functions, jobs, webhooks, callbacks and authorized undocumented interfaces.",
+    "example": "GET /orders/{id}, POST /orders, admin batch export and order-status webhook."
+  },
+  "TEXT_EXPECTED_RESPONSES": {
+    "label": "Expected responses and error model",
+    "kind": "text",
+    "fill_in": "Document the expected success and error model using project-specific information.",
+    "required": "expected status or response classes, schemas, error semantics and relevant side effects for safe comparison.",
+    "example": "200 for owned objects, 403 for cross-tenant access, standardized error body."
+  },
+  "TEXT_API_WORKFLOWS": {
+    "label": "Business-flow and sequencing rules",
+    "kind": "text",
+    "fill_in": "Document API business flows and sequencing rules using project-specific information.",
+    "required": "ordered operations, prerequisites, state transitions, invariants and safe cleanup steps.",
+    "example": "create cart, add item, submit order, cancel before fulfilment."
+  },
+  "TEXT_ENGAGEMENT_CONTACTS": {
+    "label": "Engagement contacts and stop authority",
+    "kind": "text",
+    "fill_in": "Document engagement contacts, test window and stop authority using project-specific information.",
+    "required": "owner and escalation roles, approved window, communication channel and person authorized to stop testing; avoid unnecessary personal data.",
+    "example": "Application owner via SEC-ENG channel; testing window defined in change ticket."
+  }
+}

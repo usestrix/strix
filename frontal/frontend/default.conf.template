@@ -1,0 +1,60 @@
+# Strix frontend: serves the console and reverse-proxies everything else to the
+# backend (frontal/app, FastAPI), so the browser sees one origin and the
+# console's relative fetch("/manage/...") calls need no CORS.
+#
+# ${BACKEND_URL} and ${NGINX_LOCAL_RESOLVERS} are filled in at start by the
+# image's entrypoint (15-local-resolvers.envsh reads /etc/resolv.conf because the
+# Dockerfile sets NGINX_ENTRYPOINT_LOCAL_RESOLVERS; 20-envsubst-on-templates.sh
+# substitutes). envsubst only replaces variables that are set, so nginx's own
+# $host, $uri... are left alone.
+#
+# The backend is resolved per request (resolver + variable), not once at start:
+# the frontend boots even before the backend Service exists and answers 502
+# until it does. Because a resolver ignores resolv.conf "search" domains,
+# BACKEND_URL must be a full name in k8s (strix-frontal.strix-apps.svc.cluster.local).
+
+resolver ${NGINX_LOCAL_RESOLVERS} valid=30s ipv6=off;
+
+server {
+    listen 8080;
+    server_name _;
+
+    server_tokens off;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "same-origin" always;
+
+    # Run uploads/requests are small JSON; findings PATCH, scan launch...
+    client_max_body_size 2m;
+
+    # The console itself: the only thing this container owns.
+    location = / {
+        root /usr/share/nginx/html;
+        try_files /console.html =404;
+        add_header Cache-Control "no-cache" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "same-origin" always;
+    }
+
+    # Liveness of this container alone (the backend's is /health, proxied below).
+    location = /frontend-health {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # Everything else is the backend: /manage/* (REST API), /health,
+    # /runs/{id} + /api/* (Strix's transcript viewer, which reads the run files
+    # from the backend's volume).
+    location / {
+        set $backend "${BACKEND_URL}";
+        proxy_pass $backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+    }
+}

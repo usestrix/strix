@@ -1,0 +1,81 @@
+# Frontal de auditorías (audit.request / audit.result / audit.status) en local.
+# Se suma a docker-compose.dev.yml (Kafka, MinIO, Juice Shop) y añade MongoDB,
+# donde van los artefactos por defecto (AUDIT_STORE=s3 vuelve a MinIO):
+#
+#   docker compose -p demo -f demo/docker-compose.dev.yml -f demo/docker-compose.audit.yml up -d --build frontend frontal
+#
+# Lo normal es usar ./demo/run-audit-local.sh, que levanta todo esto y además el
+# orquestador (k8s/kafka_orchestrator.py) en el host.
+#
+#   frontend (nginx)  http://localhost:8000  consola + proxy de /manage, /runs, /api, /health
+#   frontal (backend) sin puerto publicado: solo se llega a través del frontend
+#                     (el 8001 del host es el proxy del LLM)
+
+services:
+  frontend:
+    build:
+      context: ..
+      dockerfile: frontal/Dockerfile.frontend
+    image: strix-frontend:local
+    depends_on:
+      - frontal
+    ports:
+      - "8000:8080"
+    environment:
+      BACKEND_URL: http://frontal:8000
+    restart: unless-stopped
+
+  frontal:
+    build:
+      context: ..
+      dockerfile: frontal/Dockerfile
+    image: strix-frontal:local
+    depends_on:
+      - kafka
+      - minio
+      - mongo
+    environment:
+      # La consola la sirve el frontend (nginx); este contenedor es solo la API.
+      FRONTAL_SERVE_CONSOLE: "false"
+      FRONTAL_KAFKA_BOOTSTRAP: kafka:19092
+      FRONTAL_KAFKA_GROUP: strix-frontal
+      FRONTAL_KAFKA_TOPIC_AUDIT_REQUEST: audit.request
+      FRONTAL_KAFKA_TOPIC_AUDIT_RESULT: audit.result
+      FRONTAL_KAFKA_TOPIC_AUDIT_STATUS: audit.status
+      FRONTAL_MAX_BUDGET_USD: "2"
+      FRONTAL_IMPORT_EXTERNAL_RESULTS: "true"
+      FRONTAL_DATABASE_URL: sqlite:////data/frontal.db
+      FRONTAL_ARTIFACTS_DIR: /data/artifacts
+      # Mismo MinIO y bucket en los que sube el orquestador (run-audit-local.sh).
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_BUCKET: strix-runs
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: minio12345
+      # Mismo Mongo, base de datos y bucket GridFS que el orquestador.
+      FRONTAL_ARTIFACT_STORE: ${AUDIT_STORE:-mongo}
+      MONGO_URI: mongodb://strix:strix12345@mongo:27017/?authSource=admin
+      MONGO_DB: strix
+      MONGO_BUCKET: strix_runs
+    volumes:
+      - frontal_data:/data
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:9.0.2
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: strix
+      MONGO_INITDB_ROOT_PASSWORD: strix12345
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
+volumes:
+  frontal_data:
+  mongo_data:
