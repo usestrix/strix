@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import shutil
@@ -1256,8 +1257,14 @@ def test_scan_start_parameter_contract_and_help() -> None:
     assert params["headers"].kind == "json"
     assert "array" in params["headers"].help.lower()
     assert params["concerns"].kind == "str"
-    assert "scan_tier" not in params
-    assert "scan_tier" not in {param.name for param in SPEC["schedules"]["update"].body}
+    for group, verb in (("scans", "start"), ("schedules", "update")):
+        cmd = SPEC[group][verb]
+        tier = next(param for param in cmd.body if param.name == "scan_tier")
+        assert tier.help == argparse.SUPPRESS
+        help_text = runner._build_parser(group, verb, cmd).format_help()
+        assert "--scan-tier" not in help_text
+        assert "lite" not in help_text
+        assert "standard" not in help_text
     assert "self-hosted" in params["model_config_id"].help.lower()
     assert "self-hosted" in params["max_budget_usd"].help.lower()
 
@@ -1325,6 +1332,8 @@ def test_scan_start_collects_header_array_and_string_concerns(
                 '[{"name":"X-Test","value":"one"}]',
                 "--concerns",
                 "authorization boundaries",
+                "--scan-tier",
+                "ultra",
                 "--json",
             ]
         )
@@ -1333,6 +1342,7 @@ def test_scan_start_collects_header_array_and_string_concerns(
     assert seen["body"] == {
         "headers": [{"name": "X-Test", "value": "one"}],
         "concerns": "authorization boundaries",
+        "scan_tier": "ultra",
     }
 
 
