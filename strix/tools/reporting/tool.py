@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
@@ -50,6 +51,48 @@ _CODE_LOCATION_FIELDS = (
 )
 
 
+# Sandbox mount root. Deliberately mirrored from strix.runtime.session_manager
+# rather than imported: that module pulls in the sandbox/Docker machinery
+# (agents.sandbox.*) at load, and this reporting tool is otherwise runtime-free.
+# The value is a fixed "/workspace"; keep the two in sync if it ever changes.
+# Agents see the target at /workspace/<subdir>/... and naturally report
+# code_locations with that absolute path; the report format wants it relative.
+_WORKSPACE_ROOT = "/workspace"
+
+
+def _to_workspace_relative(path: str) -> str:
+    """Make a sandbox-absolute code-location path repo-root-relative.
+
+    Agents report the absolute path they see in the sandbox (e.g.
+    ``/workspace/<subdir>/src/x.py``). Rejecting that as "must be relative" is the
+    silent cause of findings-detected-but-never-filed (findings=N filed_reports=0):
+    the report is dropped and the agent cannot file what it found. Strip the
+    workspace root *and* the per-target mount subdir so the path is repo-root-relative
+    (what SARIF and the report expect) and files. A path genuinely outside the
+    workspace is left unchanged for the validator to reject.
+    """
+    if not path:
+        return path
+    p = PurePosixPath(path)
+    if not p.is_absolute():
+        return path
+    try:
+        rel = p.relative_to(_WORKSPACE_ROOT)
+    except ValueError:
+        return path
+    # The target is mounted at /workspace/<subdir>/..., where <subdir> is Strix's
+    # per-target mount point, not part of the scanned repo. SARIF and the report
+    # want a *repo-root-relative* path (strix/report/sarif.py: "File locations must
+    # be repo-relative POSIX paths") so a consumer rooted at the repo — GitHub code
+    # scanning, an IDE SARIF viewer — can resolve it; a leading <subdir>/ prefix
+    # breaks that mapping. Drop the mount component too. A bare /workspace/<subdir>
+    # (no file beneath it) has nothing to strip and is left as-is.
+    parts = rel.parts
+    if len(parts) > 1:
+        return str(PurePosixPath(*parts[1:]))
+    return str(rel)
+
+
 def _validate_file_path(path: str) -> str | None:
     if not path or not path.strip():
         return "file path cannot be empty"
@@ -84,6 +127,8 @@ def _normalize_code_locations(
                     if field in ("snippet", "fix_before", "fix_after")
                     else str(value).strip()
                 )
+                if field == "file":
+                    text = _to_workspace_relative(text)
                 if text:
                     normalized[field] = text
         if normalized.get("file") and normalized.get("start_line") is not None:
@@ -161,7 +206,12 @@ _REQUIRED_FIELDS = {
     "target": "Target cannot be empty",
     "technical_analysis": "Technical analysis cannot be empty",
     "poc_description": "PoC description cannot be empty",
-    "poc_script_code": "PoC script/code is REQUIRED - provide the actual exploit/payload",
+    "poc_script_code": (
+        "PoC script/code is REQUIRED - provide the actual exploit/payload. "
+        "If this is a real but non-exploitable weakness (hardcoded secret, missing "
+        "hardening, contrived-only), or a downstream tool will triage/validate the "
+        "findings, set STRIX_REQUIRE_POC=0 to file raw findings without a runnable PoC."
+    ),
     "remediation_steps": "Remediation steps cannot be empty",
     "evidence": "Evidence cannot be empty - provide concrete proof of the finding",
     "assumptions": "Assumptions cannot be empty - state exploitability prerequisites",
@@ -173,11 +223,79 @@ _MAX_HTTP_EXCHANGE_IDS = 10
 _MAX_HTTP_EXCHANGE_ID_CHARS = 128
 
 
+# A runnable PoC/exploit is mandatory by default (upstream's FP-reduction intent).
+# Setting STRIX_REQUIRE_POC to a false-y value turns it off for "raw findings" use —
+# SAST/SCA and defense-in-depth work, where many real, gradable weaknesses (hardcoded
+# secrets, missing hardening, contrived-only issues) have no practical exploit and
+# should still be filed and graded (down to informational), not dropped.
+_POC_OPTIONAL_FIELD = "poc_script_code"
+
+
+def _poc_required() -> bool:
+    return os.environ.get("STRIX_REQUIRE_POC", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+# Analysis fields that may be relaxed from required -> optional for weak-model / raw-findings
+# use. The finding still RECORDS: title/description/impact/target/code_locations/cvss/confidence
+# stay required. STRIX_RELAX_FINDING_FIELDS: "1"/"all" relaxes the whole set; a comma-list names
+# a subset (essentials can never be relaxed). Default empty = strict. An exploit-focused run keeps
+# them; a localization/triage run (findings fed to a downstream verifier) relaxes them so a
+# detected finding is recorded, not rejected for a missing field (usestrix/strix#1439).
+_RELAXABLE_FIELDS = frozenset(
+    {
+        "technical_analysis",
+        "poc_description",
+        "remediation_steps",
+        "evidence",
+        "assumptions",
+        "counterevidence",
+        "severity_change_conditions",
+    }
+)
+
+
+def _relaxed_fields() -> frozenset[str]:
+    raw = os.environ.get("STRIX_RELAX_FINDING_FIELDS", "").strip().lower()
+    if not raw:
+        return frozenset()
+    if raw in ("1", "true", "yes", "on", "all"):
+        return _RELAXABLE_FIELDS
+    named = {f.strip() for f in raw.split(",") if f.strip()}
+    unknown = named - _RELAXABLE_FIELDS
+    if unknown:
+        logger.warning(
+            "STRIX_RELAX_FINDING_FIELDS: ignoring unrecognized field(s): %s (relaxable: %s)",
+            ", ".join(sorted(unknown)),
+            ", ".join(sorted(_RELAXABLE_FIELDS)),
+        )
+    return frozenset(named & _RELAXABLE_FIELDS)
+
+
 def _validate_required_text(fields: dict[str, str]) -> list[str]:
-    """Report every ``_REQUIRED_FIELDS`` entry that arrived blank."""
-    return [
-        msg for name, msg in _REQUIRED_FIELDS.items() if not str(fields.get(name) or "").strip()
-    ]
+    """Report every ``_REQUIRED_FIELDS`` entry that arrived blank.
+
+    ``STRIX_REQUIRE_POC`` disabled allows a blank ``poc_script_code``;
+    ``STRIX_RELAX_FINDING_FIELDS`` additionally drops the named analysis fields, so a
+    detected finding is still recorded rather than rejected for a missing analysis field.
+    """
+    relaxed = _relaxed_fields()
+    required = {k: v for k, v in _REQUIRED_FIELDS.items() if k not in relaxed}
+    if not _poc_required():
+        required = {k: v for k, v in required.items() if k != _POC_OPTIONAL_FIELD}
+    missing = [msg for name, msg in required.items() if not str(fields.get(name) or "").strip()]
+    skipped = sorted(
+        n for n in relaxed if n in _REQUIRED_FIELDS and not str(fields.get(n) or "").strip()
+    )
+    if skipped:
+        logger.info(
+            "filing with relaxed-blank fields (STRIX_RELAX_FINDING_FIELDS): %s", ", ".join(skipped)
+        )
+    return missing
 
 
 def _normalize_http_exchange_ids(raw: Any) -> tuple[list[str] | None, list[str]]:
@@ -309,13 +427,16 @@ def _validate_analysis_fields(
 ) -> list[str]:
     """Validate the counterevidence / confidence closure metadata."""
     errors: list[str] = []
-    if not str(counterevidence or "").strip():
+    relaxed = _relaxed_fields()
+    ce = str(counterevidence or "").strip()
+    scc = str(severity_change_conditions or "").strip()
+    if "counterevidence" not in relaxed and not ce:
         errors.append(
             "Counterevidence cannot be empty - state the strongest evidence against "
             "this finding, or what you checked and found none (e.g. 'no input "
             "validation, WAF, or authorization check found on this path')"
         )
-    if not str(severity_change_conditions or "").strip():
+    if "severity_change_conditions" not in relaxed and not scc:
         errors.append(
             "severity_change_conditions cannot be empty - state the one concrete piece "
             "of evidence that would raise or lower the severity"
@@ -851,11 +972,23 @@ async def _do_create(
     errors.extend(http_exchange_errors)
 
     if errors:
+        # Log it: a rejected filing is otherwise invisible (returned to the agent, not
+        # logged), so a finding detected-but-not-filed looks like silence. Surfacing the
+        # rejected fields is how we see WHY a finding never lands (usestrix/strix#1439).
+        logger.warning(
+            "create_vulnerability_report rejected (title=%r): %d validation error(s): %s",
+            (title or "")[:80],
+            len(errors),
+            "; ".join(errors[:8]),
+        )
         return {"success": False, "error": "Validation failed", "errors": errors}
 
     try:
         cvss_score, severity, _vector = _calculate_cvss(cvss_breakdown)
     except ValueError as exc:
+        logger.warning(
+            "create_vulnerability_report rejected (title=%r): CVSS: %s", (title or "")[:80], exc
+        )
         return {"success": False, "error": "Validation failed", "errors": [str(exc)]}
 
     try:
@@ -981,19 +1114,27 @@ def _caller_identity(ctx: RunContextWrapper) -> tuple[str | None, str | None]:
 @function_tool(timeout=180, strict_mode=False)
 async def create_vulnerability_report(
     ctx: RunContextWrapper,
+    *,
     title: str,
     description: str,
     impact: str,
     target: str,
-    technical_analysis: str,
-    poc_description: str,
-    poc_script_code: str,
-    remediation_steps: str,
-    evidence: str,
-    assumptions: str,
-    counterevidence: str,
+    # Flag-gated fields default to "" so they are schema-OPTIONAL: STRIX_REQUIRE_POC
+    # governs poc_script_code and STRIX_RELAX_FINDING_FIELDS the analysis fields. When a
+    # flag is unset these are still required, but enforcement lives in the flag-aware
+    # runtime validators (_validate_required_text / _validate_analysis_fields), not in a
+    # static schema. A required-in-schema field would force the model to emit (and so
+    # fabricate) a PoC even when the operator disabled the PoC requirement — see #1439.
+    technical_analysis: str = "",
+    poc_description: str = "",
+    poc_script_code: str = "",
+    remediation_steps: str = "",
+    evidence: str = "",
+    assumptions: str = "",
+    counterevidence: str = "",
+    severity_change_conditions: str = "",
+    # Always required (never relaxable); no default keeps them schema-required.
     confidence: str,
-    severity_change_conditions: str,
     fix_effort: str,
     cvss_breakdown: dict[str, str],
     endpoint: str | None = None,
@@ -1257,7 +1398,13 @@ async def create_vulnerability_report(
         target: Affected URL / domain / repository.
         technical_analysis: The mechanism and root cause.
         poc_description: Step-by-step reproduction (steps only, no code).
-        poc_script_code: Working PoC (Python preferred).
+        poc_script_code: Working PoC (Python preferred). Required by default;
+            omit it only when the operator has set ``STRIX_REQUIRE_POC=0`` for a
+            raw-findings run — never fabricate a PoC to satisfy the field.
+            ``technical_analysis``, ``poc_description``, ``remediation_steps``,
+            ``evidence``, ``assumptions``, ``counterevidence`` and
+            ``severity_change_conditions`` are likewise required unless the
+            operator relaxed them via ``STRIX_RELAX_FINDING_FIELDS``.
         remediation_steps: Specific, actionable fix (prose, no code).
         evidence: Concrete proof the issue is real and exploitable —
             request/response excerpts, observed behavior, tool output.
