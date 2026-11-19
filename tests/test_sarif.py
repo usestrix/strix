@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import TYPE_CHECKING, Any
 
-from strix.report.sarif import write_sarif
+import pytest
+
+from strix.report.sarif import _primary_fingerprint, build_sarif_report, write_sarif
 
 
 if TYPE_CHECKING:
@@ -101,6 +104,121 @@ def test_write_sarif_distinct_findings_get_distinct_fingerprints(tmp_path: Path)
     assert len(results) == 2
     fps = {json.dumps(r["partialFingerprints"], sort_keys=True) for r in results}
     assert len(fps) == 2
+
+
+def _synthetic_result(**overrides: Any) -> dict[str, Any]:
+    report = _finding(code_locations=None, **overrides)
+    return build_sarif_report([report])["runs"][0]["results"][0]
+
+
+def test_synthetic_sql_alias_preserves_identity_across_runs() -> None:
+    resource = {"target": "https://example.com", "endpoint": "/search"}
+    first = _synthetic_result(title="SQL injection in search", id="vuln-0001", **resource)
+    second = _synthetic_result(title="SQLi via search query", id="vuln-0099", **resource)
+    assert first["partialFingerprints"] == second["partialFingerprints"]
+    assert first["ruleId"] == second["ruleId"] == "CWE-89"
+
+
+def test_synthetic_sql_alias_requires_word_boundaries() -> None:
+    canonical = _synthetic_result(title="SQL injection")
+    alias = _synthetic_result(title="Blind (SQLi) in search")
+    unrelated = _synthetic_result(title="SQLish parser confusion")
+    assert canonical["partialFingerprints"] == alias["partialFingerprints"]
+    assert canonical["partialFingerprints"] != unrelated["partialFingerprints"]
+
+
+@pytest.mark.parametrize("endpoint", [None, "/search"])
+def test_synthetic_different_hosts_have_distinct_identity(endpoint: str | None) -> None:
+    first = _synthetic_result(target="https://first.example", endpoint=endpoint)
+    second = _synthetic_result(target="https://second.example", endpoint=endpoint)
+    assert first["partialFingerprints"] != second["partialFingerprints"]
+
+
+def test_synthetic_different_endpoints_have_distinct_identity() -> None:
+    first = _synthetic_result(target="https://example.com", endpoint="/search")
+    second = _synthetic_result(target="https://example.com", endpoint="/orders")
+    assert first["partialFingerprints"] != second["partialFingerprints"]
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("HTTPS://EXAMPLE.COM:443", "https://example.com/"),
+        ("HTTP://Example.com:80/api?q=1", "http://example.com/api?q=1"),
+        ("https://[2001:DB8::1]:443/api", "https://[2001:db8::1]/api"),
+    ],
+)
+def test_synthetic_equivalent_target_urls_have_same_identity(first: str, second: str) -> None:
+    assert (
+        _synthetic_result(target=first)["partialFingerprints"]
+        == _synthetic_result(target=second)["partialFingerprints"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("https://example.com/app-a", "https://example.com/app-b"),
+        ("https://example.com/App", "https://example.com/app"),
+        ("https://example.com/app", "https://example.com/app/"),
+        ("https://example.com:8443", "https://example.com"),
+        ("http://example.com", "https://example.com"),
+        ("https://example.com/?tenant=a", "https://example.com/?tenant=b"),
+        ("service-A", "service-a"),
+        ("http://example.com:bad", "http://example.com"),
+        ("https://[invalid", "https://example.com"),
+    ],
+)
+def test_synthetic_distinct_resources_keep_distinct_identity(first: str, second: str) -> None:
+    assert (
+        _synthetic_result(target=first)["partialFingerprints"]
+        != _synthetic_result(target=second)["partialFingerprints"]
+    )
+
+
+def test_synthetic_identity_does_not_depend_on_finding_id() -> None:
+    first = _synthetic_result(target="https://example.com", id="vuln-0001")
+    second = _synthetic_result(target="https://example.com", id="vuln-0099")
+    assert first["partialFingerprints"] == second["partialFingerprints"]
+
+
+def test_synthetic_identity_does_not_depend_on_physical_anchor() -> None:
+    report = _finding(code_locations=None, target="https://example.com", endpoint="/search")
+    result = build_sarif_report([report])["runs"][0]["results"][0]
+    logical = [loc for loc in result["locations"] if "physicalLocation" not in loc]
+    assert (
+        _primary_fingerprint("CWE-89", report, logical, is_synthetic=True)
+        == result["partialFingerprints"]["primaryLocationLineHash"]
+    )
+
+
+def test_source_identity_ignores_target_and_preserves_legacy_hash() -> None:
+    first = build_sarif_report([_finding()])["runs"][0]["results"][0]
+    second = build_sarif_report(
+        [_finding(target="https://other.example", title="SQLi in query", id="vuln-0099")]
+    )["runs"][0]["results"][0]
+    assert first["partialFingerprints"] == second["partialFingerprints"]
+    # SHA-256 of the existing rule/URI/line composite, independent of prose.
+    assert (
+        first["partialFingerprints"]["primaryLocationLineHash"]
+        == hashlib.sha256(b"rule:CWE-89|uri:app.py|line:4").hexdigest()
+    )
+
+
+def test_synthetic_without_target_preserves_legacy_hash() -> None:
+    expected = hashlib.sha256(b"rule:CWE-89|uri:SECURITY.md|synth_class:sql injection").hexdigest()
+    for target in (None, "", "   "):
+        assert (
+            _synthetic_result(target=target)["partialFingerprints"]["primaryLocationLineHash"]
+            == expected
+        )
+
+
+@pytest.mark.parametrize("title", ["Regex denial of service in parser", "ReDoS in parser"])
+def test_synthetic_redos_stays_distinct_from_generic_dos(title: str) -> None:
+    specific = _synthetic_result(cwe="CWE-400", title=title)
+    generic = _synthetic_result(cwe="CWE-400", title="Denial of service in parser")
+    assert specific["partialFingerprints"] != generic["partialFingerprints"]
 
 
 def test_write_sarif_never_embeds_poc_script(tmp_path: Path) -> None:
