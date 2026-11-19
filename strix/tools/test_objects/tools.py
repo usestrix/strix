@@ -32,6 +32,12 @@ _MIN_IDENTIFIER_CHARS = 3
 _MAX_IDENTIFIER_CHARS = 200
 _MAX_MATCHES = 20
 _ISSUED_IDENTIFIER_RE = re.compile(r"[0-9@]")
+_MAX_DETAILS = 20
+_MAX_DETAIL_CHARS = 300
+# The export is downloadable, so a credential an agent passes as a detail is dropped.
+_SECRET_DETAIL_RE = re.compile(
+    r"pass|pwd|secret|token|key|credential|cookie|session|auth|otp|signature", re.IGNORECASE
+)
 
 # A bare 201 status in tool output, not one inside an address, version or id.
 _CREATED_RE = re.compile(r"(?<![\w.,:/-])201(?![\w.,:/-])")
@@ -88,16 +94,54 @@ def _append_csv_row(identifier: str, entry: dict[str, Any]) -> None:
         with path.open("a", encoding="utf-8", newline="") as file:
             writer = csv.writer(file)
             if new_file:
-                writer.writerow(["identifier", "kind", "source", "created_at"])
+                writer.writerow(["identifier", "kind", "source", "created_at", "agent", "details"])
+            details = entry.get("details") or {}
             writer.writerow(
                 csv_safe(value)
-                for value in (identifier, entry["kind"], entry["source"], entry["created_at"])
+                for value in (
+                    identifier,
+                    entry["kind"],
+                    entry["source"],
+                    entry["created_at"],
+                    entry.get("agent_name") or "",
+                    json.dumps(details, ensure_ascii=False) if details else "",
+                )
             )
     except OSError:
         logger.exception("test objects export to %s failed", path)
 
 
-def register(identifier: str, kind: str, source: str, agent_id: str | None = None) -> bool:
+def _clean_details(details: Any) -> dict[str, str]:
+    """Keep the object's plain attributes; drop anything named like a credential."""
+    if not isinstance(details, dict):
+        return {}
+    clean: dict[str, str] = {}
+    for name, value in details.items():
+        if len(clean) >= _MAX_DETAILS:
+            break
+        if not isinstance(name, str) or _SECRET_DETAIL_RE.search(name):
+            continue
+        text = (
+            json.dumps(value, ensure_ascii=False)
+            if isinstance(value, dict | list)
+            else ""
+            if value is None
+            else str(value)
+        )
+        if text.strip():
+            clean[name.strip()[:_MAX_DETAIL_CHARS]] = text[:_MAX_DETAIL_CHARS]
+    return clean
+
+
+def register(
+    identifier: str,
+    kind: str,
+    source: str,
+    agent_id: str | None = None,
+    *,
+    agent_name: str | None = None,
+    details: Any = None,
+) -> bool:
     """Add one identifier; return False when it is unusable."""
     identifier = identifier.strip()
     if not _MIN_IDENTIFIER_CHARS <= len(identifier) <= _MAX_IDENTIFIER_CHARS:
@@ -112,6 +156,8 @@ def register(identifier: str, kind: str, source: str, agent_id: str | None = Non
                 "kind": kind.strip() or "object",
                 "source": source,
                 "agent_id": agent_id,
+                "agent_name": agent_name,
+                "details": _clean_details(details),
                 "created_at": datetime.now(UTC).isoformat(),
             }
             _objects[identifier] = entry
@@ -152,8 +198,13 @@ def with_registration_reminder(result: Any) -> Any:
     return result
 
 
-@function_tool(timeout=30)
-async def register_test_object(ctx: RunContextWrapper, identifiers: list[str], kind: str) -> str:
+@function_tool(timeout=30, strict_mode=False)
+async def register_test_object(
+    ctx: RunContextWrapper,
+    identifiers: list[str],
+    kind: str,
+    details: dict[str, dict[str, Any]] | None = None,
+) -> str:
     """Record objects you just created on the target as this test's own.
 
     Call this right after a create succeeds (an account you registered, a
@@ -167,12 +218,31 @@ async def register_test_object(ctx: RunContextWrapper, identifiers: list[str], k
             Identifiers only, never secrets, tokens or passwords. A bare word with no
             digit or "@" (a table, route or role name) is not accepted.
         kind: What they are, e.g. "account", "record", "file", "role".
+        details: What the target returned about each object, keyed by its identifier, so
+            the scan's record shows what was left behind. Pass every plain attribute you
+            know, e.g. {"qa7f3@example.com": {"username": "qa7f3", "email":
+            "qa7f3@example.com", "user_id": "Xk29dLq0", "role": "customer",
+            "created_via": "POST /api/users"}}. Never passwords, tokens or keys.
     """
     inner = ctx.context if isinstance(ctx.context, dict) else {}
     agent_id = inner.get("agent_id") if isinstance(inner.get("agent_id"), str) else None
+    names = getattr(inner.get("coordinator"), "names", None)
+    agent_name = names.get(agent_id) if isinstance(names, dict) and agent_id else None
+    per_object = details if isinstance(details, dict) else {}
 
     def _run() -> list[str]:
-        return [i for i in identifiers if register(i, kind, "agent", agent_id)]
+        return [
+            i
+            for i in identifiers
+            if register(
+                i,
+                kind,
+                "agent",
+                agent_id,
+                agent_name=agent_name,
+                details=per_object.get(i) or per_object.get(i.strip()),
+            )
+        ]
 
     added = await asyncio.to_thread(_run)
     return json.dumps({"success": bool(added), "registered": added})
