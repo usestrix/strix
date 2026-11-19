@@ -1256,9 +1256,7 @@ def test_scan_start_parameter_contract_and_help() -> None:
     assert params["headers"].kind == "json"
     assert "array" in params["headers"].help.lower()
     assert params["concerns"].kind == "str"
-    assert all(tier in params["scan_tier"].help for tier in ("lite", "standard", "ultra"))
-    assert "pro" not in params["scan_tier"].help
-    assert "max" not in params["scan_tier"].help
+    assert "scan_tier" not in params
     assert "self-hosted" in params["model_config_id"].help.lower()
     assert "self-hosted" in params["max_budget_usd"].help.lower()
 
@@ -1326,8 +1324,6 @@ def test_scan_start_collects_header_array_and_string_concerns(
                 '[{"name":"X-Test","value":"one"}]',
                 "--concerns",
                 "authorization boundaries",
-                "--scan-tier",
-                "standard",
                 "--json",
             ]
         )
@@ -1336,7 +1332,6 @@ def test_scan_start_collects_header_array_and_string_concerns(
     assert seen["body"] == {
         "headers": [{"name": "X-Test", "value": "one"}],
         "concerns": "authorization boundaries",
-        "scan_tier": "standard",
     }
 
 
