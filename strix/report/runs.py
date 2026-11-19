@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from strix.core.paths import run_record_path, runs_base_dir, runtime_state_dir
 
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
 
@@ -75,10 +76,11 @@ def _title(record: dict[str, Any], findings: Any) -> str:
 
 
 def _describe_target(record: dict[str, Any]) -> str:
-    targets = record.get("targets_info")
+    raw_targets = record.get("targets_info")
+    targets = cast("Sequence[Any]", raw_targets) if isinstance(raw_targets, list) else ()
     originals = [
         str(entry["original"])
-        for entry in targets or []
+        for entry in targets
         if isinstance(entry, dict) and entry.get("original")
     ]
     if originals:
@@ -95,7 +97,7 @@ def _describe_target(record: dict[str, Any]) -> str:
 def _load_json(path: Path, *, default: Any) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return default
 
 
