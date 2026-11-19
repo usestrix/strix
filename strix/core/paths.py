@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
+from errno import ELOOP
 from pathlib import Path
+from stat import S_ISREG
+from typing import TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 RUNS_DIR_NAME = "strix_runs"
@@ -28,13 +35,30 @@ def runs_base_dir(*, cwd: Path | None = None) -> Path:
     return base / RUNS_DIR_NAME
 
 
+def iter_run_records(base_dir: Path) -> Iterator[tuple[Path, float]]:
+    """Yield run directories and their record modification times."""
+    try:
+        for child in base_dir.iterdir():
+            try:
+                # Check the file type and capture its mtime with one lookup. The
+                # record can disappear between separate is_file() and stat() calls.
+                metadata = run_record_path(child).stat()
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+            except OSError as exc:
+                if exc.errno == ELOOP:
+                    continue
+                raise
+            if S_ISREG(metadata.st_mode):
+                yield child, metadata.st_mtime
+    except (FileNotFoundError, NotADirectoryError):
+        return
+    except OSError as exc:
+        if exc.errno != ELOOP:
+            raise
+
+
 def latest_run_dir(*, cwd: Path | None = None) -> Path | None:
-    base = runs_base_dir(cwd=cwd)
-    if not base.is_dir():
-        return None
-    candidates = [child for child in base.iterdir() if run_record_path(child).is_file()]
-    if not candidates:
-        return None
-    # run.json is rewritten on status/end changes, so its mtime tracks activity
-    # more reliably than the directory mtime (a live run sorts to the top).
-    return max(candidates, key=lambda child: run_record_path(child).stat().st_mtime)
+    # The record's mtime tracks status and end-time changes, unlike the directory's.
+    newest = max(iter_run_records(runs_base_dir(cwd=cwd)), key=lambda run: run[1], default=None)
+    return newest[0] if newest is not None else None
