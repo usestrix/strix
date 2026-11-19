@@ -111,6 +111,50 @@ _GIT_TOKEN_BODY = (
     P("installation_id", "int", help="Existing installation ID to update."),
 )
 
+_NETWORK_TEST_USER_BODY = (
+    P("label", help="Display label for the test user."),
+    P("username", help="Sign-in username or email address."),
+    P(
+        "password",
+        help=(
+            "Sign-in password. Required for directory accounts. "
+            "Stored encrypted and never returned."
+        ),
+    ),
+    P("notes", help="Free-form notes for the agents."),
+    P(
+        "login_url",
+        help="Sign-in page URL. Required for web accounts. Not allowed for directory accounts.",
+    ),
+    P("mfa_method", help="MFA method: none or totp."),
+    P(
+        "auth_kind",
+        help=(
+            "Authentication kind: web (default) or directory. "
+            "Directory accounts authenticate to an Active Directory domain."
+        ),
+    ),
+    P(
+        "directory_domain",
+        help="Active Directory domain, for example CORP.EXAMPLE. Required for directory accounts.",
+    ),
+    P(
+        "totp_secret",
+        help="TOTP secret. Required when mfa_method is totp. Stored encrypted and never returned.",
+    ),
+)
+
+_NETWORK_TEST_USER_ADD_BODY = (
+    P("label", required=True, help="Display label for the test user."),
+    P("username", required=True, help="Sign-in username or email address."),
+    *_NETWORK_TEST_USER_BODY[2:],
+)
+
+_NETWORK_ID_HELP = (
+    "Use a connector ID from strix cloud connectors list as NETWORK_ID. "
+    "On a self-hosted install, use direct for the local network."
+)
+
 
 SPEC: dict[str, dict[str, Cmd]] = {
     "scans": {
@@ -426,6 +470,49 @@ SPEC: dict[str, dict[str, Cmd]] = {
             "GET",
             "/domains/{domainId}/test-users/{userId}/verify",
             "Get the verification status of a test user.",
+        ),
+    },
+    "networks": {
+        "test-users list": Cmd(
+            "GET",
+            "/networks/{networkId}/test-users",
+            "List network test users. " + _NETWORK_ID_HELP,
+        ),
+        "test-users add": Cmd(
+            "POST",
+            "/networks/{networkId}/test-users",
+            "Add a network test user. " + _NETWORK_ID_HELP,
+            body=_NETWORK_TEST_USER_ADD_BODY,
+        ),
+        "test-users update": Cmd(
+            "PATCH",
+            "/networks/{networkId}/test-users/{userId}",
+            "Update a network test user. Only provided fields change. " + _NETWORK_ID_HELP,
+            body=_NETWORK_TEST_USER_BODY,
+        ),
+        "test-users remove": Cmd(
+            "DELETE",
+            "/networks/{networkId}/test-users/{userId}",
+            "Remove a network test user. " + _NETWORK_ID_HELP,
+        ),
+        "test-users verify": Cmd(
+            "POST",
+            "/networks/{networkId}/test-users/{userId}/verify",
+            "Verify the test user credentials. " + _NETWORK_ID_HELP,
+            query=(P("force", help="Set to 1 to repeat verification despite a recent result."),),
+            body=(
+                P(
+                    "headers",
+                    "json",
+                    help="JSON array of custom HTTP header objects with name and value fields.",
+                ),
+            ),
+            wait_self=True,
+        ),
+        "test-users verify-status": Cmd(
+            "GET",
+            "/networks/{networkId}/test-users/{userId}/verify",
+            "Get the latest verification, or null if none exists. " + _NETWORK_ID_HELP,
         ),
     },
     "repos": {
@@ -1120,6 +1207,7 @@ GROUP_HELP: dict[str, str] = {
     "scans": "Start, watch, and manage scans",
     "vulns": "Triage and remediate vulnerabilities",
     "domains": "Manage domain assets and test users",
+    "networks": "Manage test users on network connectors",
     "repos": "Manage repository assets and supply-chain scans",
     "supply-chain": "Organization supply-chain summary",
     "schedules": "Manage scan schedules",

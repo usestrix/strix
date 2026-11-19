@@ -332,7 +332,10 @@ strix cloud vulns list --severity critical
 
 Every [REST API](https://docs.app.strix.ai) operation has a matching `strix cloud <resource> <verb>` command. Run `strix cloud` to list the resources, and add `help` to a resource to list its verbs. Output is JSON when stdout is not a terminal or when you pass `--json`. Binary downloads are the exception: redirect the raw bytes, or combine `--output FILE --json` for download metadata.
 
-See the [cloud CLI documentation](https://docs.strix.ai/cloud/cli) for scopes, workspaces, billing, and source-upload options.
+Use `strix cloud networks test-users` to manage web and Active Directory accounts on a network.
+The network ID is a connector ID from `strix cloud connectors list`, or `direct` for a self-hosted install.
+
+See the [cloud CLI documentation](https://docs.strix.ai/cloud/cli) for scopes, workspaces, billing, network accounts, and source-upload options.
 
 #### Connect your own MCP servers
 

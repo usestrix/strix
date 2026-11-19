@@ -1485,6 +1485,206 @@ def test_corrected_help_distinguishes_inboxes_reports_and_self_hosted_commands()
     assert "self-hosted only" in GROUP_HELP["llm-settings"].lower()
 
 
+@pytest.mark.parametrize("verb", ["add", "update"])
+def test_network_test_user_parameter_contract_and_help(verb: str) -> None:
+    cmd = SPEC["networks"][f"test-users {verb}"]
+    params = {param.name: param for param in cmd.body}
+    assert set(params) == {
+        "label",
+        "username",
+        "password",
+        "notes",
+        "login_url",
+        "mfa_method",
+        "auth_kind",
+        "directory_domain",
+        "totp_secret",
+    }
+    assert {param.name for param in cmd.body if param.required} == (
+        {"label", "username"} if verb == "add" else set()
+    )
+    assert params["auth_kind"].help.startswith("Authentication kind: web (default) or directory.")
+    assert "Required for directory" in params["directory_domain"].help
+    assert "Required for directory" in params["password"].help
+    assert "Required for web" in params["login_url"].help
+    assert "Not allowed for directory" in params["login_url"].help
+    assert params["mfa_method"].help == "MFA method: none or totp."
+    assert "Required when mfa_method is totp" in params["totp_secret"].help
+    help_text = runner._build_parser("networks", f"test-users {verb}", cmd).format_help()
+    assert "--auth-kind" in help_text
+    assert "--directory-domain" in help_text
+    assert "connectors list" in help_text
+    assert "self-hosted" in help_text
+    assert "direct" in help_text
+    assert "networks" in GROUP_HELP
+
+
+@pytest.mark.parametrize(
+    ("verb", "network_id", "flags", "body"),
+    [
+        (
+            "add",
+            "connector-1",
+            [
+                "--label",
+                "Auditor",
+                "--username",
+                "auditor",
+                "--password",
+                "test-password",
+                "--auth-kind",
+                "directory",
+                "--directory-domain",
+                "CORP.EXAMPLE",
+            ],
+            {
+                "label": "Auditor",
+                "username": "auditor",
+                "password": "test-password",
+                "auth_kind": "directory",
+                "directory_domain": "CORP.EXAMPLE",
+            },
+        ),
+        (
+            "add",
+            "direct",
+            [
+                "--label",
+                "Web user",
+                "--username",
+                "user@example.test",
+                "--password",
+                "test-password",
+                "--login-url",
+                "https://example.test/login",
+                "--mfa-method",
+                "totp",
+                "--totp-secret",
+                "test-secret",
+            ],
+            {
+                "label": "Web user",
+                "username": "user@example.test",
+                "password": "test-password",
+                "login_url": "https://example.test/login",
+                "mfa_method": "totp",
+                "totp_secret": "test-secret",
+            },
+        ),
+        (
+            "update",
+            "connector-1",
+            [
+                "--auth-kind",
+                "directory",
+                "--directory-domain",
+                "CORP.EXAMPLE",
+                "--password",
+                "test-password",
+                "--mfa-method",
+                "none",
+            ],
+            {
+                "auth_kind": "directory",
+                "directory_domain": "CORP.EXAMPLE",
+                "password": "test-password",
+                "mfa_method": "none",
+            },
+        ),
+    ],
+)
+def test_network_test_user_write_requests(
+    monkeypatch: pytest.MonkeyPatch,
+    verb: str,
+    network_id: str,
+    flags: list[str],
+    body: dict[str, Any],
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> FakeResponse:
+        seen.update(method=method, path=path, body=kwargs.get("body"))
+        return FakeResponse(payload={"id": "user-1"})
+
+    monkeypatch.setattr(http, "request", fake_request)
+    args = ["networks", "test-users", verb, network_id]
+    if verb == "update":
+        args.append("user-1")
+    assert cloud.run_cloud([*args, *flags, "--json"]) == 0
+    assert seen == {
+        "method": "POST" if verb == "add" else "PATCH",
+        "path": f"/networks/{network_id}/test-users" + ("/user-1" if verb == "update" else ""),
+        "body": body,
+    }
+
+
+@pytest.mark.parametrize(
+    ("verb", "method", "suffix", "payload"),
+    [
+        ("list", "GET", "", {"items": []}),
+        ("remove", "DELETE", "/user-1", {"success": True}),
+        ("verify", "POST", "/user-1/verify", {"status": "pending"}),
+        ("verify-status", "GET", "/user-1/verify", None),
+    ],
+)
+def test_network_test_user_action_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    verb: str,
+    method: str,
+    suffix: str,
+    payload: Any,
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake_request(request_method: str, path: str, **kwargs: Any) -> FakeResponse:
+        seen.update(method=request_method, path=path, query=kwargs.get("query"))
+        response = FakeResponse(payload=payload)
+        if payload is None:
+            response.headers["content-type"] = "application/json"
+            monkeypatch.setattr(response, "json", lambda: None)
+        return response
+
+    monkeypatch.setattr(http, "request", fake_request)
+    args = ["networks", "test-users", verb, "direct"]
+    if verb != "list":
+        args.append("user-1")
+    if verb == "verify":
+        args.extend(["--force", "1"])
+    assert cloud.run_cloud([*args, "--json"]) == 0
+    assert seen["method"] == method
+    assert seen["path"] == f"/networks/direct/test-users{suffix}"
+    if verb == "verify":
+        assert seen["query"] == {"force": "1"}
+        assert SPEC["networks"]["test-users verify"].wait_self
+
+
+def test_network_test_user_server_validation_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_request(_method: str, _path: str, **_kwargs: Any) -> FakeResponse:
+        raise http.CloudError("Directory accounts require a password.", exit_code=1)
+
+    monkeypatch.setattr(http, "request", fake_request)
+    assert (
+        cloud.run_cloud(
+            [
+                "networks",
+                "test-users",
+                "add",
+                "direct",
+                "--label",
+                "Auditor",
+                "--username",
+                "auditor",
+                "--auth-kind",
+                "directory",
+                "--directory-domain",
+                "CORP.EXAMPLE",
+                "--json",
+            ]
+        )
+        == 1
+    )
+
+
 def test_every_command_builds_a_parser() -> None:
     for group, commands in SPEC.items():
         for verb, cmd in commands.items():
