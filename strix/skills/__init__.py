@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 from collections import Counter
 from collections.abc import Iterator, Mapping
@@ -26,6 +27,10 @@ _SKILL_TEMPLATES = Environment(
 
 _INTERNAL_SKILL_CATEGORIES: frozenset[str] = frozenset({"scan_modes", "coordination", "analysis"})
 _ROOT_SKILL_CATEGORY = "root"
+
+# ``os.pathsep``-separated list of extra skill roots, read on every lookup so the
+# CLI can set it before the first prompt renders.
+SKILLS_DIR_ENV = "STRIX_SKILLS_DIR"
 
 _EXTRA_SKILL_DIRS: list[Path] = []
 _SKILL_METADATA_CACHE: dict[tuple[Path, int, int], dict[str, str]] = {}
@@ -56,9 +61,27 @@ def registered_skill_dirs() -> tuple[Path, ...]:
     return tuple(reversed(_EXTRA_SKILL_DIRS))
 
 
+def env_skill_dirs() -> tuple[Path, ...]:
+    """Skill roots named by ``STRIX_SKILLS_DIR``, in the order given."""
+    raw = os.environ.get(SKILLS_DIR_ENV, "")
+    dirs: list[Path] = []
+    for entry in raw.split(os.pathsep):
+        if not entry.strip():
+            continue
+        path = Path(entry.strip()).expanduser()
+        if path not in dirs:
+            dirs.append(path)
+    return tuple(dirs)
+
+
 def skill_search_dirs() -> tuple[Path, ...]:
-    """All existing skill roots, highest precedence first (built-in last)."""
+    """All existing skill roots, highest precedence first (built-in last).
+
+    Order: directories from :func:`register_skill_dir`, then the entries of
+    ``STRIX_SKILLS_DIR``, then the packaged skills.
+    """
     roots = [d for d in registered_skill_dirs() if d.is_dir()]
+    roots.extend(d for d in env_skill_dirs() if d.is_dir() and d not in roots)
     builtin = get_strix_resource_path("skills")
     if builtin.is_dir():
         roots.append(builtin)
@@ -222,13 +245,14 @@ def get_available_skills() -> dict[str, list[dict[str, str]]]:
     return grouped
 
 
-def validate_requested_skills(skill_list: list[str], max_skills: int = 5) -> str | None:
+def validate_requested_skills(skill_list: list[str], max_skills: int | None = 5) -> str | None:
     """Validate a list of user-passed skill names.
 
     Returns ``None`` on success, or a model-readable error message
     describing what was wrong (count exceeded, unknown names).
+    ``max_skills=None`` skips the count check.
     """
-    if len(skill_list) > max_skills:
+    if max_skills is not None and len(skill_list) > max_skills:
         return (
             f"Cannot specify more than {max_skills} skills per agent; "
             f"got {len(skill_list)}. Aim for 1-3 related skills per specialist."
@@ -247,6 +271,39 @@ def validate_requested_skills(skill_list: list[str], max_skills: int = 5) -> str
             f"{sorted(available_keys)}"
         )
     return None
+
+
+def methodology_tag(name: str) -> str:
+    """Name of a methodology as it appears as a tag in the system prompt."""
+    tag = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_")
+    # The prompt wraps all entries in <methodology>; an entry must not reuse that tag.
+    return tag if tag and tag.lower() != "methodology" else "methodology_rules"
+
+
+def resolve_methodology(ref: str) -> tuple[str, str]:
+    """Resolve a methodology reference to ``(name, body)``.
+
+    *ref* is a path to a markdown file, or the name of a skill. Raises
+    ``ValueError`` with a user-readable message when it is neither, or when
+    the body is empty.
+    """
+    path = Path(ref).expanduser()
+    if path.is_file():
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, ValueError) as e:
+            raise ValueError(f"Failed to read methodology file '{ref}': {e}") from e
+        name = path.stem
+        _, body = _parse_skill_content(content, path)
+    else:
+        if error := validate_requested_skills([ref], max_skills=None):
+            raise ValueError(f"'{ref}' is not a file. {error}")
+        name = ref.rsplit("/", maxsplit=1)[-1]
+        body = load_skills([ref]).get(name, "")
+    body = body.strip()
+    if not body:
+        raise ValueError(f"Methodology '{ref}' is empty")
+    return methodology_tag(name), body
 
 
 _LOADED_SKILLS: set[str] = set()

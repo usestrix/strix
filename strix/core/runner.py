@@ -172,6 +172,7 @@ def _compose_root_instructions_override(
     root_instructions_override: str | None,
     *,
     skills: list[str],
+    methodology: list[dict[str, str]],
     scan_mode: str,
     is_whitebox: bool,
     is_diff_scoped: bool,
@@ -190,6 +191,7 @@ def _compose_root_instructions_override(
 
     base_instructions = render_system_prompt(
         skills=skills,
+        methodology=methodology,
         scan_mode=scan_mode,
         is_whitebox=is_whitebox,
         is_root=True,
@@ -421,6 +423,11 @@ async def run_strix_scan(
         diff_scope = scan_config.get("diff_scope")
         is_diff_scoped = bool(isinstance(diff_scope, dict) and diff_scope.get("active"))
         skills = list(scan_config.get("skills") or [])
+        methodology = [
+            {"name": str(m.get("name") or "methodology"), "content": str(m.get("content") or "")}
+            for m in scan_config.get("methodology") or []
+            if isinstance(m, dict)
+        ]
         root_task = build_root_task(scan_config)
         model_settings = make_model_settings(
             settings.llm.reasoning_effort,
@@ -518,6 +525,7 @@ async def run_strix_scan(
         root_instructions = _compose_root_instructions_override(
             root_instructions_override,
             skills=skills,
+            methodology=methodology,
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
             is_diff_scoped=is_diff_scoped,
@@ -533,6 +541,7 @@ async def run_strix_scan(
         root_agent = build_strix_agent(
             name="Root Agent",
             skills=skills,
+            methodology=methodology,
             is_root=True,
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
@@ -559,6 +568,7 @@ async def run_strix_scan(
             )
 
         child_agent_builder = make_child_factory(
+            methodology=methodology,
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
             is_diff_scoped=is_diff_scoped,
