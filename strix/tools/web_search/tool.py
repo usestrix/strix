@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit, urlunsplit
 
@@ -108,9 +109,19 @@ def _exa_blocks(
     return blocks
 
 
-def _exa_post(api_key: str, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
+_EXA_TIMEOUT_SECONDS = 300
+# A retry with less time left than this is not worth starting.
+_EXA_MIN_RETRY_SECONDS = 30
+
+
+def _exa_post(
+    api_key: str,
+    endpoint: str,
+    payload: dict[str, Any],
+    timeout: float = _EXA_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
     headers = {"x-api-key": api_key, "Content-Type": "application/json"}
-    with requests.post(endpoint, headers=headers, json=payload, timeout=300) as response:
+    with requests.post(endpoint, headers=headers, json=payload, timeout=timeout) as response:
         response.raise_for_status()
         body: dict[str, Any] = response.json()
     return body
@@ -172,8 +183,18 @@ def _exa_failure_reasons(body: dict[str, Any]) -> dict[str, str]:
 def _exa_page_text(api_key: str, urls: list[str]) -> tuple[str, set[str]]:
     """Fetch page text and report which of the requested URLs Exa returned."""
     body: dict[str, Any] = {}
-    for _ in range(2):
-        body = _exa_post(api_key, "https://api.exa.ai/contents", {"urls": urls, "text": True})
+    # Both attempts share one budget, so the retry cannot outlast the tool deadline.
+    deadline = time.monotonic() + _EXA_TIMEOUT_SECONDS
+    for attempt in range(2):
+        remaining = deadline - time.monotonic()
+        if attempt and remaining < _EXA_MIN_RETRY_SECONDS:
+            break
+        body = _exa_post(
+            api_key,
+            "https://api.exa.ai/contents",
+            {"urls": urls, "text": True},
+            timeout=remaining,
+        )
         reasons = _exa_failure_reasons(body)
         permanent = reasons and all(
             reason.split(" ")[0] in _PERMANENT_CRAWL_TAGS for reason in reasons.values()

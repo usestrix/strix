@@ -141,7 +141,7 @@ def test_page_fetch_with_no_content_reports_why_and_does_not_say_try_again(
 ) -> None:
     calls: list[str] = []
 
-    def post(_key: str, endpoint: str, _payload: dict[str, Any]) -> dict[str, Any]:
+    def post(_key: str, endpoint: str, _payload: dict[str, Any], **_kw: Any) -> dict[str, Any]:
         calls.append(endpoint)
         return {
             "results": [],
@@ -175,9 +175,49 @@ def test_page_fetch_retries_once_when_the_failure_may_be_transient(
         {"results": [], "statuses": []},
         {"results": [{"url": "https://x.test/a", "title": "T", "text": "hello"}]},
     ]
-    monkeypatch.setattr(web_tool, "_exa_post", lambda *_a: bodies.pop(0))
+    monkeypatch.setattr(web_tool, "_exa_post", lambda *_a, **_k: bodies.pop(0))
 
     text, fetched = web_tool._exa_page_text("k", ["https://x.test/a"])
 
     assert "hello" in text
     assert fetched == {"https://x.test/a"}
+
+
+async def test_a_read_only_proxy_call_fits_two_attempts_inside_the_tool_deadline() -> None:
+    gql_client = SimpleNamespace(execute_timeout=10)
+    client: Any = SimpleNamespace(graphql=SimpleNamespace(_http_client=gql_client))
+    seen: list[int] = []
+
+    async def read(_client: Any) -> str:
+        seen.append(gql_client.execute_timeout)
+        return "ok"
+
+    await proxy_tools._call(client, read, read_only=True)
+    await proxy_tools._call(client, read)
+
+    assert seen == [caido_api.GRAPHQL_READ_TIMEOUT_SECONDS, caido_api.GRAPHQL_TIMEOUT_SECONDS]
+    assert 2 * caido_api.GRAPHQL_READ_TIMEOUT_SECONDS < 60
+
+
+def test_page_fetch_attempts_share_one_time_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [0.0]
+    timeouts: list[float] = []
+    elapsed = [200.0]
+
+    def post(*_a: Any, timeout: float) -> dict[str, Any]:
+        timeouts.append(timeout)
+        clock[0] += elapsed[0]
+        return {"results": [], "statuses": []}
+
+    monkeypatch.setattr("time.monotonic", lambda: clock[0])
+    monkeypatch.setattr(web_tool, "_exa_post", post)
+
+    with pytest.raises(web_tool._NoPageContentError):
+        web_tool._exa_page_text("k", ["https://x.test/a"])
+    assert timeouts == [300, 100]
+
+    clock[0], elapsed[0] = 0.0, 290.0
+    timeouts.clear()
+    with pytest.raises(web_tool._NoPageContentError):
+        web_tool._exa_page_text("k", ["https://x.test/a"])
+    assert timeouts == [300]  # too little time left to retry

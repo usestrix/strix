@@ -68,7 +68,7 @@ async def _call[T](
     fn: Callable[[Client], Awaitable[T]],
     *,
     read_only: bool = False,
-    timeout: int = caido_api.GRAPHQL_TIMEOUT_SECONDS,
+    timeout: int | None = None,
 ) -> T:
     """Run ``fn`` against the shared client, serialized under ``_CAIDO_CALL_LOCK``.
 
@@ -77,6 +77,13 @@ async def _call[T](
     times out is sent once more. The lock is released between the attempts.
     """
     attempts = 2 if read_only else 1
+    if timeout is None:
+        # Two read attempts must both fit inside the 60-second tool deadline.
+        timeout = (
+            caido_api.GRAPHQL_READ_TIMEOUT_SECONDS
+            if read_only
+            else caido_api.GRAPHQL_TIMEOUT_SECONDS
+        )
     for attempt in range(1, attempts + 1):
         async with _CAIDO_CALL_LOCK:
             caido_api.extend_graphql_timeout(client, timeout)
