@@ -1537,6 +1537,165 @@ def test_billing_subscribe_prints_checkout_url(
     assert "https://pay.test/session" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("verb", ["create", "update"])
+def test_custom_skill_parameter_contract_and_help(verb: str) -> None:
+    cmd = SPEC["knowledge"][f"skills {verb}"]
+    params = {param.name: param for param in cmd.body}
+    assert set(params) == (
+        {"name", "description", "content", "scope"}
+        if verb == "create"
+        else {
+            "description",
+            "content",
+            "scope",
+        }
+    )
+    assert {param.name for param in cmd.body if param.required} == (
+        {"name", "description", "content"} if verb == "create" else set()
+    )
+    assert "300 characters" in params["description"].help
+    assert "30000 characters" in params["content"].help
+    assert "--data @file" in params["content"].help
+    assert params["scope"].kind == "json-list"
+    assert "32 repository references" in params["scope"].help
+    assert "organization-wide" in params["scope"].help
+    assert "knowledge:write" in cmd.help
+    assert "organization admin" in cmd.help
+    assert "Asset-scoped tokens cannot" in cmd.help
+    if verb == "create":
+        assert "1-64 characters" in params["name"].help
+        assert "lowercase letter or digit" in params["name"].help
+        assert "org/<name>" in cmd.help
+    else:
+        assert "at least one field" in cmd.help
+        assert "cannot change the name" in cmd.help
+    help_text = runner._build_parser("knowledge", f"skills {verb}", cmd).format_help()
+    assert "--content" in help_text
+    assert "--scope" in help_text
+    assert "every-agent" not in help_text
+
+
+@pytest.mark.parametrize("verb", ["create", "update"])
+def test_custom_skill_write_requests_from_json_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    verb: str,
+) -> None:
+    body: dict[str, Any] = {
+        "description": "Review authorization boundaries.",
+        "content": "# Authorization\n\nCheck each role.\n",
+        "scope": [{"type": "repo", "id": "repository-1"}],
+    }
+    if verb == "create":
+        body["name"] = "authorization"
+    data = tmp_path / "skill.json"
+    data.write_text(json.dumps(body), encoding="utf-8")
+    seen: dict[str, Any] = {}
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> FakeResponse:
+        seen.update(method=method, path=path, body=kwargs.get("body"))
+        return FakeResponse(payload={"success": True, "skill": body})
+
+    monkeypatch.setattr(http, "request", fake_request)
+    args = ["knowledge", "skills", verb]
+    if verb == "update":
+        args.append("authorization")
+    assert cloud.run_cloud([*args, "--data", f"@{data}", "--json"]) == 0
+    assert seen == {
+        "method": "POST" if verb == "create" else "PATCH",
+        "path": "/knowledge/skills" + ("/authorization" if verb == "update" else ""),
+        "body": body,
+    }
+
+
+def test_custom_skill_create_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake_request(_method: str, _path: str, **kwargs: Any) -> FakeResponse:
+        seen["body"] = kwargs.get("body")
+        return FakeResponse(payload={"success": True})
+
+    monkeypatch.setattr(http, "request", fake_request)
+    assert (
+        cloud.run_cloud(
+            [
+                "knowledge",
+                "skills",
+                "create",
+                "--name",
+                "authorization",
+                "--description",
+                "Review roles.",
+                "--content",
+                "# Authorization\nCheck each role.",
+                "--scope",
+                "[]",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert seen["body"] == {
+        "name": "authorization",
+        "description": "Review roles.",
+        "content": "# Authorization\nCheck each role.",
+        "scope": [],
+    }
+
+
+@pytest.mark.parametrize(
+    ("verb", "method", "suffix", "payload"),
+    [
+        ("list", "GET", "", {"skills": [], "total": 0}),
+        ("get", "GET", "/custom%2Fskill%20%2Bname", {"skill": {"content": "# Review"}}),
+        ("delete", "DELETE", "/custom%2Fskill%20%2Bname", {"success": True}),
+    ],
+)
+def test_custom_skill_read_and_delete_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    verb: str,
+    method: str,
+    suffix: str,
+    payload: dict[str, Any],
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake_request(request_method: str, path: str, **kwargs: Any) -> FakeResponse:
+        seen.update(method=request_method, path=path, query=kwargs.get("query"))
+        return FakeResponse(payload=payload)
+
+    monkeypatch.setattr(http, "request", fake_request)
+    args = ["knowledge", "skills", verb]
+    if verb != "list":
+        args.append("custom/skill +name")
+    assert cloud.run_cloud([*args, "--json"]) == 0
+    assert seen == {"method": method, "path": f"/knowledge/skills{suffix}", "query": None}
+    assert SPEC["knowledge"][f"skills {verb}"].query == ()
+
+
+def test_custom_skill_create_requires_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    def unexpected_request(*_args: Any, **_kwargs: Any) -> FakeResponse:
+        pytest.fail("Missing required fields must not send a request.")
+
+    monkeypatch.setattr(http, "request", unexpected_request)
+    assert cloud.run_cloud(["knowledge", "skills", "create", "--name", "review", "--json"]) == 2
+
+
+def test_custom_skill_empty_update_server_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: Any,
+) -> None:
+    def fake_request(method: str, path: str, **kwargs: Any) -> FakeResponse:
+        assert method == "PATCH"
+        assert path == "/knowledge/skills/review"
+        assert kwargs.get("body") == {}
+        raise http.CloudError("Supply at least one property.", exit_code=1)
+
+    monkeypatch.setattr(http, "request", fake_request)
+    assert cloud.run_cloud(["knowledge", "skills", "update", "review", "--json"]) == 1
+    assert "Supply at least one property." in capsys.readouterr().out
+
+
 def test_knowledge_policy_flags_use_the_api_field_names(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

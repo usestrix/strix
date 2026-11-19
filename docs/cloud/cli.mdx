@@ -89,6 +89,24 @@ Non-Enterprise scans consume the deterministic estimate shown for their scope. A
 
 Report downloads need Enterprise, schedules need Pro, and billing writes need an admin token. A plan block exits `4`. An insufficient credit wallet exits `5` without the creation of a scan and without a charge.
 
+## Organization Skills
+
+Use `strix cloud knowledge skills list|create|get|update|delete` to manage custom Markdown playbooks.
+Agents can load each skill as `org/<name>`. Skills apply organization-wide unless you set a repository scope.
+Reads require `knowledge:read`. Writes require `knowledge:write`. Personal tokens for writes must belong to an organization admin.
+Asset-scoped tokens cannot access these commands.
+
+```bash
+strix cloud knowledge skills create --data @skill.json
+strix cloud knowledge skills update authorization --data @changes.json
+```
+
+Create requests require `name`, `description`, and `content`. Put long Markdown content in the JSON file's `content` field.
+Names use 1-64 lowercase letters, digits, underscores, or hyphens. The first character must be a lowercase letter or digit.
+Descriptions accept at most 300 characters. Content accepts at most 30000 characters.
+The optional `scope` array accepts at most 32 objects with `"type":"repo"` and a repository `id` from `strix cloud repos list`.
+Use an empty scope array to apply the skill organization-wide. Updates require at least one field and cannot change the name.
+
 ## Local Source Scans
 
 See [Scan Local Source](/cloud/overview#scan-local-source) for the upload approval flow, the exclusion rules, and the size limits.

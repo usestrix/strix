@@ -789,6 +789,89 @@ SPEC: dict[str, dict[str, Cmd]] = {
             ),
         ),
         "delete": Cmd("DELETE", "/knowledge/{documentId}", "Delete a knowledge document."),
+        "skills list": Cmd(
+            "GET",
+            "/knowledge/skills",
+            "List custom skills. Requires knowledge:read. "
+            "Asset-scoped tokens cannot access skills.",
+        ),
+        "skills create": Cmd(
+            "POST",
+            "/knowledge/skills",
+            "Create a custom skill that agents can load as org/<name>. "
+            "Requires knowledge:write. Personal tokens must belong to an organization admin. "
+            "Asset-scoped tokens cannot access skills.",
+            body=(
+                P(
+                    "name",
+                    required=True,
+                    help=(
+                        "Skill identifier, 1-64 characters. "
+                        "Start with a lowercase letter or digit. "
+                        "Use lowercase letters, digits, underscores, or hyphens."
+                    ),
+                ),
+                P("description", required=True, help="Skill description, at most 300 characters."),
+                P(
+                    "content",
+                    required=True,
+                    help=(
+                        "Markdown playbook, at most 30000 characters. "
+                        "Use --data @file to supply content in a JSON object."
+                    ),
+                ),
+                P(
+                    "scope",
+                    "json-list",
+                    help=(
+                        "JSON array of at most 32 repository references. "
+                        'Each entry has "type":"repo" and "id":"repository-id". '
+                        "Get IDs from strix cloud repos list. "
+                        "Omit or use [] for organization-wide scope."
+                    ),
+                ),
+            ),
+        ),
+        "skills get": Cmd(
+            "GET",
+            "/knowledge/skills/{skillName}",
+            "Get a custom skill and its content. Requires knowledge:read. "
+            "Asset-scoped tokens cannot access skills.",
+        ),
+        "skills update": Cmd(
+            "PATCH",
+            "/knowledge/skills/{skillName}",
+            "Update a custom skill. Supply at least one field. Strix keeps omitted fields. "
+            "You cannot change the name. Requires knowledge:write. "
+            "Personal tokens must belong to an organization admin. "
+            "Asset-scoped tokens cannot access skills.",
+            body=(
+                P("description", help="Skill description, at most 300 characters."),
+                P(
+                    "content",
+                    help=(
+                        "Markdown playbook, at most 30000 characters. "
+                        "Use --data @file to supply content in a JSON object."
+                    ),
+                ),
+                P(
+                    "scope",
+                    "json-list",
+                    help=(
+                        "JSON array of at most 32 repository references. "
+                        'Each entry has "type":"repo" and "id":"repository-id". '
+                        "Get IDs from strix cloud repos list. Use [] for organization-wide scope."
+                    ),
+                ),
+            ),
+        ),
+        "skills delete": Cmd(
+            "DELETE",
+            "/knowledge/skills/{skillName}",
+            "Delete a custom skill from every future run. Requires knowledge:write. "
+            "Personal tokens must belong to an organization admin. "
+            "Asset-scoped tokens cannot access skills.",
+        ),
         "policies": Cmd("GET", "/knowledge/policies", "List knowledge policies."),
         "policies add": Cmd(
             "POST",
