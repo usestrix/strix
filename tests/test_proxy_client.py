@@ -196,6 +196,19 @@ def test_build_raw_request_drops_stale_content_length_for_empty_body() -> None:
     assert _headers_named(raw, "Content-Length") == []
 
 
+@pytest.mark.parametrize("url", ["ftp://example.com/file", "ftp://user:secret@example.com/file", "file:///tmp/data", "http://"])
+def test_build_raw_request_rejects_non_http_destinations(url: str) -> None:
+    with pytest.raises(ValueError, match="Invalid HTTP URL") as exc:
+        caido_api.build_raw_request(method="GET", url=url, headers={}, body="")
+    assert "secret" not in str(exc.value)
+
+
+@pytest.mark.parametrize("url", ["https://user:secret@example.com/", "http://user@example.com/"])
+def test_build_raw_request_rejects_url_userinfo(url: str) -> None:
+    with pytest.raises(ValueError, match="must not contain userinfo"):
+        caido_api.build_raw_request(method="GET", url=url, headers={}, body="")
+
+
 class _Ctx:
     def __init__(self, context: Any) -> None:
         self.context = context
