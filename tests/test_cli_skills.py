@@ -309,3 +309,10 @@ def test_child_factory_passes_methodology(monkeypatch: pytest.MonkeyPatch) -> No
 
     assert seen["methodology"] == methodology
     assert seen["is_root"] is False
+
+
+def test_methodology_tag_never_reuses_the_wrapper_tag() -> None:
+    methodology_tag = skills_pkg.methodology_tag
+    assert methodology_tag("methodology") == "methodology_rules"
+    assert methodology_tag("") == "methodology_rules"
+    assert methodology_tag("authz method") == "authz_method"

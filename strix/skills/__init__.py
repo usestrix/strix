@@ -275,7 +275,9 @@ def validate_requested_skills(skill_list: list[str], max_skills: int | None = 5)
 
 def methodology_tag(name: str) -> str:
     """Name of a methodology as it appears as a tag in the system prompt."""
-    return re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_") or "methodology"
+    tag = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_")
+    # The prompt wraps all entries in <methodology>; an entry must not reuse that tag.
+    return tag if tag and tag.lower() != "methodology" else "methodology_rules"
 
 
 def resolve_methodology(ref: str) -> tuple[str, str]:
