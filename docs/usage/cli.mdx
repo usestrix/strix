@@ -70,6 +70,16 @@ strix (--target <target> | --target-list <path>) [options]
   value it cannot rank. Omit the flag to exit `2` on any finding.
 </ParamField>
 
+<ParamField path="--no-auto-fix" type="boolean">
+  Do not prepare patches. By default, a full source code scan prepares a patch
+  for each confirmed finding that points at source code. A fix agent writes the
+  patch and a regression test in a copy of the repository. A second agent
+  reviews the result and cannot edit it. Strix saves only an approved patch, as
+  `fixes/<finding-id>.patch` in the run folder. Strix also commits each
+  approved patch to a new local branch. Refer to
+  [Fix findings](#fix-findings). Diff-scoped scans do not prepare patches.
+</ParamField>
+
 <ParamField path="--config" type="string">
   Path to a custom config file (JSON) to use instead of `~/.strix/cli-config.json`.
 </ParamField>
@@ -167,6 +177,45 @@ strix --target-list ./targets.txt
 strix --target ./my-project --workspace-file ./wordlist.txt
 strix --target https://app.com --workspace-file ./openapi.yaml:specs/openapi.yaml
 ```
+
+## Fix Findings
+
+A full source code scan prepares a patch for each confirmed finding that points
+at source code. `strix fix` does the same work for an earlier scan and does not
+scan again.
+
+```bash
+strix fix <run>                      # every confirmed finding that has no patch
+strix fix <run> vuln-0003 vuln-0007  # only these findings
+strix fix <run> vuln-0003 --max-budget 10
+```
+
+`<run>` is the run name, which is the folder name under `./strix_runs`. Scan
+options such as `--max-budget` and `--config` go after the finding IDs. A
+finding that you name does not need high confidence, and a new approved patch
+replaces its earlier patch.
+
+For each finding, a fix agent writes the patch and a regression test in a copy
+of the repository. A second agent reviews the result and cannot edit it. The
+second agent rejects a regression test that passes on the code without the
+patch. After a rejection, the fix agent gets one more attempt. Strix saves only
+an approved patch.
+
+Strix delivers an approved patch in two forms:
+
+- A patch file, `fixes/<finding-id>.patch`, in the run folder. Apply it with
+  `git apply`.
+- A local branch, `strix/fix-<finding-id>-<digest>`, in the repository that you
+  scanned. The branch has one commit on top of the commit that you scanned.
+
+Strix does not change your working tree, your index, or your current branch.
+Strix does not push the branch. Uncommitted changes that were in the directory
+during the scan are not in the branch. If the patch does not apply to the
+scanned commit, Strix makes no branch and the patch file stays available.
+
+`strix fix` exits with `0` when every requested finding has an approved patch.
+It exits with `2` when a finding has no approved patch, and with `1` after a
+fatal error.
 
 ## Exit Codes
 

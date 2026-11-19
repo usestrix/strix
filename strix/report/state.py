@@ -241,6 +241,9 @@ class ReportState:
         self.vulnerability_found_callback: Callable[[dict[str, Any]], None] | None = None
         self.vulnerability_updated_callback: Callable[[dict[str, Any]], None] | None = None
         self.vulnerability_deleted_callback: Callable[[dict[str, Any]], None] | None = None
+        self.vulnerability_fix_callback: Callable[[dict[str, Any], dict[str, Any]], None] | None = (
+            None
+        )
 
         self._sarif_repo_ctx: dict[str, Any] | None = None
         self._sarif_repo_ctx_ready: bool = False
@@ -554,6 +557,36 @@ class ReportState:
         self.save_run_data()
         return report
 
+    def attach_fix(self, report_id: str, fix: dict[str, Any]) -> Path | None:
+        """Record the reviewer-approved patch of a finding and write it to the run folder.
+
+        ``fix["patch"]`` is the ``git diff --binary`` of the tree the fix agent
+        tested and the reviewer approved. It is written to
+        ``fixes/<report_id>.patch`` and handed to ``vulnerability_fix_callback``.
+        Returns the patch file, or ``None`` when the finding no longer exists.
+        """
+        report = next((r for r in self.vulnerability_reports if r.get("id") == report_id), None)
+        if report is None:
+            return None
+        patch_path = self.get_run_dir() / "fixes" / f"{report_id}.patch"
+        patch_path.parent.mkdir(parents=True, exist_ok=True)
+        # Bytes, so no platform rewrites the line endings the patch depends on.
+        patch_path.write_bytes(str(fix.get("patch") or "").encode("utf-8"))
+        # The patch lives in its own file; the finding keeps where it is and what it is.
+        report["fix"] = {
+            **{key: value for key, value in fix.items() if key != "patch"},
+            "patch_file": f"fixes/{report_id}.patch",
+        }
+        self._saved_vuln_ids.discard(report_id)
+        self.save_run_data()
+        if self.vulnerability_fix_callback:
+            try:
+                self.vulnerability_fix_callback(report, dict(fix))
+            except Exception:
+                logger.exception("fix callback failed for %s", report_id)
+        logger.info("Attached approved fix to vulnerability report %s", report_id)
+        return patch_path
+
     def delete_vulnerability_report(
         self,
         report_id: str,
@@ -766,8 +799,15 @@ class ReportState:
         self.run_record["mcp_connection_status"] = status
         self.save_run_data()
 
-    def set_scan_config(self, config: dict[str, Any]) -> None:
+    def set_scan_config(self, config: dict[str, Any], *, reopen: bool = True) -> None:
+        """Record the configuration of the run that is starting.
+
+        ``reopen=False`` is for work on a finished scan, such as ``strix fix``:
+        the recorded status, end time, and final report stay as they are.
+        """
         self.scan_config = config
+        if not reopen:
+            return
         self.run_record["status"] = "running"
         self.run_record["end_time"] = None
         self.run_record.pop("scan_results", None)

@@ -92,6 +92,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         "run_name": args.run_name,
         "diff_scope": getattr(args, "diff_scope", {"active": False}),
         "scan_mode": scan_mode,
+        "auto_fix": bool(getattr(args, "auto_fix", True)),
         "non_interactive": bool(getattr(args, "non_interactive", False)),
         "local_sources": getattr(args, "local_sources", None) or [],
         "workspace_files": getattr(args, "workspace_files", None) or [],
@@ -102,7 +103,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
 
     report_state = ReportState(args.run_name)
     report_state.hydrate_from_run_dir()
-    report_state.set_scan_config(scan_config)
+    report_state.set_scan_config(scan_config, reopen=getattr(args, "fix_request", None) is None)
     report_state.save_run_data()
 
     def display_vulnerability(report: dict[str, Any], *, updated: bool = False) -> None:
@@ -226,6 +227,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                     max_budget_usd=getattr(args, "max_budget_usd", None),
                     max_turns=getattr(args, "max_turns", DEFAULT_MAX_TURNS),
                     status_sink=_note_startup_phase,
+                    fix_request=getattr(args, "fix_request", None),
                 )
             finally:
                 stop_updates.set()

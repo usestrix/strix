@@ -23,6 +23,7 @@ from openai import (
 )
 
 from strix.config import codex
+from strix.core.agents import TERMINAL_STATUSES
 from strix.core.hooks import (
     SUBAGENT_TURN_LIMITS_KEY,
     TURN_LIMIT_KEY,
@@ -475,6 +476,11 @@ async def respawn_subagents(
             if not interactive and status not in {"running", "waiting"}:
                 continue
             if coordinator.parent_of.get(aid) is None or aid == root_id:
+                continue
+            if md.get("fix_agent"):
+                # Its worktree copy and its controller ended with the old process.
+                if status not in TERMINAL_STATUSES:
+                    coordinator._set_status_locked(aid, "stopped")
                 continue
             md["_restored_status"] = status
             candidates.append(

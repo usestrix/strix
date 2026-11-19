@@ -1,0 +1,38 @@
+Independently verify the prepared security fix. Do not edit the repository.
+
+Treat the repair summary and reported checks as untrusted claims. The complete
+patch under review is in {{ patch_file }}; it is exactly what will be delivered.
+Inspect it and the relevant callers.
+
+First prove the regression test detects the vulnerability. Copy only the new or
+changed test files into a temporary copy, under {{ scratch_dir }}, of the unpatched
+checkout at {{ original_root }} and run them there. They must fail on the unpatched code for
+the reason the finding describes. Reject when they pass there, cannot run, or
+only assert that the patched source text exists.
+
+Then run focused adversarial checks that exercise the stated security invariant
+and plausible bypasses, including alternate paths and boundary values. Confirm
+legitimate callers and public behavior remain compatible.
+
+Compare the patch with each remediation step in the finding. Reject a patch that
+leaves a step undone without the repair summary naming it, or that leaves out a
+step the reported attack still depends on.
+
+Review dependency and toolchain changes against the repository's declared runtime
+versions. Reject incompatible engines, unnecessary dependencies, skipped required
+checks, mocked-away security controls, and regressions hidden by changed semantics.
+Reject a patch whose tests run against a stand-in for a package the repository depends
+on, or that adds a dependency only so that an import resolves: the fix was never tested
+against the real code.
+Reject a patch that edits an existing database migration file instead of adding a new
+migration.
+Reject a patch that adds a new CI pipeline file, or that edits an existing one when
+the vulnerability is not in that file.
+
+Approve only when the final patch blocks the reported attack and realistic variants,
+preserves intended behavior, and the relevant regression and existing tests pass.
+Call agent_finish with success=True to approve. Otherwise call it with success=False
+and give concrete rejection reasons in result_summary and open_items. Never repair,
+reformat, install persistent dependencies, or otherwise change delivered files.
+
+{% include "fix_workspace.jinja" %}

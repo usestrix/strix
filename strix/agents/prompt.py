@@ -169,3 +169,28 @@ def render_scope_prompt(system_prompt_context: dict[str, Any] | None) -> str:
         system_prompt_context=system_prompt_context or {},
     )
     return str(rendered).strip()
+
+
+def render_fix_prompt(
+    *,
+    review: bool,
+    workspace_root: str,
+    original_root: str,
+    max_turns: int,
+    scratch_dir: str,
+    patch_file: str = "",
+) -> str:
+    """Render the system prompt of a fix agent, or of the reviewer of its patch."""
+    prompt_dir = get_strix_resource_path("agents", _PROMPT_DIRNAME)
+    env = Environment(
+        loader=FileSystemLoader(prompt_dir),
+        autoescape=select_autoescape(enabled_extensions=(), default_for_string=False),
+    )
+    rendered = env.get_template("fix_review.jinja" if review else "fix.jinja").render(
+        workspace_root=workspace_root,
+        original_root=original_root,
+        max_turns=max_turns,
+        scratch_dir=scratch_dir,
+        patch_file=patch_file,
+    )
+    return str(rendered).strip()

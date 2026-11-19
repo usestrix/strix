@@ -64,6 +64,7 @@ Additional commands:
   strix cloud ...          Use the managed Strix platform
   strix auth ...           Manage model-subscription sign-in
   strix view [RUN]         View a completed or running scan
+  strix fix RUN [FINDING]  Patch findings of an earlier scan
   strix completions SHELL  Generate zsh, bash, or fish tab completion
 """
 
@@ -427,6 +428,75 @@ def _force_utf8_streams() -> None:
             reconfigure(encoding="utf-8")
 
 
+def _take_fix_command() -> list[str]:
+    """Turn ``strix fix RUN [FINDING ...]`` into a headless resume of RUN.
+
+    Returns the finding IDs the user named; none means every finding that
+    qualifies. Scan options after them, such as ``--max-budget``, stay in
+    ``sys.argv`` for the scan parser.
+    """
+    parser = argparse.ArgumentParser(
+        prog="strix fix",
+        description=(
+            "Patch findings of an earlier scan without scanning again. A fix agent "
+            "writes each patch and a regression test, and a second agent reviews it. "
+            "An approved patch is saved in the run folder as fixes/<finding-id>.patch "
+            "and committed to a new local branch. Nothing is pushed."
+        ),
+        epilog="Scan options such as --max-budget and --config are accepted after the IDs.",
+    )
+    parser.add_argument("run", metavar="RUN", help="Run name: the folder under ./strix_runs/.")
+    parser.add_argument(
+        "findings",
+        metavar="FINDING",
+        nargs="*",
+        help="Finding IDs, such as vuln-0001. Default: every confirmed finding with no patch.",
+    )
+    command, scan_options = parser.parse_known_args(sys.argv[2:])
+    if not (run_dir_for(command.run) / "run.json").is_file():
+        Console(stderr=True).print(
+            f"strix fix: ./{RUNS_DIR_NAME} has no run named {command.run}.", markup=False
+        )
+        sys.exit(1)
+    sys.argv[1:] = ["-n", "--resume", command.run, *scan_options]
+    return list(command.findings)
+
+
+def _show_fixes(args: argparse.Namespace, results_path: Path) -> None:
+    """Create the local branch of each approved patch and list what was prepared."""
+    from strix.fix.branches import create_fix_branches
+    from strix.report.state import get_global_report_state
+
+    report_state = get_global_report_state()
+    if report_state is None:
+        return
+    reports = report_state.vulnerability_reports
+    local_sources = getattr(args, "local_sources", None) or []
+    if create_fix_branches(reports, run_dir=results_path, local_sources=local_sources):
+        report_state.save_run_data()
+
+    console = Console()
+    for report in reports:
+        fix = report.get("fix")
+        if not isinstance(fix, dict):
+            continue
+        where = f"branch {fix['branch']}" if fix.get("branch") else "no branch"
+        console.print(
+            f"Reviewed patch for {report.get('id')}: {results_path / str(fix.get('patch_file'))} "
+            f"({where})",
+            markup=False,
+            soft_wrap=True,
+        )
+    fix_request = getattr(args, "fix_request", None)
+    if fix_request is None:
+        return
+    for report_id, outcome in fix_request.outcomes.items():
+        if not outcome.approved:
+            console.print(f"No patch for {report_id}: {outcome.reason}", markup=False)
+    if not fix_request.outcomes:
+        console.print("No finding of this run can be patched.", markup=False)
+
+
 def main() -> None:
     if sys.platform == "win32":
         _force_utf8_streams()
@@ -469,9 +539,19 @@ def main() -> None:
 
         sys.exit(run_cloud(sys.argv[2:]))
 
+    # `strix fix RUN [FINDING ...]` reopens an earlier scan to patch its
+    # findings: a headless resume of that run in which only fix agents work.
+    fix_findings: list[str] | None = None
+    if len(sys.argv) > 1 and sys.argv[1] == "fix":
+        fix_findings = _take_fix_command()
+
     start_import_warmup()
 
     args = parse_arguments()
+    if fix_findings is not None:
+        from strix.fix import FixRequest
+
+        args.fix_request = FixRequest(findings=fix_findings)
     _fall_back_to_headless(args)
 
     start_background_check()
@@ -545,6 +625,12 @@ def main() -> None:
     results_path = run_dir_for(args.run_name)
 
     display_completion_message(args, results_path)
+    _show_fixes(args, results_path)
+
+    fix_request = getattr(args, "fix_request", None)
+    if fix_request is not None:
+        patched = [outcome.approved for outcome in fix_request.outcomes.values()]
+        sys.exit(0 if patched and all(patched) else 2)
 
     if args.non_interactive:
         report_state = get_global_report_state()

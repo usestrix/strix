@@ -963,6 +963,34 @@ async def _do_create(
         }
 
 
+def _schedule_fix(ctx: RunContextWrapper, result: dict[str, Any]) -> None:
+    """Hand a stored finding to the scan's fix controller, when the scan has one.
+
+    The controller decides whether the finding qualifies and ignores a finding
+    it already took, so this is called after every successful create or update.
+    """
+    inner = ctx.context if isinstance(ctx.context, dict) else {}
+    controller = inner.get("fix_controller")
+    report_id = result.get("report_id")
+    if controller is None or not result.get("success") or not isinstance(report_id, str):
+        return
+    from strix.report.state import get_global_report_state
+
+    report_state = get_global_report_state()
+    if report_state is None:
+        return
+    report = next(
+        (r for r in report_state.get_existing_vulnerabilities() if r.get("id") == report_id),
+        None,
+    )
+    if report is None:
+        return
+    try:
+        controller.schedule(report)
+    except Exception:
+        logger.exception("could not schedule fix work for %s", report_id)
+
+
 def _caller_identity(ctx: RunContextWrapper) -> tuple[str | None, str | None]:
     """Return the (agent_id, agent_name) of the agent invoking this tool."""
     inner = ctx.context if isinstance(ctx.context, dict) else {}
@@ -1457,6 +1485,7 @@ async def create_vulnerability_report(
         agent_id=agent_id,
         agent_name=agent_name,
     )
+    _schedule_fix(ctx, result)
     return json.dumps(_with_warning(result, http_exchange_warning), ensure_ascii=False, default=str)
 
 
@@ -1626,6 +1655,8 @@ async def update_vulnerability_report(
         agent_id=agent_id,
         agent_name=agent_name,
     )
+    # A finding filed on static evidence qualifies once its exploit is proven.
+    _schedule_fix(ctx, result)
     return json.dumps(_with_warning(result, http_exchange_warning), ensure_ascii=False, default=str)
 
 
