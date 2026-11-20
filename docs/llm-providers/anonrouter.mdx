@@ -1,0 +1,39 @@
+---
+title: "AnonRouter"
+description: "Configure Strix with models via AnonRouter"
+---
+
+[AnonRouter](https://anonrouter.ai) provides an OpenAI-compatible API for models from multiple providers.
+
+## Setup
+
+Create an AnonRouter API key, then configure Strix:
+
+```bash
+export STRIX_LLM="openai/<anonrouter-model-id>"
+export LLM_API_KEY="your-anonrouter-api-key"
+export LLM_API_BASE="https://api.anonrouter.ai/v1"
+```
+
+The first `openai/` segment tells Strix to use its OpenAI-compatible client. The remaining value is the AnonRouter model ID, passed through unchanged — keep its provider prefix and capitalization exactly as AnonRouter lists it.
+
+Setting `LLM_API_BASE` also makes Strix use the chat completions API rather than the responses API, which is the path AnonRouter serves.
+
+## Available Models
+
+Use any model returned by the AnonRouter models endpoint, which requires your API key:
+
+```bash
+curl https://api.anonrouter.ai/v1/models \
+  -H "Authorization: Bearer $LLM_API_KEY"
+```
+
+Prefix the model ID with `openai/` when setting `STRIX_LLM`, keeping the rest of the ID byte for byte. A listed model ID of the form `<provider>/<model>` becomes `openai/<provider>/<model>` in Strix; a listed ID with no slash becomes `openai/<model>`.
+
+Strix drives scans with streamed tool calls, so pick a model that supports function calling.
+
+## Get API Key
+
+1. Sign up at [anonrouter.ai](https://anonrouter.ai)
+2. Create an API key
+3. Set the key as `LLM_API_KEY`

@@ -41,6 +41,7 @@
               "llm-providers/bedrock",
               "llm-providers/azure",
               "llm-providers/novita",
+              "llm-providers/anonrouter",
               "llm-providers/local"
             ]
           },
