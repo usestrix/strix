@@ -247,6 +247,91 @@ class _NonStreamingModel(Model):
         yield _completed_stream_event(response, getattr(self._inner, "model", None))
 
 
+class _SessionAffinityModel(Model):
+    """Send a per-agent session id so a gateway can pin the agent's traffic.
+
+    Self-hosted gateways keep a request on the provider key that last served its
+    session when the request carries a session-id header (Bifrost's
+    ``x-bf-session-id``, for example), and route every other request freely.
+    Without the header consecutive turns can land on different upstream keys,
+    so prompt-cache hits are lost. The value is the same per-agent id the
+    OpenRouter route sends as ``session_id``.
+    """
+
+    def __init__(self, inner: Model, header: str) -> None:
+        self._inner = inner
+        self._header = header
+
+    def _with_session(self, model_settings: ModelSettings) -> ModelSettings:
+        session_id = _agent_session_id()
+        if session_id is None:
+            return model_settings
+        headers = {**(model_settings.extra_headers or {}), self._header: session_id}
+        return model_settings.resolve(ModelSettings(extra_headers=headers))
+
+    async def close(self) -> None:
+        await self._inner.close()
+
+    def get_retry_advice(self, request: ModelRetryAdviceRequest) -> ModelRetryAdvice | None:
+        return self._inner.get_retry_advice(request)
+
+    async def get_response(
+        self,
+        system_instructions: str | None,
+        input: str | list[TResponseInputItem],  # noqa: A002
+        model_settings: ModelSettings,
+        tools: list[Tool],
+        output_schema: AgentOutputSchemaBase | None,
+        handoffs: list[Handoff],
+        tracing: ModelTracing,
+        *,
+        previous_response_id: str | None,
+        conversation_id: str | None,
+        prompt: ResponsePromptParam | None,
+    ) -> ModelResponse:
+        return await self._inner.get_response(
+            system_instructions,
+            input,
+            self._with_session(model_settings),
+            tools,
+            output_schema,
+            handoffs,
+            tracing,
+            previous_response_id=previous_response_id,
+            conversation_id=conversation_id,
+            prompt=prompt,
+        )
+
+    async def stream_response(
+        self,
+        system_instructions: str | None,
+        input: str | list[TResponseInputItem],  # noqa: A002
+        model_settings: ModelSettings,
+        tools: list[Tool],
+        output_schema: AgentOutputSchemaBase | None,
+        handoffs: list[Handoff],
+        tracing: ModelTracing,
+        *,
+        previous_response_id: str | None,
+        conversation_id: str | None,
+        prompt: ResponsePromptParam | None,
+    ) -> AsyncIterator[TResponseStreamEvent]:
+        stream = self._inner.stream_response(
+            system_instructions,
+            input,
+            self._with_session(model_settings),
+            tools,
+            output_schema,
+            handoffs,
+            tracing,
+            previous_response_id=previous_response_id,
+            conversation_id=conversation_id,
+            prompt=prompt,
+        )
+        async for event in stream:
+            yield event
+
+
 class _TurnGuardModel(Model):
     """Keep one turn from corrupting the conversation or running away.
 
@@ -652,6 +737,8 @@ class StrixProvider(MultiProvider):
                     provider="openai",
                     base_url=self._override_base_url or llm.api_base,
                 )
+            if llm.session_affinity_header:
+                model = _SessionAffinityModel(model, llm.session_affinity_header)
             if llm.disable_streaming:
                 model = _NonStreamingModel(model)
                 # The wrapper emits its single event only once the whole request
@@ -790,9 +877,19 @@ def _configure_litellm_compatibility() -> None:
     _install_openrouter_stream_cost_capture()
 
 
-# Agent ids are 8 hex characters and can repeat across runs; the session id
-# OpenRouter pins a provider to must not, so each agent gets its own UUID.
-_OPENROUTER_SESSION_IDS: dict[str, str] = {}
+# Agent ids are 8 hex characters and can repeat across runs; a session id a
+# gateway pins a provider or key to must not, so each agent gets its own UUID.
+# Shared by the OpenRouter ``session_id`` body field and the session-affinity
+# header, so an agent keeps one identity on either route.
+_AGENT_SESSION_IDS: dict[str, str] = {}
+
+
+def _agent_session_id() -> str | None:
+    """The calling agent's session id, or ``None`` outside an agent run."""
+    agent_id = request_log.current_call_context().agent_id
+    if not agent_id:
+        return None
+    return _AGENT_SESSION_IDS.setdefault(agent_id, str(uuid.uuid4()))
 
 
 def _install_openrouter_stream_cost_capture() -> None:
@@ -864,10 +961,10 @@ def _install_openrouter_stream_cost_capture() -> None:
             # Pin each agent's calls to one upstream provider so its prompt cache
             # survives between turns.
             body = super().transform_request(*args, **kwargs)
-            agent_id = request_log.current_call_context().agent_id
-            if agent_id and load_settings().llm.openrouter_sticky_sessions:
-                session_id = _OPENROUTER_SESSION_IDS.setdefault(agent_id, str(uuid.uuid4()))
-                body.setdefault("session_id", session_id)
+            if load_settings().llm.openrouter_sticky_sessions:
+                session_id = _agent_session_id()
+                if session_id:
+                    body.setdefault("session_id", session_id)
             return body
 
     # LiteLLM's provider-config factory reads litellm.OpenrouterConfig at call
