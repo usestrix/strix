@@ -1,0 +1,64 @@
+---
+title: "NotHoly"
+description: "Configure Strix with NotHoly models"
+---
+
+[NotHoly](https://notholy.com) is a model provider for offensive security. It serves uncensored and abliterated models (abliteration removes a model's built-in refusal behavior) built for the security tasks that general-purpose models often refuse: reverse engineering, pentest, bug bounty, red team, malware analysis, vulnerability research and OSINT. The gateway is OpenAI-compatible, so Strix reaches it through the `openai/` prefix.
+
+NotHoly gives Strix two things with one key: the models below, and an [MCP server](#knowledge-and-tools-over-mcp) that adds a knowledge base and research tools to the agent. Wire both for the full setup.
+
+## Setup
+
+```bash
+export STRIX_LLM="openai/<model-id>"
+export LLM_API_KEY="your-notholy-api-key"
+export LLM_API_BASE="https://api.notholy.com/v1"
+```
+
+## Models
+
+Model ids come from the catalog, so list the current ones instead of pinning a name. The model list endpoint is public:
+
+```bash
+curl https://api.notholy.com/v1/models
+```
+
+Use the id with the `openai/` prefix, for example `export STRIX_LLM="openai/<model-id>"`. You can also browse the catalog in your [NotHoly console](https://notholy.com).
+
+## Cost Tracking
+
+Strix can't price NotHoly model ids on its own. Set the per-million-token prices from the [NotHoly pricing page](https://notholy.com/pricing) so `--max-budget` and the cost report work.
+
+```bash
+export STRIX_LLM_INPUT_COST_PER_MTOK=<input price>
+export STRIX_LLM_CACHED_INPUT_COST_PER_MTOK=<cached input price>
+export STRIX_LLM_OUTPUT_COST_PER_MTOK=<output price>
+```
+
+## Knowledge and tools over MCP
+
+NotHoly also runs an MCP server that hands the agent an offensive-security knowledge base (CKE 2.0) and a set of research tools: `kb_search` and `kb_read` over the knowledge base, `cve_lookup` and `cve_search`, `advisory_query`, `web_search` and `read_url`. The agent can look up a CVE, search prior findings and techniques, and read a page mid-run instead of working from the model's training alone.
+
+It's a remote Streamable HTTP server at `https://api.notholy.com/mcp`, authenticated with the same NotHoly API key. Add it to [`~/.strix/mcp-servers.json`](/integrations/mcp):
+
+```json
+[
+  {
+    "name": "notholy",
+    "transport": "http",
+    "url": "https://api.notholy.com/mcp",
+    "auth": { "kind": "bearer", "token": "your-notholy-api-key" },
+    "allowed_tools": ["kb_search", "kb_read", "cve_lookup", "cve_search", "advisory_query", "web_search", "read_url"]
+  }
+]
+```
+
+`allowed_tools` holds the agent to these read tools; drop it to expose everything the server offers. See the [MCP Servers guide](/integrations/mcp) for how Strix loads this file.
+
+## Get API Key
+
+1. Sign in at [notholy.com](https://notholy.com)
+2. Open the console and go to API keys
+3. Create a key and copy it
+
+See the [NotHoly docs](https://docs.notholy.com) for more.
