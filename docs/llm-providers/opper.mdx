@@ -1,0 +1,54 @@
+---
+title: "Opper"
+description: "Configure Strix with models through Opper"
+---
+
+[Opper](https://opper.ai) is an EU-hosted AI gateway with 700+ models from 50+ providers behind one OpenAI-compatible API.
+
+## Setup
+
+```bash
+export STRIX_LLM="openai/glm-5.3"
+export LLM_API_KEY="your-opper-api-key"
+export LLM_API_BASE="https://api.opper.ai/v3/compat"
+```
+
+The `openai/` prefix sends requests to the OpenAI-compatible endpoint set in `LLM_API_BASE`. The remaining value is an Opper model name.
+
+## Available Models
+
+Model names are bare pool names, and Opper picks the route per request:
+
+| Model | Configuration |
+|-------|---------------|
+| GLM-5.3 (recommended) | `openai/glm-5.3` |
+| GPT-6.1 Sol | `openai/gpt-6.1-sol` |
+| GPT-6 Astra | `openai/gpt-6-astra` |
+| Claude Opus 5.5 | `openai/claude-opus-5-5` |
+| Claude Sonnet 5.5 | `openai/claude-sonnet-5-5` |
+| Gemini 4 Argon | `openai/gemini-4-argon` |
+| Gemini 3.8 Flash | `openai/gemini-3.8-flash` |
+| DeepSeek V4.1 Flash | `openai/deepseek-v4.1-flash` |
+| DeepSeek V4 Pro | `openai/deepseek-v4-pro` |
+| Kimi K3.1 Pro | `openai/kimi-k3.1-pro` |
+| GLM-5.3 Flash | `openai/glm-5.3-flash` |
+
+A `provider/model` name such as `openai/anthropic/claude-sonnet-5-5` pins one route. OpenAI, Anthropic and Gemini models keep their provider safeguards through Opper. Security testing with them needs [Daybreak](https://openai.com/daybreak/), [CVP](https://support.claude.com/en/articles/14604842-cyber-verification-program) or [Fairwind](https://deepmind.google/fairwind-program/) access.
+
+The full list is in Opper's public model catalog:
+
+```text
+https://api.opper.ai/v3/models
+```
+
+## Get API Key
+
+1. Go to [platform.opper.ai](https://platform.opper.ai)
+2. Sign in and create an API key
+3. Set the key as `LLM_API_KEY`
+
+## Benefits
+
+- **EU-hosted**: Opper runs in the EU, and requests can be pinned to EU-hosted regions
+- **Single API**: 700+ models from 50+ providers with one key
+- **Provider rates**: no markup on provider token rates
