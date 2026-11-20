@@ -1,4 +1,4 @@
-"""Security-focused web research tools (Exa or Perplexity)."""
+"""Security-focused web research tools (Exa, Perplexity, or Parallel)."""
 
 from __future__ import annotations
 
@@ -133,6 +133,98 @@ def _exa_content(api_key: str, query: str, search_type: str, num_results: int) -
     return "\n\n".join(blocks)
 
 
+_PARALLEL_MAX_CHARS = 12000
+
+
+def _parallel_result_content(results: list[tuple[str, str]]) -> str:
+    header_chars = sum(len(header) for header, _ in results) + 2 * (len(results) - 1)
+    remaining = max(0, _PARALLEL_MAX_CHARS - header_chars)
+    excerpts = [excerpt.rstrip() for _, excerpt in results]
+    allocations = [0] * len(results)
+    nonempty = [index for index, excerpt in enumerate(excerpts) if excerpt]
+    full_cost = sum(len(excerpts[index]) + 2 for index in nonempty)
+
+    if full_cost <= remaining:
+        for index in nonempty:
+            allocations[index] = len(excerpts[index])
+    else:
+        selected = nonempty[: min(len(nonempty), remaining // 3)]
+        content_budget = remaining - 2 * len(selected)
+        pending = set(selected)
+        while pending:
+            share = content_budget // len(pending)
+            satisfied = [index for index in pending if len(excerpts[index]) <= share]
+            if not satisfied:
+                base, extra = divmod(content_budget, len(pending))
+                for offset, index in enumerate(sorted(pending)):
+                    allocations[index] = base + (offset < extra)
+                break
+            for index in satisfied:
+                allocations[index] = len(excerpts[index])
+                content_budget -= allocations[index]
+                pending.remove(index)
+
+    blocks: list[str] = []
+    for index, (header, _) in enumerate(results):
+        excerpt = excerpts[index][: allocations[index]].rstrip()
+        blocks.append(f"{header}\n\n{excerpt}" if excerpt else header)
+    truncated = any(
+        allocation < len(excerpt) for allocation, excerpt in zip(allocations, excerpts, strict=True)
+    )
+    content = "\n\n".join(blocks)
+    if truncated:
+        content += "\n[excerpts truncated to preserve source links]"
+    return content
+
+
+def _parallel_content(api_key: str, query: str) -> str:
+    with requests.post(
+        "https://api.parallel.ai/v1/search",
+        headers={"x-api-key": api_key, "Content-Type": "application/json"},
+        json={
+            "objective": query,
+            "search_queries": [query[:200]],
+            "mode": "fast",
+            "max_chars_total": _PARALLEL_MAX_CHARS,
+            "advanced_settings": {"max_results": 5},
+        },
+        timeout=300,
+    ) as response:
+        response.raise_for_status()
+        body = response.json()
+    if not isinstance(body, dict):
+        raise TypeError("Parallel response must be an object")
+    results: list[Any] | None = cast("dict[str, Any]", body).get("results")
+    if not isinstance(results, list):
+        raise TypeError("Parallel response has no results list")
+    if not results:
+        return "No web search results found."
+
+    blocks: list[tuple[str, str]] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        result = cast("dict[str, Any]", item)
+        raw_url = result.get("url")
+        if not isinstance(raw_url, str) or not (url := raw_url.strip()):
+            continue
+        raw_title = result.get("title")
+        title = raw_title.strip() if isinstance(raw_title, str) else ""
+        header = f"### {title or url}\n{url}"
+        parts: list[str] = []
+        excerpts: list[Any] | None = result.get("excerpts")
+        if isinstance(excerpts, list):
+            parts.extend(
+                text.strip() for text in excerpts if isinstance(text, str) and text.strip()
+            )
+        blocks.append((header, "\n\n".join(parts)))
+        if len(blocks) == 5:
+            break
+    if not blocks:
+        raise ValueError("Parallel response has no usable results")
+    return _parallel_result_content(blocks)
+
+
 def _normalize_url(url: str) -> str:
     """Canonical form for matching: case-fold scheme and host only, drop a trailing slash."""
     parts = urlsplit(url.strip())
@@ -161,6 +253,61 @@ def _exa_page_text(api_key: str, urls: list[str]) -> tuple[str, set[str]]:
     return "\n\n".join(blocks), fetched
 
 
+def _parallel_page_text(api_key: str, urls: list[str]) -> tuple[str, set[str]]:
+    """Fetch page text and report which of the requested URLs Parallel returned."""
+    headers = {"x-api-key": api_key, "Content-Type": "application/json"}
+    payload = {
+        "urls": urls,
+        "advanced_settings": {"full_content": {"max_chars_per_result": _EXA_PAGE_MAX_CHARS}},
+    }
+    with requests.post(
+        "https://api.parallel.ai/v1/extract",
+        headers=headers,
+        json=payload,
+        timeout=300,
+    ) as response:
+        response.raise_for_status()
+        body = response.json()
+    if not isinstance(body, dict):
+        raise TypeError("Parallel Extract response must be an object")
+    results: list[Any] | None = cast("dict[str, Any]", body).get("results")
+    if not isinstance(results, list):
+        raise TypeError("Parallel Extract response has no results list")
+
+    blocks: list[str] = []
+    fetched: set[str] = set()
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        result = cast("dict[str, Any]", item)
+        raw_url = result.get("url")
+        if not isinstance(raw_url, str) or not (url := raw_url.strip()):
+            continue
+        raw_content = result.get("full_content")
+        content = raw_content.strip() if isinstance(raw_content, str) else ""
+        if not content:
+            excerpts: list[Any] | None = result.get("excerpts")
+            if isinstance(excerpts, list):
+                content = "\n\n".join(
+                    excerpt.strip()
+                    for excerpt in excerpts
+                    if isinstance(excerpt, str) and excerpt.strip()
+                )
+        if not content:
+            continue
+        if len(content) > _EXA_PAGE_MAX_CHARS:
+            content = (
+                f"{content[:_EXA_PAGE_MAX_CHARS]}\n[truncated at {_EXA_PAGE_MAX_CHARS} characters]"
+            )
+        raw_title = result.get("title")
+        title = raw_title.strip() if isinstance(raw_title, str) else ""
+        blocks.append(f"### {title or url}\n{url}\n\n{content}")
+        fetched.add(_normalize_url(url))
+    if not blocks:
+        raise ValueError("Parallel Extract returned no page contents")
+    return "\n\n".join(blocks), fetched
+
+
 def _resolve_provider(  # noqa: PLR0911 - each provider/missing-key case needs its own return
     integrations: Any,
 ) -> tuple[str, str] | dict[str, Any]:
@@ -177,6 +324,10 @@ def _resolve_provider(  # noqa: PLR0911 - each provider/missing-key case needs i
         if not exa_key:
             return _not_configured_error("EXA_API_KEY")
         return ("exa", exa_key)
+    if provider == "parallel":
+        if not integrations.parallel_api_key:
+            return _not_configured_error("PARALLEL_API_KEY")
+        return ("parallel", integrations.parallel_api_key)
 
     if exa_key:
         return ("exa", exa_key)
@@ -216,7 +367,7 @@ def _guarded_call[T](  # noqa: PLR0911 - each error class needs its own sanitize
     except requests.exceptions.RequestException:
         logger.exception("%s network error", tool)
         return {"success": False, "error": f"{tool} network error. Try again later"}
-    except (KeyError, IndexError, ValueError):
+    except (KeyError, IndexError, TypeError, ValueError):
         logger.exception("%s response shape unexpected", tool)
         return {"success": False, "error": f"{tool} returned an unexpected response. Try again"}
     except Exception:
@@ -225,7 +376,8 @@ def _guarded_call[T](  # noqa: PLR0911 - each error class needs its own sanitize
 
 
 def _do_search(query: str) -> dict[str, Any]:
-    if not query or not query.strip():
+    query = query.strip()
+    if not query:
         return {"success": False, "error": "Query cannot be empty"}
 
     integrations = load_settings().integrations
@@ -233,9 +385,16 @@ def _do_search(query: str) -> dict[str, Any]:
     if isinstance(resolved, dict):
         return resolved
     provider, api_key = resolved
+    if provider == "parallel" and len(query) > 5000:
+        return {
+            "success": False,
+            "error": "Parallel search queries must be at most 5000 characters",
+        }
     logger.info("web_search provider=%s query (len=%d): %s", provider, len(query), query[:120])
 
     def fetch() -> str:
+        if provider == "parallel":
+            return _parallel_content(api_key, query)
         if provider == "exa":
             return _exa_content(
                 api_key,
@@ -248,7 +407,10 @@ def _do_search(query: str) -> dict[str, Any]:
     outcome = _guarded_call(
         "Web search",
         (
-            "Web search rejected the query. Refine it "
+            "Parallel rejected the request. Check PARALLEL_API_KEY, account credits, "
+            "rate limits, and query length"
+            if provider == "parallel"
+            else "Web search rejected the query. Refine it "
             "(more specific, shorter, no unusual characters) and retry"
         ),
         fetch,
@@ -263,7 +425,9 @@ def _do_search(query: str) -> dict[str, Any]:
     }
 
 
-def _do_get_contents(urls: list[str]) -> dict[str, Any]:
+def _do_get_contents(  # noqa: PLR0911 - validation and provider errors return directly
+    urls: list[str],
+) -> dict[str, Any]:
     cleaned = [url.strip() for url in urls if url and url.strip()]
     if not cleaned:
         return {"success": False, "error": "Provide at least one URL"}
@@ -274,9 +438,6 @@ def _do_get_contents(urls: list[str]) -> dict[str, Any]:
         }
 
     integrations = load_settings().integrations
-    api_key = integrations.exa_api_key
-    if not api_key:
-        return _not_configured_error("EXA_API_KEY")
     if integrations.web_search_provider == "perplexity":
         logger.warning("web_get_contents invoked while the provider is pinned to Perplexity")
         return {
@@ -288,11 +449,26 @@ def _do_get_contents(urls: list[str]) -> dict[str, Any]:
             ),
         }
 
-    logger.info("web_get_contents urls=%d", len(cleaned))
+    provider = integrations.web_search_provider
+    if provider == "parallel":
+        api_key = integrations.parallel_api_key
+        if not api_key:
+            return _not_configured_error("PARALLEL_API_KEY")
+        page_fetch = _parallel_page_text
+        source_name = "Parallel Extract"
+    else:
+        api_key = integrations.exa_api_key
+        if not api_key:
+            return _not_configured_error("EXA_API_KEY")
+        provider = "exa"
+        page_fetch = _exa_page_text
+        source_name = "Exa"
+
+    logger.info("web_get_contents provider=%s urls=%d", provider, len(cleaned))
     outcome = _guarded_call(
         "Page fetch",
         "Page fetch was rejected. Check the URLs are complete, public, and correctly formed",
-        lambda: _exa_page_text(api_key, cleaned),
+        lambda: page_fetch(api_key, cleaned),
     )
     if isinstance(outcome, dict):
         return outcome
@@ -301,7 +477,7 @@ def _do_get_contents(urls: list[str]) -> dict[str, Any]:
     result: dict[str, Any] = {
         "success": True,
         "urls": [url for url in cleaned if url not in missing],
-        "provider": "exa",
+        "provider": provider,
         "content": content,
     }
     if missing:
@@ -310,7 +486,8 @@ def _do_get_contents(urls: list[str]) -> dict[str, Any]:
         )
         result["failed_urls"] = missing
         result["warning"] = (
-            f"Exa returned no content for {len(missing)} of {len(cleaned)} requested URLs. "
+            f"{source_name} returned no content for {len(missing)} of {len(cleaned)} requested "
+            "URLs. "
             "Those pages are missing from the content below"
         )
     return result
@@ -318,7 +495,7 @@ def _do_get_contents(urls: list[str]) -> dict[str, Any]:
 
 @function_tool(timeout=330)
 async def web_search(ctx: RunContextWrapper, query: str) -> str:
-    """Real-time web search (Exa or Perplexity) — your primary research tool.
+    """Real-time web search (Exa, Perplexity, or Parallel) — your primary research tool.
 
     Use it liberally for anything that's not in your training data:
 
@@ -354,6 +531,11 @@ async def web_search(ctx: RunContextWrapper, query: str) -> str:
     full page text when a summary is not enough. With Perplexity you get
     a single synthesized cited answer.
 
+    With Parallel you get ranked titles, source URLs, and relevant excerpts,
+    capped to keep the response concise. These are source excerpts, not a
+    synthesized answer. ``web_get_contents`` uses Parallel Extract when the
+    operator pins Parallel.
+
     **Good example queries** (each is a full sentence, names a
     version/product, and asks one concrete thing):
 
@@ -385,7 +567,7 @@ async def web_search(ctx: RunContextWrapper, query: str) -> str:
 
 @function_tool(timeout=330)
 async def web_get_contents(ctx: RunContextWrapper, urls: list[str]) -> str:
-    """Fetch the full, cleaned text of specific web pages (Exa only).
+    """Fetch the full, cleaned text of specific web pages (Exa or Parallel Extract).
 
     Use this as the drill-down step after ``web_search``: when a result's
     summary is not enough, pass that result's URL here to read the whole
@@ -396,9 +578,10 @@ async def web_get_contents(ctx: RunContextWrapper, urls: list[str]) -> str:
     the few URLs worth reading in full — each page can be large, so avoid
     fetching many pages you do not need.
 
-    This tool needs the Exa provider (``EXA_API_KEY``). When the operator
-    pins the provider to Perplexity, it returns an error and you should
-    use ``web_search`` instead.
+    This tool uses Parallel Extract (``PARALLEL_API_KEY``) when the operator
+    pins Parallel. Otherwise it uses Exa (``EXA_API_KEY``). When the operator
+    pins Perplexity, it returns an error before checking any Exa key; use
+    ``web_search`` instead.
 
     Some pages block extraction. When a page returns no content, the
     result lists it under ``failed_urls`` and the ``content`` field holds
