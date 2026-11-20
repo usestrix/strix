@@ -13,6 +13,10 @@ from strix.agents import factory
 from strix.config import load_settings
 
 
+_MISSING_PTY_SESSION_ID = 60418
+_MISSING_PTY_RESULT = f"write_stdin failed: PTY session not found: {_MISSING_PTY_SESSION_ID}"
+
+
 def _capturing_exec_tool(captured: dict[str, str]) -> FunctionTool:
     async def invoke(_ctx: Any, raw_input: str) -> str:
         captured["raw_input"] = raw_input
@@ -20,6 +24,19 @@ def _capturing_exec_tool(captured: dict[str, str]) -> FunctionTool:
 
     return FunctionTool(
         name="exec_command",
+        description="test tool",
+        params_json_schema={"type": "object", "properties": {}},
+        on_invoke_tool=invoke,
+    )
+
+
+def _capturing_write_stdin_tool(results: list[str], captured: list[str]) -> FunctionTool:
+    async def invoke(_ctx: Any, raw_input: str) -> str:
+        captured.append(raw_input)
+        return results.pop(0)
+
+    return FunctionTool(
+        name="write_stdin",
         description="test tool",
         params_json_schema={"type": "object", "properties": {}},
         on_invoke_tool=invoke,
@@ -215,3 +232,62 @@ def test_view_image_is_left_out_for_text_only_models(
 
     view_image = next(tool for tool in filesystem.tools() if tool.name == "view_image")
     assert cast("FunctionTool", view_image).is_enabled is has_view_image
+
+
+@pytest.mark.asyncio
+async def test_wrap_write_stdin_blocks_repeat_empty_poll_after_dead_pty() -> None:
+    captured: list[str] = []
+    wrapped = factory._wrap_write_stdin(
+        _capturing_write_stdin_tool([_MISSING_PTY_RESULT], captured)
+    )
+    raw_input = json.dumps({"session_id": _MISSING_PTY_SESSION_ID, "chars": ""})
+
+    first_result = await wrapped.on_invoke_tool(cast("Any", None), raw_input)
+    second_result = await wrapped.on_invoke_tool(cast("Any", None), raw_input)
+
+    assert first_result == _MISSING_PTY_RESULT
+    assert "non-retryable" in second_result
+    assert len(captured) == 1
+
+
+@pytest.mark.asyncio
+async def test_wrap_write_stdin_does_not_mark_session_dead_from_echoed_output() -> None:
+    # A live poll whose captured output merely echoes the not-found text must
+    # not poison the session; later empty polls must still reach the tool.
+    live_output = (
+        f"Process running with session ID {_MISSING_PTY_SESSION_ID}\nOutput:\n"
+        f"{_MISSING_PTY_RESULT}\n"
+    )
+    captured: list[str] = []
+    wrapped = factory._wrap_write_stdin(
+        _capturing_write_stdin_tool([live_output, live_output], captured)
+    )
+    raw_input = json.dumps({"session_id": _MISSING_PTY_SESSION_ID, "chars": ""})
+
+    first_result = await wrapped.on_invoke_tool(cast("Any", None), raw_input)
+    second_result = await wrapped.on_invoke_tool(cast("Any", None), raw_input)
+
+    assert first_result == live_output
+    assert second_result == live_output
+    assert len(captured) == 2
+
+
+@pytest.mark.asyncio
+async def test_wrap_write_stdin_blocks_repeat_poll_when_chars_is_omitted() -> None:
+    # An empty poll may omit `chars` entirely; a known-dead session must still
+    # be short-circuited rather than polled again.
+    captured: list[str] = []
+    wrapped = factory._wrap_write_stdin(
+        _capturing_write_stdin_tool([_MISSING_PTY_RESULT, _MISSING_PTY_RESULT], captured)
+    )
+
+    await wrapped.on_invoke_tool(
+        cast("Any", None),
+        json.dumps({"session_id": _MISSING_PTY_SESSION_ID, "chars": ""}),
+    )
+    second_result = await wrapped.on_invoke_tool(
+        cast("Any", None), json.dumps({"session_id": _MISSING_PTY_SESSION_ID})
+    )
+
+    assert "non-retryable" in second_result
+    assert len(captured) == 1
