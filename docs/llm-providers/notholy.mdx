@@ -33,6 +33,26 @@ export STRIX_LLM_CACHED_INPUT_COST_PER_MTOK=<cached input price>
 export STRIX_LLM_OUTPUT_COST_PER_MTOK=<output price>
 ```
 
+## Knowledge and tools over MCP
+
+NotHoly also runs an MCP server that hands the agent an offensive-security knowledge base (CKE 2.0) and a set of research tools: `kb_search` and `kb_read` over the knowledge base, `cve_lookup` and `cve_search`, `advisory_query`, `web_search` and `read_url`. The agent can look up a CVE, search prior findings and techniques, and read a page mid-run instead of working from the model's training alone.
+
+It's a remote Streamable HTTP server at `https://api.notholy.com/mcp`, authenticated with the same NotHoly API key. Add it to [`~/.strix/mcp-servers.json`](/integrations/mcp):
+
+```json
+[
+  {
+    "name": "notholy",
+    "transport": "http",
+    "url": "https://api.notholy.com/mcp",
+    "auth": { "kind": "bearer", "token": "your-notholy-api-key" },
+    "allowed_tools": ["kb_search", "kb_read", "cve_lookup", "cve_search", "advisory_query", "web_search", "read_url"]
+  }
+]
+```
+
+`allowed_tools` holds the agent to these read tools; drop it to expose everything the server offers. See the [MCP Servers guide](/integrations/mcp) for how Strix loads this file.
+
 ## Get API Key
 
 1. Sign in at [notholy.com](https://notholy.com)
