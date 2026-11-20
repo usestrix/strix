@@ -14,7 +14,7 @@ from strix.llm import request_log
 
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import AsyncIterator, Iterator
 
     from agents.models.interface import ModelTracing
 
@@ -44,6 +44,12 @@ class _Recorder:
     async def get_response(self, *args: Any, **kwargs: Any) -> Any:
         self.settings = args[2] if len(args) > 2 else kwargs["model_settings"]
         return None
+
+    async def stream_response(self, *args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        self.settings = args[2] if len(args) > 2 else kwargs["model_settings"]
+        events: list[Any] = []
+        for event in events:
+            yield event
 
 
 @contextmanager
@@ -119,3 +125,49 @@ async def test_no_header_outside_an_agent_run() -> None:
     )
 
     assert recorder.settings is settings
+
+
+async def test_stream_response_carries_the_header() -> None:
+    recorder = _Recorder()
+    model = models._SessionAffinityModel(recorder, "x-bf-session-id")  # type: ignore[arg-type]
+
+    with _agent("root"):
+        stream = model.stream_response(
+            None,
+            [],
+            ModelSettings(),
+            [],
+            None,
+            [],
+            _TRACING,
+            previous_response_id=None,
+            conversation_id=None,
+            prompt=None,
+        )
+        async for _ in stream:
+            pass
+
+    assert recorder.settings is not None
+    assert recorder.settings.extra_headers is not None
+    assert recorder.settings.extra_headers["x-bf-session-id"]
+
+
+def _wraps_session_affinity(model: object) -> bool:
+    while model is not None:
+        if isinstance(model, models._SessionAffinityModel):
+            return True
+        model = getattr(model, "_inner", None)
+    return False
+
+
+def test_provider_adds_the_wrapper_only_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIX_LLM", "openai/some-model")
+    monkeypatch.setenv("LLM_API_KEY", "token")
+    monkeypatch.setenv("OPENAI_API_KEY", "token")
+    provider = models.StrixProvider()
+
+    assert not _wraps_session_affinity(provider.get_model("openai/some-model"))
+
+    monkeypatch.setenv("STRIX_SESSION_AFFINITY_HEADER", "x-bf-session-id")
+    monkeypatch.setattr(loader, "_cached", None)
+    assert _wraps_session_affinity(provider.get_model("openai/some-model"))
