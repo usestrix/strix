@@ -22,6 +22,22 @@ from strix.skills import validate_requested_skills
 logger = logging.getLogger(__name__)
 
 
+def inheritable_history(turn_input: Any) -> list[Any]:
+    """Parent history a child may inherit, without ``reasoning`` items.
+
+    Reasoning items carry provider-encrypted blobs (hundreds of KB each) that a
+    child cannot read as text, and compaction does not count them, so inheriting
+    them can put a newborn child past the model's context window.
+    """
+    if not turn_input:
+        return []
+    return [
+        item
+        for item in turn_input
+        if not (isinstance(item, dict) and item.get("type") == "reasoning")
+    ]
+
+
 def _ctx(ctx: RunContextWrapper) -> dict[str, Any]:
     return ctx.context if isinstance(ctx.context, dict) else {}
 
@@ -186,7 +202,7 @@ async def send_message_to_agent(
     - Telling a child to wrap up or change course.
 
     **Don't** use for routine "hello/status" pings, for context the
-    target already has (children inherit parent history), or when
+    target already has (via ``task`` or inherited history), or when
     parent/child completion via ``agent_finish`` already covers the
     flow. In interactive runs a message wakes the target regardless of
     status, so a follow-up can restart a completed/stopped/failed agent.
@@ -496,7 +512,7 @@ async def create_agent(
     ctx: RunContextWrapper,
     name: str,
     task: str,
-    inherit_context: bool = True,
+    inherit_context: bool = False,
     skills: list[str] | None = None,
 ) -> str:
     """Spawn a specialist child agent to run in parallel.
@@ -537,9 +553,9 @@ async def create_agent(
             state it should build on rather than rediscover — what
             recon already mapped, which surfaces are already covered.
             A child that is not told what is already known repeats it.
-        inherit_context: Default ``True``. The child receives the
-            parent's input history as background; only set ``False``
-            when starting a clean-slate task.
+        inherit_context: Default ``False``. Set ``True`` only when the
+            child truly needs the parent's input history as background;
+            prefer putting the context it needs in ``task``.
         skills: List of skill names (e.g. ``["xss", "sql_injection"]``).
             Max 5; prefer 1-3.
     """
@@ -573,7 +589,7 @@ async def create_agent(
             default=str,
         )
 
-    parent_history = list(ctx.turn_input) if inherit_context and ctx.turn_input else []
+    parent_history = inheritable_history(ctx.turn_input) if inherit_context else []
     try:
         result = await spawner(
             parent_ctx=inner,
