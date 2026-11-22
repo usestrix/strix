@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import math
 import webbrowser
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from strix.config import load_settings
+from strix.config import codex, connections, load_settings
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui.backend.live_view import TuiLiveView
 from strix.interface.tui.backend.projection import (
@@ -38,6 +39,10 @@ ChangeCallback = Callable[[], None]
 StartCallback = Callable[[], Awaitable[None]]
 VerifyCallback = Callable[[], Awaitable[None]]
 QuitCallback = Callable[[], Awaitable[None]]
+ModelChangedCallback = Callable[[], None]
+
+_MODEL_LIST_BUDGET = 44 * 1024
+_LOGIN_TIMEOUT_S = 300
 
 
 class TuiController:
@@ -54,6 +59,7 @@ class TuiController:
         on_verify: VerifyCallback | None = None,
         on_quit: QuitCallback | None = None,
         on_change: ChangeCallback | None = None,
+        on_model_changed: ModelChangedCallback | None = None,
     ) -> None:
         self.args = args
         self.live_view = live_view or TuiLiveView()
@@ -115,6 +121,11 @@ class TuiController:
         self._on_verify = on_verify
         self._on_quit = on_quit
         self._on_change = on_change
+        self._on_model_changed = on_model_changed
+        self.login_state = ""
+        self.login_error = ""
+        self._login_server: Any = None
+        self._login_task: asyncio.Task[None] | None = None
 
     def set_change_callback(self, callback: ChangeCallback) -> None:
         self._on_change = callback
@@ -177,6 +188,9 @@ class TuiController:
         model = ""
         with contextlib.suppress(Exception):
             model = (load_settings().llm.model or "").strip()
+        effort = ""
+        with contextlib.suppress(Exception):
+            effort = str(load_settings().llm.reasoning_effort)
         usage: dict[str, Any] = {}
         if self.report_state is not None:
             usage = dict(self.report_state.get_total_llm_usage())
@@ -200,6 +214,9 @@ class TuiController:
             "scope_mode": self.scope_mode,
             "diff_base": terminal_projection(self.diff_base, max_string=256),
             "model": terminal_projection(model, max_string=256),
+            "effort": effort,
+            "login_state": self.login_state,
+            "login_error": terminal_projection(self.login_error, max_string=256),
             "caido_url": terminal_projection(
                 getattr(self.report_state, "caido_url", None), max_string=1024
             ),
@@ -291,6 +308,15 @@ class TuiController:
             "agent.send_message": self._send_message,
             "agent.stop": self._stop_agent,
             "viewer.open": self._open_viewer,
+            "models.list": self._models_list,
+            "models.select": self._models_select,
+            "models.favorite": self._models_favorite,
+            "providers.list": self._providers_list,
+            "providers.connect": self._providers_connect,
+            "providers.disconnect": self._providers_disconnect,
+            "providers.login": self._providers_login,
+            "providers.login_cancel": self._providers_login_cancel,
+            "settings.set": self._settings_set,
             "app.quit": self._quit,
         }
         handler = handlers.get(command)
@@ -325,11 +351,15 @@ class TuiController:
             raise TypeError("mount_working_dir must be a boolean")
         model = (load_settings().llm.model or "").strip()
         if not model:
-            raise ValueError("No model configured. Set STRIX_LLM first.")
+            raise ValueError("No model selected. Press ctrl+p and choose Switch model.")
         if self._on_start is None:
             raise RuntimeError("Scan start is unavailable")
         if not self.targets and not mount_working_dir:
             raise ValueError("No target set. Add a target first.")
+        if not self.targets and self.scope_mode == "diff":
+            # Diff scope resolves before the working directory is attached, so it
+            # would fail after the mount prompt has already locked setup.
+            raise ValueError("Diff scope needs a repository target. Add one or change the scope.")
         # The model check runs while still on the start screen, for a bare
         # prompt as much as for a named target, so a failure lands in the setup
         # log where the user can fix it and retry rather than in a dead run.
@@ -371,6 +401,173 @@ class TuiController:
         self.setup_mode = False
         self.scan_started = True
         self.scan_state = "running"
+
+    async def _models_list(self, _payload: dict[str, Any]) -> dict[str, Any]:
+        picker = await asyncio.to_thread(connections.model_picker)
+        providers = picker["providers"]
+        while len(json.dumps(picker)) > _MODEL_LIST_BUDGET:
+            largest = max(providers, key=lambda entry: len(entry["models"]))
+            if len(largest["models"]) <= 1:
+                break
+            largest["models"] = largest["models"][: len(largest["models"]) * 3 // 4]
+        return picker
+
+    async def _models_select(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
+        provider = self._required_string(payload, "provider")
+        model = self._required_string(payload, "model")
+        connections.select_model(provider, model)
+        if self._on_model_changed is not None:
+            self._on_model_changed()
+        return {"provider": provider, "model": model}
+
+    async def _models_favorite(self, payload: dict[str, Any]) -> dict[str, Any]:
+        provider = self._required_string(payload, "provider")
+        model = self._required_string(payload, "model")
+        return {
+            "provider": provider,
+            "model": model,
+            "favorite": connections.toggle_favorite(provider, model),
+        }
+
+    async def _providers_list(self, _payload: dict[str, Any]) -> dict[str, Any]:
+        return connections.provider_directory()
+
+    async def _providers_connect(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
+        provider = self._required_string(payload, "provider")
+        api_key = payload.get("api_key")
+        api_base = payload.get("api_base")
+        if api_key is not None and not isinstance(api_key, str):
+            raise TypeError("api_key must be a string")
+        if api_base is not None and not isinstance(api_base, str):
+            raise TypeError("api_base must be a string")
+        if provider in connections.SEARCH_SERVICES:
+            connections.set_setting(provider, api_key)
+            return {
+                "provider": provider,
+                "name": connections.SEARCH_SERVICES[provider],
+                "models": 0,
+            }
+        connections.connect(provider, api_key=api_key, api_base=api_base)
+        models = await asyncio.to_thread(connections.provider_models, provider)
+        return {
+            "provider": provider,
+            "name": connections.get_provider(provider).name,
+            "models": len(models),
+        }
+
+    async def _providers_disconnect(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
+        provider = self._required_string(payload, "provider")
+        if provider in connections.SEARCH_SERVICES:
+            connections.set_setting(provider, None)
+        else:
+            before = load_settings().llm
+            connections.disconnect(provider)
+            after = load_settings().llm
+            changed = (before.model, before.api_key, before.api_base) != (
+                after.model,
+                after.api_key,
+                after.api_base,
+            )
+            if changed and self._on_model_changed is not None:
+                self._on_model_changed()
+        return {"provider": provider}
+
+    async def _providers_login(self, _payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
+        from strix.interface.auth_cli import start_callback_server
+
+        self._stop_login()
+        server = start_callback_server()
+        if server is None:
+            raise RuntimeError(
+                f"Port {codex.CALLBACK_PORT} is busy. Run: strix auth login chatgpt --manual"
+            )
+        verifier, challenge = codex.generate_pkce()
+        state = codex.create_state()
+        url = codex.build_authorize_url(challenge, state)
+        self._login_server = server
+        self.login_state = "pending"
+        self.login_error = ""
+        self._login_task = asyncio.create_task(self._finish_login(server, verifier, state))
+        with contextlib.suppress(Exception):
+            webbrowser.open(url)
+        return {"url": url}
+
+    async def _finish_login(self, server: Any, verifier: str, state: str) -> None:
+        try:
+            result = await asyncio.to_thread(server.wait, _LOGIN_TIMEOUT_S)
+            code = self._login_code(result, state)
+            record = await asyncio.to_thread(codex.exchange_code, code, verifier)
+            codex.save_record(record)
+            self.login_state = "done"
+        except Exception as exc:  # noqa: BLE001
+            self.login_state = "error"
+            self.login_error = str(exc)
+        finally:
+            if self._login_server is server:
+                self._login_server = None
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(server.shutdown)
+        self.notify_changed()
+
+    @staticmethod
+    def _login_code(result: tuple[str | None, str | None, str | None] | None, state: str) -> str:
+        if result is None:
+            raise codex.CodexAuthError("timeout", "Sign-in timed out")
+        code, returned_state, error = result
+        if error:
+            raise codex.CodexAuthError("oauth_error", error)
+        if not code or returned_state != state:
+            raise codex.CodexAuthError("state_mismatch", "Sign-in could not be verified")
+        return code
+
+    def _stop_login(self) -> None:
+        task, self._login_task = self._login_task, None
+        server, self._login_server = self._login_server, None
+        if task is not None:
+            task.cancel()
+        if server is not None:
+            with contextlib.suppress(Exception):
+                server.cancel()
+        self.login_state = ""
+        self.login_error = ""
+
+    async def _providers_login_cancel(self, _payload: dict[str, Any]) -> dict[str, Any]:
+        self._stop_login()
+        return {}
+
+    async def _settings_set(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
+        name = self._required_string(payload, "name")
+        value = payload.get("value")
+        if value is not None and not isinstance(value, str):
+            raise TypeError("value must be a string")
+        text = (value or "").strip()
+        if name == "scan_mode":
+            if text not in SCAN_MODES:
+                raise ValueError(f"Scan mode must be one of: {', '.join(SCAN_MODES)}")
+            self.scan_mode = text
+        elif name == "scope_mode":
+            if text not in SCOPE_MODES:
+                raise ValueError(f"Scope must be one of: {', '.join(SCOPE_MODES)}")
+            self.scope_mode = text
+        elif name == "max_budget_usd":
+            if not text:
+                self.max_budget_usd = None
+            else:
+                try:
+                    budget = float(text.lstrip("$"))
+                except ValueError as exc:
+                    raise ValueError("Budget must be a number") from exc
+                if not math.isfinite(budget) or budget <= 0:
+                    raise ValueError("Budget must be greater than 0")
+                self.max_budget_usd = budget
+        else:
+            connections.set_setting(name, text)
+        return {"name": name, "value": text}
 
     async def _confirm_mount(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Answer the pending working-directory mount asked for in the live view."""

@@ -257,6 +257,7 @@ ignore = [
 "strix/interface/cloud/payment_proxy.py" = ["N802"]
 # Lazy telemetry import to avoid importing PostHog before the viewer starts.
 "strix/interface/viewer/cli.py" = ["PLC0415"]
+"strix/config/connections.py" = ["PLC0415"]
 # Lazy imports inside functions to avoid circular dependency with
 # strix.telemetry / strix.report.dedupe / cvss.
 "strix/tools/notes/tools.py" = ["PLC0415", "TC002"]

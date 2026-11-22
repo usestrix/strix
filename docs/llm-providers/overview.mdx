@@ -5,9 +5,22 @@ description: "Configure your AI model for Strix"
 
 Strix uses [LiteLLM](https://docs.litellm.ai/docs/providers) for model compatibility, supporting 100+ LLM providers.
 
+## Pick a model in the terminal
+
+Run `strix` with no arguments and press `ctrl+p`:
+
+| Command          | What it does                                                                  |
+| ---------------- | ----------------------------------------------------------------------------- |
+| Switch model     | Search the models of every connected provider. `ctrl+f` marks a favorite.      |
+| Connect provider | Add an API key, sign in with ChatGPT, or point at a local or compatible server. |
+| Switch effort    | Set the reasoning effort.                                                     |
+| Open settings    | Scan mode, scope and budget.                                                  |
+
+Strix saves your choices in `~/.strix/cli-config.json` and uses them on the next run, headless runs included. If you set the environment variables below, they take precedence.
+
 ## Configuration
 
-Set your model and API key:
+To configure Strix from the shell instead, set your model and API key:
 
 | Model                 | Provider                  | Configuration                    |
 | --------------------- | ------------------------- | -------------------------------- |

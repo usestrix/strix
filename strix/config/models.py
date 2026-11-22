@@ -725,6 +725,26 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     _configure_extra_headers(llm)
 
 
+_mirrored_env_keys: set[str] = set()
+
+
+def mirrored_env_keys() -> frozenset[str]:
+    return frozenset(_mirrored_env_keys)
+
+
+def reset_sdk_model_defaults() -> None:
+    """Drop the key and endpoint of the previous model so the next one cannot inherit them."""
+    import litellm
+    from agents.models import _openai_shared
+
+    litellm.api_key = None
+    litellm.api_base = None
+    _openai_shared._default_openai_key = None
+    os.environ.pop("OPENAI_BASE_URL", None)
+    while _mirrored_env_keys:
+        os.environ.pop(_mirrored_env_keys.pop(), None)
+
+
 def configure_sdk_api_route(model_name: str, settings: Settings) -> None:
     """Point SDK-native OpenAI requests for ``model_name`` at Responses or chat completions."""
     api_type = resolve_api_type(model_name, settings)
@@ -770,8 +790,9 @@ def _mirror_api_key_to_provider_env(model_name: str | None, api_key: str) -> Non
     except Exception:  # noqa: BLE001
         return
     for env_key in report.get("missing_keys") or []:
-        if env_key.endswith("_API_KEY"):
-            os.environ.setdefault(env_key, api_key)
+        if env_key.endswith("_API_KEY") and env_key not in os.environ:
+            os.environ[env_key] = api_key
+            _mirrored_env_keys.add(env_key)
 
 
 def _configure_litellm_compatibility() -> None:

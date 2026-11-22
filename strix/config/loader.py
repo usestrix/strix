@@ -61,6 +61,17 @@ def apply_config_override(path: Path) -> None:
     logger.info("config override applied: %s", path)
 
 
+_session_only: set[str] = set()
+
+
+def set_session_only(alias: str, *, session_only: bool) -> None:
+    """Mark an env var as valid for this run only, so ``persist_current`` leaves the file value."""
+    if session_only:
+        _session_only.add(alias.upper())
+    else:
+        _session_only.discard(alias.upper())
+
+
 def persist_current() -> None:
     """Merge currently-set env vars into the active config file (0o600).
 
@@ -81,14 +92,40 @@ def persist_current() -> None:
         for finfo in type(sub_model).model_fields.values():
             aliases = [alias.upper() for alias in _aliases_for(finfo)]
             active = next((alias for alias in aliases if alias in os.environ), None)
-            if active is None:
+            if active is None or active in _session_only:
                 continue
             for alias in aliases:
                 env_block.pop(alias, None)
             if os.environ[active]:
                 env_block[active] = os.environ[active]
 
-    write_secret_text(target, json.dumps({"env": env_block}, indent=2))
+    document = read_config_document()
+    document["env"] = env_block
+    write_config_document(document)
+
+
+def reload_settings() -> None:
+    global _cached  # noqa: PLW0603
+    _cached = None
+
+
+def config_path() -> Path:
+    return _override or _DEFAULT_PATH
+
+
+def read_config_document() -> dict[str, Any]:
+    path = config_path()
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_config_document(document: dict[str, Any]) -> None:
+    write_secret_text(config_path(), json.dumps(document, indent=2))
 
 
 def _aliases_for(finfo: FieldInfo) -> list[str]:
@@ -167,8 +204,10 @@ def _drop_stale_llm_connection(env_block: dict[str, Any]) -> dict[str, Any]:
         [alias.upper() for alias in _aliases_for(LlmSettings.model_fields[name])]
         for name in _LINKED_LLM_FIELDS
     ]
+    # A session-only value is not a change to the saved connection.
+    exported = {k: v for k, v in os.environ.items() if k.upper() not in _session_only}
     changed = any(
-        (env_value := _first_alias_value(aliases, os.environ)) is not None
+        (env_value := _first_alias_value(aliases, exported)) is not None
         and env_value != _first_alias_value(aliases, env_block)
         for aliases in linked_aliases
     )

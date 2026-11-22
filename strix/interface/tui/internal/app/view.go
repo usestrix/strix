@@ -291,7 +291,7 @@ func (m Model) viewInner() string {
 	} else if m.modal != modalNone {
 		// Only the vulnerability detail dims its backdrop (#000000 80%); Help,
 		// Quit and Stop are transparent.
-		main = m.overlay(main, m.modalView(), m.modal == modalVulnerability)
+		main = m.overlay(main, m.modalView(), m.modal == modalVulnerability || m.modal == modalDialog)
 	}
 	return m.toastOverlay(main)
 }

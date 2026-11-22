@@ -485,7 +485,8 @@ def main() -> None:
 
     check_docker_installed()
     pull_docker_image()
-    validate_environment()
+    if args.non_interactive or not args.needs_setup:
+        validate_environment()
 
     # Everything below imports the scan engine; do not race the warm-up thread.
     wait_for_import_warmup()

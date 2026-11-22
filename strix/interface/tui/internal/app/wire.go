@@ -53,6 +53,7 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			m.closeModal()
 		}
 		m.syncMountPrompt()
+		dialogCmd := m.syncDialogSnapshot()
 		m.ensureAgentVisible()
 		m.ensureVulnerabilityVisible()
 		m.ready = true
@@ -61,8 +62,9 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 		m.resizeVulnerabilityViewport()
 		if title := windowTitle(m.snapshot.Targets); title != m.windowTitle {
 			m.windowTitle = title
-			return setTerminalTitle(title)
+			return tea.Batch(dialogCmd, setTerminalTitle(title))
 		}
+		return dialogCmd
 	case "collection_bootstrap":
 		return m.handleCollectionBootstrap(envelope.Payload)
 	case "collection_delta":
@@ -98,6 +100,9 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			if result.Error != nil && strings.TrimSpace(result.Error.Message) != "" {
 				message = result.Error.Message
 			}
+			if m.dialogCommandFailed(result.Command, message) {
+				return nil
+			}
 			// Setup-mode errors live in the scrollback (red), like Python; during
 			// a scan they surface on the status line.
 			if m.snapshot.SetupMode {
@@ -111,6 +116,9 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			return nil
 		}
 		m.errorText = ""
+		if isDialogCommand(result.Command) {
+			return m.handleDialogResult(result)
+		}
 		switch result.Command {
 		case "viewer.open":
 			var data struct {

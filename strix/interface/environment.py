@@ -120,6 +120,11 @@ def validate_environment() -> None:
                         style="white",
                     )
 
+        error_text.append("\nRun ", style="white")
+        error_text.append("strix", style="bold cyan")
+        error_text.append(
+            " with no arguments to connect a provider and pick a model.\n", style="white"
+        )
         error_text.append("\nExample setup:\n", style="white")
         error_text.append("export STRIX_LLM='openrouter/z-ai/glm-5.3'\n", style="dim white")
 
