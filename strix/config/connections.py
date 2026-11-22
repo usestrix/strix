@@ -208,17 +208,25 @@ def credentials(provider_id: str) -> Credentials | None:
     provider = get_provider(provider_id)
     if provider.id == CHATGPT:
         return Credentials(source="subscription") if codex.is_authenticated() else None
+    shell = _shell()
+    shell_key = next((shell[key] for key in provider.env_keys if shell.get(key)), None)
+    if (
+        not shell_key
+        and shell.get("LLM_API_KEY")
+        and infer_provider(shell.get("STRIX_LLM", "")) == provider.id
+    ):
+        shell_key = shell["LLM_API_KEY"]
     stored = _stored_providers(read_config_document()).get(provider.id)
     if stored is not None:
         key, base = stored.get("api_key"), stored.get("api_base")
+        saved_key = key if isinstance(key, str) and key else None
         return Credentials(
-            api_key=key if isinstance(key, str) and key else None,
+            api_key=shell_key or saved_key,
             api_base=base if isinstance(base, str) and base else None,
+            source="environment" if shell_key else "stored",
         )
-    shell = _shell()
-    for env_key in provider.env_keys:
-        if shell.get(env_key):
-            return Credentials(api_key=shell[env_key], source="environment")
+    if shell_key and any(shell.get(key) for key in provider.env_keys):
+        return Credentials(api_key=shell_key, source="environment")
     if provider.id == "ollama" and shell.get("OLLAMA_API_BASE"):
         return Credentials(api_base=shell["OLLAMA_API_BASE"], source="environment")
     llm = load_settings().llm
@@ -337,6 +345,10 @@ def select_model(provider_id: str, model: str) -> None:
         if value:
             block[alias] = value
             os.environ[alias] = value
+    saved_key = (_stored_providers(document).get(provider.id) or {}).get("api_key")
+    if creds.source == "environment" and saved_key:
+        # A key exported in the shell wins for this run, and the file keeps the saved one.
+        block["LLM_API_KEY"] = saved_key
     document["env"] = block
     entry = {"provider": provider.id, "model": name}
     state = _model_state(document)

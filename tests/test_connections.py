@@ -236,3 +236,16 @@ def test_disconnecting_openai_signs_out_of_chatgpt(monkeypatch: pytest.MonkeyPat
 
     assert calls == ["logout"]
     assert connections.credentials("openai") is None
+
+
+def test_a_key_exported_in_the_shell_overrides_the_saved_key(
+    isolated: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connections.connect("anthropic", api_key="sk-saved")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-shell")
+    monkeypatch.setattr(connections, "_shell_env", None)
+
+    connections.select_model("anthropic", "anthropic/claude-opus-5-5")
+
+    assert load_settings().llm.api_key == "sk-shell"
+    assert _document(isolated)["env"]["LLM_API_KEY"] == "sk-saved"
