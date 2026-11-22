@@ -61,6 +61,17 @@ def apply_config_override(path: Path) -> None:
     logger.info("config override applied: %s", path)
 
 
+_session_only: set[str] = set()
+
+
+def set_session_only(alias: str, *, session_only: bool) -> None:
+    """Mark an env var as valid for this run only, so ``persist_current`` leaves the file value."""
+    if session_only:
+        _session_only.add(alias.upper())
+    else:
+        _session_only.discard(alias.upper())
+
+
 def persist_current() -> None:
     """Merge currently-set env vars into the active config file (0o600).
 
@@ -81,7 +92,7 @@ def persist_current() -> None:
         for finfo in type(sub_model).model_fields.values():
             aliases = [alias.upper() for alias in _aliases_for(finfo)]
             active = next((alias for alias in aliases if alias in os.environ), None)
-            if active is None:
+            if active is None or active in _session_only:
                 continue
             for alias in aliases:
                 env_block.pop(alias, None)

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from agents.models import _openai_shared
 
-from strix.config import codex, connections, load_settings, loader
+from strix.config import codex, connections, load_settings, loader, models
 from strix.config.models import configure_sdk_model_defaults
 
 
@@ -249,3 +249,51 @@ def test_a_key_exported_in_the_shell_overrides_the_saved_key(
 
     assert load_settings().llm.api_key == "sk-shell"
     assert _document(isolated)["env"]["LLM_API_KEY"] == "sk-saved"
+
+
+def test_a_shell_key_used_for_a_run_is_not_saved_as_the_default(
+    isolated: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-shell")
+    monkeypatch.setattr(connections, "_shell_env", None)
+
+    connections.select_model("anthropic", "anthropic/claude-opus-5-5")
+    loader.persist_current()
+
+    assert load_settings().llm.api_key == "sk-shell"
+    assert "LLM_API_KEY" not in _document(isolated)["env"]
+    loader.set_session_only("LLM_API_KEY", session_only=False)
+
+
+def test_a_key_mirrored_by_the_sdk_setup_does_not_count_as_a_shell_export(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connections.connect("anthropic", api_key="sk-old")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-old")
+    monkeypatch.setattr(models, "_mirrored_env_keys", {"ANTHROPIC_API_KEY"})
+    monkeypatch.setattr(connections, "_shell_env", None)
+
+    connections.connect("anthropic", api_key="sk-new")
+    connections.select_model("anthropic", "anthropic/claude-opus-5-5")
+
+    assert load_settings().llm.api_key == "sk-new"
+
+
+def test_disconnect_with_a_shell_model_clears_only_the_saved_provider(
+    isolated: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connections.connect("anthropic", api_key="sk-ant")
+    connections.select_model("anthropic", "anthropic/claude-opus-5-5")
+    monkeypatch.setenv("STRIX_LLM", "openrouter/z-ai/glm-5.3")
+    monkeypatch.setenv("LLM_API_KEY", "sk-or")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:9000/v1")
+    monkeypatch.setattr(connections, "_shell_env", None)
+    loader.reload_settings()
+
+    connections.disconnect("openrouter")
+    assert _document(isolated)["env"]["STRIX_LLM"] == "anthropic/claude-opus-5-5"
+    assert os.environ["OPENAI_BASE_URL"] == "http://localhost:9000/v1"
+
+    connections.disconnect("anthropic")
+    assert "STRIX_LLM" not in _document(isolated)["env"]
+    assert load_settings().llm.model == "openrouter/z-ai/glm-5.3"

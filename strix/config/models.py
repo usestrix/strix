@@ -728,6 +728,10 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
 _mirrored_env_keys: set[str] = set()
 
 
+def mirrored_env_keys() -> frozenset[str]:
+    return frozenset(_mirrored_env_keys)
+
+
 def reset_sdk_model_defaults() -> None:
     """Drop the key and endpoint of the previous model so the next one cannot inherit them."""
     import litellm

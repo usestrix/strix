@@ -11,6 +11,7 @@ from strix.config.loader import (
     load_settings,
     read_config_document,
     reload_settings,
+    set_session_only,
     write_config_document,
 )
 
@@ -145,7 +146,11 @@ _live_catalogs: dict[str, list[str]] = {}
 def _shell() -> dict[str, str]:
     global _shell_env  # noqa: PLW0603
     if _shell_env is None:
-        _shell_env = dict(os.environ)
+        from strix.config.models import mirrored_env_keys
+
+        # Keys the SDK setup copied into the process are not exports of the user.
+        mirrored = mirrored_env_keys()
+        _shell_env = {key: value for key, value in os.environ.items() if key not in mirrored}
     return _shell_env
 
 
@@ -272,37 +277,50 @@ def disconnect(provider_id: str) -> None:
     stored = _stored_providers(document)
     stored.pop(provider.id, None)
     document["providers"] = stored
-    current = current_selection()
-    selected = current is not None and current["provider"] in removed
-    if selected:
-        block = document.get("env")
-        block = {str(k).upper(): v for k, v in block.items()} if isinstance(block, dict) else {}
-        shell = _shell()
+    block = document.get("env")
+    block = {str(k).upper(): v for k, v in block.items()} if isinstance(block, dict) else {}
+    # The saved model and the running model differ when the shell overrides STRIX_LLM.
+    saved_removed = _saved_provider(document, block) in removed
+    active = current_selection()
+    active_removed = active is not None and active["provider"] in removed
+    if saved_removed:
         for alias in ("STRIX_LLM", *_API_KEY_ALIASES, *_API_BASE_ALIASES):
             block.pop(alias, None)
-            if alias in shell:
-                os.environ[alias] = shell[alias]
-            else:
-                os.environ.pop(alias, None)
         document["env"] = block
         _model_state(document).pop("current", None)
     write_config_document(document)
     _live_catalogs.pop(provider.id, None)
-    if selected:
-        reload_settings()
+    if saved_removed or active_removed:
         from strix.config.models import reset_sdk_model_defaults
 
+        shell = _shell()
         reset_sdk_model_defaults()
+        for alias in ("STRIX_LLM", *_API_KEY_ALIASES, *_API_BASE_ALIASES):
+            if alias in shell:
+                os.environ[alias] = shell[alias]
+            else:
+                os.environ.pop(alias, None)
+        reload_settings()
+
+
+def _saved_provider(document: dict[str, Any], block: dict[str, Any]) -> str:
+    """Provider of the model saved in the config file, whatever the shell exports."""
+    model = block.get("STRIX_LLM")
+    if not isinstance(model, str) or not model.strip():
+        return ""
+    current = _entries([_model_state(document).get("current")])
+    if current and current[0]["model"] == model.strip():
+        return current[0]["provider"]
+    return infer_provider(model) or ""
 
 
 def _keep_legacy_connection(
     document: dict[str, Any],
     block: dict[str, Any],
-    previous: dict[str, str] | None,
     next_provider: str,
 ) -> None:
     """Save a connection that exists only in the ``env`` block before a switch overwrites it."""
-    provider_id = previous["provider"] if previous else ""
+    provider_id = _saved_provider(document, block)
     if provider_id in ("", CHATGPT, next_provider) or provider_id not in _BY_ID:
         return
     stored = _stored_providers(document)
@@ -334,11 +352,10 @@ def select_model(provider_id: str, model: str) -> None:
         "LLM_API_KEY": api_key,
         "LLM_API_BASE": creds.api_base,
     }
-    previous = current_selection()
     document = read_config_document()
     block = document.get("env")
     block = {str(k).upper(): v for k, v in block.items()} if isinstance(block, dict) else {}
-    _keep_legacy_connection(document, block, previous, provider.id)
+    _keep_legacy_connection(document, block, provider.id)
     for alias in (*_API_KEY_ALIASES, *_API_BASE_ALIASES):
         block.pop(alias, None)
         os.environ.pop(alias, None)
@@ -347,9 +364,13 @@ def select_model(provider_id: str, model: str) -> None:
             block[alias] = value
             os.environ[alias] = value
     saved_key = (_stored_providers(document).get(provider.id) or {}).get("api_key")
-    if creds.source == "environment" and saved_key:
-        # A key exported in the shell wins for this run, and the file keeps the saved one.
-        block["LLM_API_KEY"] = saved_key
+    from_shell = creds.source == "environment" and bool(creds.api_key)
+    if from_shell:
+        # A key exported in the shell wins for this run only. The file keeps the saved one.
+        block.pop("LLM_API_KEY", None)
+        if saved_key:
+            block["LLM_API_KEY"] = saved_key
+    set_session_only("LLM_API_KEY", session_only=from_shell)
     document["env"] = block
     entry = {"provider": provider.id, "model": name}
     state = _model_state(document)

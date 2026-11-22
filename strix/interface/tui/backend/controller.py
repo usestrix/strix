@@ -463,7 +463,16 @@ class TuiController:
         if provider in connections.SEARCH_SERVICES:
             connections.set_setting(provider, None)
         else:
+            before = load_settings().llm
             connections.disconnect(provider)
+            after = load_settings().llm
+            changed = (before.model, before.api_key, before.api_base) != (
+                after.model,
+                after.api_key,
+                after.api_base,
+            )
+            if changed and self._on_model_changed is not None:
+                self._on_model_changed()
         return {"provider": provider}
 
     async def _providers_login(self, _payload: dict[str, Any]) -> dict[str, Any]:
