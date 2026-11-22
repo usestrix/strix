@@ -68,8 +68,10 @@ def test_scan_ended_reports_resumed_usage_delta(
 @pytest.mark.parametrize("telemetry", [posthog, scarf])
 def test_scan_ended_reports_all_fresh_run_usage(
     telemetry: Any,
+    tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.chdir(tmp_path)  # a run directory is created under ./strix_runs
     state = ReportState()
     state.record_sdk_usage(
         agent_id="agent",
