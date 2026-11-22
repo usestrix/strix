@@ -260,6 +260,27 @@ def disconnect(provider_id: str) -> None:
     write_config_document(document)
 
 
+def _keep_legacy_connection(
+    document: dict[str, Any],
+    block: dict[str, Any],
+    previous: dict[str, str] | None,
+    next_provider: str,
+) -> None:
+    """Save a connection that exists only in the ``env`` block before a switch overwrites it."""
+    provider_id = previous["provider"] if previous else ""
+    if provider_id in ("", CHATGPT, next_provider) or provider_id not in _BY_ID:
+        return
+    stored = _stored_providers(document)
+    if provider_id in stored:
+        return
+    key = next((block[alias] for alias in _API_KEY_ALIASES if block.get(alias)), None)
+    base = next((block[alias] for alias in _API_BASE_ALIASES if block.get(alias)), None)
+    if not key and not base:
+        return
+    stored[provider_id] = {"api_key": key, "api_base": base}
+    document["providers"] = stored
+
+
 def select_model(provider_id: str, model: str) -> None:
     provider = get_provider(provider_id)
     name = model.strip()
@@ -277,9 +298,11 @@ def select_model(provider_id: str, model: str) -> None:
         "LLM_API_KEY": api_key,
         "LLM_API_BASE": creds.api_base,
     }
+    previous = current_selection()
     document = read_config_document()
     block = document.get("env")
     block = {str(k).upper(): v for k, v in block.items()} if isinstance(block, dict) else {}
+    _keep_legacy_connection(document, block, previous, provider.id)
     for alias in (*_API_KEY_ALIASES, *_API_BASE_ALIASES):
         block.pop(alias, None)
         os.environ.pop(alias, None)

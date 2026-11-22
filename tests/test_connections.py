@@ -192,3 +192,18 @@ def test_keyless_server_never_inherits_the_previous_key() -> None:
     assert os.environ.get("OPENAI_API_KEY") is None
     assert load_settings().llm.api_key == "not-needed"
     assert load_settings().llm.api_base == "http://localhost:8000/v1"
+
+
+def test_switching_away_keeps_a_connection_saved_only_in_the_env_block(isolated: Path) -> None:
+    isolated.write_text(
+        json.dumps({"env": {"STRIX_LLM": "anthropic/claude-opus-5-5", "LLM_API_KEY": "sk-old"}}),
+        encoding="utf-8",
+    )
+    loader.reload_settings()
+    connections.connect("openrouter", api_key="sk-or")
+    connections.select_model("openrouter", "openrouter/z-ai/glm-5.3")
+
+    assert _document(isolated)["providers"]["anthropic"] == {"api_key": "sk-old", "api_base": None}
+    creds = connections.credentials("anthropic")
+    assert creds is not None
+    assert creds.api_key == "sk-old"
