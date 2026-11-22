@@ -21,6 +21,7 @@ CHATGPT = "chatgpt"
 CUSTOM = "custom"
 _RECENT_LIMIT = 10
 _CATALOG_TIMEOUT_S = 4.0
+_KEYLESS_PLACEHOLDER = "not-needed"
 _API_KEY_ALIASES = ("LLM_API_KEY",)
 _API_BASE_ALIASES = (
     "LLM_API_BASE",
@@ -267,9 +268,13 @@ def select_model(provider_id: str, model: str) -> None:
     creds = credentials(provider.id)
     if creds is None:
         raise ValueError(f"{provider.name} is not connected")
+    api_key = creds.api_key
+    if not api_key and provider.model_prefix == "openai":
+        # The OpenAI client refuses to start without a key, even for a keyless server.
+        api_key = _KEYLESS_PLACEHOLDER
     values = {
         "STRIX_LLM": name,
-        "LLM_API_KEY": creds.api_key,
+        "LLM_API_KEY": api_key,
         "LLM_API_BASE": creds.api_base,
     }
     document = read_config_document()

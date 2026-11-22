@@ -5,8 +5,10 @@ import os
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from agents.models import _openai_shared
 
 from strix.config import codex, connections, load_settings, loader
+from strix.config.models import configure_sdk_model_defaults
 
 
 if TYPE_CHECKING:
@@ -176,3 +178,17 @@ def test_catalog_skips_dated_snapshots_and_non_chat_models() -> None:
     assert "openai/gpt-5.4" in models
     assert not any(model.endswith("-2026-03-05") for model in models)
     assert not any("realtime" in model or model.startswith("openai/ft:") for model in models)
+
+
+def test_keyless_server_never_inherits_the_previous_key() -> None:
+    connections.connect("openai", api_key="sk-openai")
+    connections.select_model("openai", "openai/gpt-5.5")
+    configure_sdk_model_defaults(load_settings())
+    assert _openai_shared.get_default_openai_key() == "sk-openai"
+
+    connections.connect("custom", api_base="http://localhost:8000/v1")
+    connections.select_model("custom", "openai/local-model")
+    assert _openai_shared.get_default_openai_key() is None
+    assert os.environ.get("OPENAI_API_KEY") is None
+    assert load_settings().llm.api_key == "not-needed"
+    assert load_settings().llm.api_base == "http://localhost:8000/v1"
