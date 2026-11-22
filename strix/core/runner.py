@@ -598,7 +598,6 @@ async def run_strix_scan(
             "mcp_registry": mcp_registry,
             "agent_id": root_id,
             "parent_id": None,
-            # time.monotonic() when the root starts, after the sandbox is up.
             "started_at": time.monotonic(),
             "interactive": interactive,
             "spawn_child_agent": spawn_child_agent,
