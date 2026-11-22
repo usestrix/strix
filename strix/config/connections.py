@@ -249,15 +249,41 @@ def connect(provider_id: str, *, api_key: str | None = None, api_base: str | Non
 
 
 def disconnect(provider_id: str) -> None:
+    """Remove a provider's saved connection, and the saved model when it runs on that provider.
+
+    The OpenAI entry covers both of its methods, so it also signs out of ChatGPT.
+    """
     provider = get_provider(provider_id)
-    if provider.id == CHATGPT:
+    removed = {provider.id}
+    if provider.id in (CHATGPT, "openai"):
         codex.logout()
-        return
+    if provider.id == "openai":
+        removed.add(CHATGPT)
     document = read_config_document()
     stored = _stored_providers(document)
     stored.pop(provider.id, None)
     document["providers"] = stored
+    current = current_selection()
+    selected = current is not None and current["provider"] in removed
+    if selected:
+        block = document.get("env")
+        block = {str(k).upper(): v for k, v in block.items()} if isinstance(block, dict) else {}
+        shell = _shell()
+        for alias in ("STRIX_LLM", *_API_KEY_ALIASES, *_API_BASE_ALIASES):
+            block.pop(alias, None)
+            if alias in shell:
+                os.environ[alias] = shell[alias]
+            else:
+                os.environ.pop(alias, None)
+        document["env"] = block
+        _model_state(document).pop("current", None)
     write_config_document(document)
+    _live_catalogs.pop(provider.id, None)
+    if selected:
+        reload_settings()
+        from strix.config.models import reset_sdk_model_defaults
+
+        reset_sdk_model_defaults()
 
 
 def _keep_legacy_connection(
@@ -286,6 +312,7 @@ def select_model(provider_id: str, model: str) -> None:
     name = model.strip()
     if not name:
         raise ValueError("Model is required")
+    _shell()  # snapshot the launch environment before this call rewrites it
     creds = credentials(provider.id)
     if creds is None:
         raise ValueError(f"{provider.name} is not connected")
@@ -345,6 +372,7 @@ def set_setting(name: str, value: str | None) -> None:
     text = (value or "").strip()
     if name == "effort" and text not in EFFORTS:
         raise ValueError(f"Effort must be one of: {', '.join(EFFORTS)}")
+    _shell()
     document = read_config_document()
     block = document.get("env")
     block = {str(k).upper(): v for k, v in block.items()} if isinstance(block, dict) else {}

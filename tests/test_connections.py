@@ -207,3 +207,32 @@ def test_switching_away_keeps_a_connection_saved_only_in_the_env_block(isolated:
     creds = connections.credentials("anthropic")
     assert creds is not None
     assert creds.api_key == "sk-old"
+
+
+def test_disconnecting_the_selected_provider_clears_the_model(isolated: Path) -> None:
+    connections.connect("anthropic", api_key="sk-ant")
+    connections.connect("openrouter", api_key="sk-or")
+    connections.select_model("anthropic", "anthropic/claude-opus-5-5")
+
+    connections.disconnect("openrouter")
+    assert load_settings().llm.model == "anthropic/claude-opus-5-5"
+
+    connections.disconnect("anthropic")
+    assert load_settings().llm.model is None
+    assert load_settings().llm.api_key is None
+    assert connections.credentials("anthropic") is None
+    assert connections.current_selection() is None
+    document = _document(isolated)
+    assert "STRIX_LLM" not in document["env"]
+    assert "current" not in document["models"]
+
+
+def test_disconnecting_openai_signs_out_of_chatgpt(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(codex, "logout", lambda: calls.append("logout"))
+    connections.connect("openai", api_key="sk-openai")
+
+    connections.disconnect("openai")
+
+    assert calls == ["logout"]
+    assert connections.credentials("openai") is None
