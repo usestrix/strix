@@ -409,9 +409,10 @@ def _keep_shell_values_out_of_file(
     set_session_only("LLM_API_KEY", session_only=from_shell)
     file_holds_key = block.get("LLM_API_KEY") not in (None, _KEYLESS_PLACEHOLDER)
     shell_base = any(value and key.upper() in _API_BASE_ALIASES for key, value in _shell().items())
-    # An endpoint exported in the shell is for this run only when the file holds a key,
-    # so a saved key never goes to the exported endpoint on a later run.
-    session_base = shell_base and file_holds_key
+    # An endpoint exported in the shell is for this run only when the file holds a key or
+    # an endpoint of its own. A saved key never goes to the exported endpoint on a later
+    # run, and a saved endpoint is not replaced.
+    session_base = shell_base and (file_holds_key or bool(saved_base))
     if session_base:
         block.pop("LLM_API_BASE", None)
         if saved_base:

@@ -423,3 +423,25 @@ def test_an_exported_ollama_endpoint_is_saved_with_the_model(
     assert _document(isolated)["env"]["LLM_API_BASE"] == "http://localhost:11434"
     assert load_settings().llm.model == "ollama/llama5"
     assert load_settings().llm.api_base == "http://localhost:11434"
+
+
+def test_an_exported_endpoint_does_not_replace_a_saved_keyless_endpoint(
+    isolated: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated.write_text(
+        json.dumps(
+            {"env": {"STRIX_LLM": "ollama/llama5", "LLM_API_BASE": "http://localhost:11434"}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("STRIX_LLM", "ollama/llama5")
+    monkeypatch.setenv("LLM_API_BASE", "http://temporary:11434")
+    monkeypatch.setattr(connections, "_shell_env", None)
+    loader.reload_settings()
+
+    connections.select_model("ollama", "ollama/qwen4")
+    loader.persist_current()
+
+    assert _document(isolated)["env"]["LLM_API_BASE"] == "http://localhost:11434"
+    assert load_settings().llm.api_base == "http://temporary:11434"
+    loader.set_session_only("LLM_API_BASE", session_only=False)
