@@ -363,8 +363,10 @@ def select_model(provider_id: str, model: str) -> None:
     block = document.get("env")
     block = {str(k).upper(): v for k, v in block.items()} if isinstance(block, dict) else {}
     _keep_legacy_connection(document, block, provider.id)
+    entry_saved = _stored_providers(document).get(provider.id)
     file_key = file_base = None
-    if _saved_provider(document, block) == provider.id:
+    # A saved connection replaces whatever the env block held for the provider.
+    if entry_saved is None and _saved_provider(document, block) == provider.id:
         file_key = next((block[alias] for alias in _API_KEY_ALIASES if block.get(alias)), None)
         file_base = next((block[alias] for alias in _API_BASE_ALIASES if block.get(alias)), None)
     for alias in (*_API_KEY_ALIASES, *_API_BASE_ALIASES):
@@ -374,23 +376,8 @@ def select_model(provider_id: str, model: str) -> None:
         if value:
             block[alias] = value
             os.environ[alias] = value
-    saved_key = (_stored_providers(document).get(provider.id) or {}).get("api_key") or file_key
-    from_shell = creds.source == "environment" and bool(creds.api_key)
-    if from_shell:
-        # A key exported in the shell wins for this run only. The file keeps the saved one.
-        block.pop("LLM_API_KEY", None)
-        if saved_key:
-            block["LLM_API_KEY"] = saved_key
-    set_session_only("LLM_API_KEY", session_only=from_shell)
-    shell_base = any(value and key.upper() in _API_BASE_ALIASES for key, value in _shell().items())
-    if shell_base:
-        # An endpoint exported in the shell is for this run only, like the key.
-        # The file keeps its own endpoint, so a saved key never goes to the exported one.
-        saved_base = (_stored_providers(document).get(provider.id) or {}).get("api_base")
-        block.pop("LLM_API_BASE", None)
-        if saved_base or file_base:
-            block["LLM_API_BASE"] = saved_base or file_base
-    set_session_only("LLM_API_BASE", session_only=shell_base)
+    saved = entry_saved or {"api_key": file_key, "api_base": file_base}
+    _keep_shell_values_out_of_file(block, saved, from_shell=_from_shell(creds))
     document["env"] = block
     entry = {"provider": provider.id, "model": name}
     state = _model_state(document)
@@ -403,6 +390,33 @@ def select_model(provider_id: str, model: str) -> None:
     from strix.config.models import reset_sdk_model_defaults
 
     reset_sdk_model_defaults()
+
+
+def _from_shell(creds: Credentials) -> bool:
+    return creds.source == "environment" and bool(creds.api_key)
+
+
+def _keep_shell_values_out_of_file(
+    block: dict[str, Any], saved: dict[str, Any], *, from_shell: bool
+) -> None:
+    """Restore the saved key and endpoint in ``block`` where the shell supplied this run's."""
+    saved_key, saved_base = saved.get("api_key"), saved.get("api_base")
+    if from_shell:
+        # A key exported in the shell wins for this run only. The file keeps the saved one.
+        block.pop("LLM_API_KEY", None)
+        if saved_key:
+            block["LLM_API_KEY"] = saved_key
+    set_session_only("LLM_API_KEY", session_only=from_shell)
+    file_holds_key = block.get("LLM_API_KEY") not in (None, _KEYLESS_PLACEHOLDER)
+    shell_base = any(value and key.upper() in _API_BASE_ALIASES for key, value in _shell().items())
+    # An endpoint exported in the shell is for this run only when the file holds a key,
+    # so a saved key never goes to the exported endpoint on a later run.
+    session_base = shell_base and file_holds_key
+    if session_base:
+        block.pop("LLM_API_BASE", None)
+        if saved_base:
+            block["LLM_API_BASE"] = saved_base
+    set_session_only("LLM_API_BASE", session_only=session_base)
 
 
 def toggle_favorite(provider_id: str, model: str) -> bool:

@@ -380,3 +380,46 @@ def test_a_saved_key_is_never_stored_with_an_endpoint_exported_in_the_shell(
     assert load_settings().llm.api_base == "https://other.example/v1"
     loader.set_session_only("LLM_API_KEY", session_only=False)
     loader.set_session_only("LLM_API_BASE", session_only=False)
+
+
+def test_a_new_connection_does_not_inherit_the_endpoint_of_the_env_block(
+    isolated: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated.write_text(
+        json.dumps(
+            {
+                "env": {
+                    "STRIX_LLM": "openai/gpt-6",
+                    "LLM_API_KEY": "sk-proxy",
+                    "LLM_API_BASE": "https://proxy.example/v1",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://proxy.example/v1")
+    monkeypatch.setattr(connections, "_shell_env", None)
+    loader.reload_settings()
+    connections.connect("openai", api_key="sk-direct")
+
+    connections.select_model("openai", "openai/gpt-6-mini")
+
+    env = _document(isolated)["env"]
+    assert env["LLM_API_KEY"] == "sk-direct"
+    assert "LLM_API_BASE" not in env
+    loader.set_session_only("LLM_API_BASE", session_only=False)
+
+
+def test_an_exported_ollama_endpoint_is_saved_with_the_model(
+    isolated: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OLLAMA_API_BASE", "http://localhost:11434")
+    monkeypatch.setattr(connections, "_shell_env", None)
+
+    connections.select_model("ollama", "ollama/llama5")
+    loader.persist_current()
+    loader.reload_settings()
+
+    assert _document(isolated)["env"]["LLM_API_BASE"] == "http://localhost:11434"
+    assert load_settings().llm.model == "ollama/llama5"
+    assert load_settings().llm.api_base == "http://localhost:11434"
