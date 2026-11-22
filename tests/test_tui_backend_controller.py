@@ -648,3 +648,24 @@ async def test_model_list_fits_the_command_frame(monkeypatch: pytest.MonkeyPatch
 
     assert len(json.dumps(picker)) < MAX_COMMAND_BYTES
     assert picker["providers"][1]["models"] == ["b/one"]
+
+
+@pytest.mark.asyncio
+async def test_perplexity_model_provider_and_search_service_stay_separate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(connections, "_shell_env", {})
+    monkeypatch.setattr(codex, "is_authenticated", lambda: False)
+    controller = TuiController(args())
+
+    await controller.handle("providers.connect", {"provider": "perplexity", "api_key": "pplx-m"})
+    directory = await controller.handle("providers.list", {})
+    assert connections.credentials("perplexity") is not None
+    assert [row["connected"] for row in directory["search"]] == [False, False]
+
+    await controller.handle(
+        "providers.connect", {"provider": "perplexity_search", "api_key": "pplx-s"}
+    )
+    directory = await controller.handle("providers.list", {})
+    assert [row["connected"] for row in directory["search"]] == [False, True]
+    os.environ.pop("PERPLEXITY_API_KEY", None)

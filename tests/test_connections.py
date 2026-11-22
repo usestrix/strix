@@ -148,13 +148,13 @@ def test_disconnect_and_favorites_round_trip() -> None:
 
 def test_settings_persist_and_validate(isolated: Path) -> None:
     connections.set_setting("effort", "low")
-    connections.set_setting("exa", "exa-key")
+    connections.set_setting("exa_search", "exa-key")
     assert load_settings().llm.reasoning_effort == "low"
     assert _document(isolated)["env"] == {
         "STRIX_REASONING_EFFORT": "low",
         "EXA_API_KEY": "exa-key",
     }
-    connections.set_setting("exa", None)
+    connections.set_setting("exa_search", None)
     assert "EXA_API_KEY" not in _document(isolated)["env"]
     with pytest.raises(ValueError, match="Effort must be one of"):
         connections.set_setting("effort", "extreme")

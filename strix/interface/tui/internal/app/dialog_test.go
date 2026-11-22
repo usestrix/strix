@@ -60,7 +60,7 @@ var directoryFixture = map[string]any{
 	"local": []map[string]any{
 		{"id": "ollama", "name": "Ollama", "needs_base": true, "default_base": "http://localhost:11434", "key_optional": true, "methods": []map[string]string{{"id": "api_key", "label": "API key"}}},
 	},
-	"search": []map[string]any{{"id": "exa", "name": "Exa"}},
+	"search": []map[string]any{{"id": "exa_search", "name": "Exa"}},
 }
 
 func TestPaletteOpensModelPickerAndSelectsModel(t *testing.T) {

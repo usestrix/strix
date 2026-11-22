@@ -45,8 +45,8 @@ _SKIPPED_MODEL_PARTS = (
 EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 SETTING_ALIASES = {
     "effort": "STRIX_REASONING_EFFORT",
-    "exa": "EXA_API_KEY",
-    "perplexity": "PERPLEXITY_API_KEY",
+    "exa_search": "EXA_API_KEY",
+    "perplexity_search": "PERPLEXITY_API_KEY",
 }
 
 
@@ -135,7 +135,8 @@ PROVIDERS: tuple[Provider, ...] = (
     ),
 )
 _BY_ID = {provider.id: provider for provider in PROVIDERS}
-_SEARCH_SERVICES = (("exa", "Exa"), ("perplexity", "Perplexity"))
+# Ids differ from model provider ids: Perplexity is both a model provider and a search service.
+SEARCH_SERVICES = {"exa_search": "Exa", "perplexity_search": "Perplexity"}
 
 _shell_env: dict[str, str] | None = None
 _live_catalogs: dict[str, list[str]] = {}
@@ -530,8 +531,8 @@ def provider_directory() -> dict[str, Any]:
         {
             "id": service,
             "name": name,
-            "connected": bool(getattr(integrations, f"{service}_api_key", None)),
+            "connected": bool(getattr(integrations, service.replace("_search", "_api_key"), None)),
         }
-        for service, name in _SEARCH_SERVICES
+        for service, name in SEARCH_SERVICES.items()
     ]
     return {**groups, "search": search}

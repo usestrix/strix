@@ -438,9 +438,13 @@ class TuiController:
             raise TypeError("api_key must be a string")
         if api_base is not None and not isinstance(api_base, str):
             raise TypeError("api_base must be a string")
-        if provider in connections.SETTING_ALIASES:
+        if provider in connections.SEARCH_SERVICES:
             connections.set_setting(provider, api_key)
-            return {"provider": provider, "name": provider.title(), "models": 0}
+            return {
+                "provider": provider,
+                "name": connections.SEARCH_SERVICES[provider],
+                "models": 0,
+            }
         connections.connect(provider, api_key=api_key, api_base=api_base)
         models = await asyncio.to_thread(connections.provider_models, provider)
         return {
@@ -452,7 +456,7 @@ class TuiController:
     async def _providers_disconnect(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._require_setup_mutable()
         provider = self._required_string(payload, "provider")
-        if provider in connections.SETTING_ALIASES:
+        if provider in connections.SEARCH_SERVICES:
             connections.set_setting(provider, None)
         else:
             connections.disconnect(provider)
