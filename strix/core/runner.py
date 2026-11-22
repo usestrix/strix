@@ -7,6 +7,7 @@ import contextlib
 import io
 import json
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
@@ -597,6 +598,7 @@ async def run_strix_scan(
             "mcp_registry": mcp_registry,
             "agent_id": root_id,
             "parent_id": None,
+            "started_at": time.monotonic(),
             "interactive": interactive,
             "spawn_child_agent": spawn_child_agent,
             "scan_targets": build_scan_targets(scan_config),
