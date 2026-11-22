@@ -204,8 +204,10 @@ def _drop_stale_llm_connection(env_block: dict[str, Any]) -> dict[str, Any]:
         [alias.upper() for alias in _aliases_for(LlmSettings.model_fields[name])]
         for name in _LINKED_LLM_FIELDS
     ]
+    # A session-only value is not a change to the saved connection.
+    exported = {k: v for k, v in os.environ.items() if k.upper() not in _session_only}
     changed = any(
-        (env_value := _first_alias_value(aliases, os.environ)) is not None
+        (env_value := _first_alias_value(aliases, exported)) is not None
         and env_value != _first_alias_value(aliases, env_block)
         for aliases in linked_aliases
     )

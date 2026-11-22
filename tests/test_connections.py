@@ -297,3 +297,30 @@ def test_disconnect_with_a_shell_model_clears_only_the_saved_provider(
     connections.disconnect("anthropic")
     assert "STRIX_LLM" not in _document(isolated)["env"]
     assert load_settings().llm.model == "openrouter/z-ai/glm-5.3"
+
+
+def test_a_model_switch_keeps_a_key_saved_only_in_the_env_block(isolated: Path) -> None:
+    isolated.write_text(
+        json.dumps({"env": {"STRIX_LLM": "anthropic/claude-opus-5-5", "LLM_API_KEY": "sk-file"}}),
+        encoding="utf-8",
+    )
+    loader.reload_settings()
+
+    connections.select_model("anthropic", "anthropic/claude-sonnet-5")
+
+    assert _document(isolated)["env"]["LLM_API_KEY"] == "sk-file"
+
+
+def test_a_scan_start_keeps_the_saved_key_under_a_shell_override(
+    isolated: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connections.connect("anthropic", api_key="sk-saved")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-shell")
+    monkeypatch.setattr(connections, "_shell_env", None)
+
+    connections.select_model("anthropic", "anthropic/claude-opus-5-5")
+    loader.persist_current()
+
+    env = _document(isolated)["env"]
+    assert (env["STRIX_LLM"], env["LLM_API_KEY"]) == ("anthropic/claude-opus-5-5", "sk-saved")
+    loader.set_session_only("LLM_API_KEY", session_only=False)

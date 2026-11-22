@@ -238,7 +238,13 @@ def credentials(provider_id: str) -> Credentials | None:
     llm = load_settings().llm
     current = current_selection()
     if current and current["provider"] == provider.id and (llm.api_key or llm.api_base):
-        return Credentials(api_key=llm.api_key, api_base=llm.api_base, source="environment")
+        # The key of the running model is an export only when the shell holds it.
+        exported = any(shell.get(alias) for alias in _API_KEY_ALIASES)
+        return Credentials(
+            api_key=llm.api_key,
+            api_base=llm.api_base,
+            source="environment" if exported else "stored",
+        )
     return None
 
 
