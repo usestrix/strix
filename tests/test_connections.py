@@ -338,3 +338,21 @@ def test_a_lowercase_shell_key_is_not_saved_on_a_model_switch(
 
     assert "LLM_API_KEY" not in _document(isolated)["env"]
     loader.set_session_only("LLM_API_KEY", session_only=False)
+
+
+def test_a_shell_key_does_not_erase_a_key_saved_only_in_the_env_block(
+    isolated: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated.write_text(
+        json.dumps({"env": {"STRIX_LLM": "anthropic/claude-opus-5-5", "LLM_API_KEY": "sk-file"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("llm_api_key", "sk-file")
+    monkeypatch.setattr(connections, "_shell_env", None)
+    loader.reload_settings()
+
+    connections.select_model("anthropic", "anthropic/claude-sonnet-5")
+    loader.persist_current()
+
+    assert _document(isolated)["env"]["LLM_API_KEY"] == "sk-file"
+    loader.set_session_only("LLM_API_KEY", session_only=False)

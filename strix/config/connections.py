@@ -363,6 +363,9 @@ def select_model(provider_id: str, model: str) -> None:
     block = document.get("env")
     block = {str(k).upper(): v for k, v in block.items()} if isinstance(block, dict) else {}
     _keep_legacy_connection(document, block, provider.id)
+    file_key = None
+    if _saved_provider(document, block) == provider.id:
+        file_key = next((block[alias] for alias in _API_KEY_ALIASES if block.get(alias)), None)
     for alias in (*_API_KEY_ALIASES, *_API_BASE_ALIASES):
         block.pop(alias, None)
         os.environ.pop(alias, None)
@@ -370,7 +373,7 @@ def select_model(provider_id: str, model: str) -> None:
         if value:
             block[alias] = value
             os.environ[alias] = value
-    saved_key = (_stored_providers(document).get(provider.id) or {}).get("api_key")
+    saved_key = (_stored_providers(document).get(provider.id) or {}).get("api_key") or file_key
     from_shell = creds.source == "environment" and bool(creds.api_key)
     if from_shell:
         # A key exported in the shell wins for this run only. The file keeps the saved one.
