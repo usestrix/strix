@@ -356,6 +356,10 @@ class TuiController:
             raise RuntimeError("Scan start is unavailable")
         if not self.targets and not mount_working_dir:
             raise ValueError("No target set. Add a target first.")
+        if not self.targets and self.scope_mode == "diff":
+            # Diff scope resolves before the working directory is attached, so it
+            # would fail after the mount prompt has already locked setup.
+            raise ValueError("Diff scope needs a repository target. Add one or change the scope.")
         # The model check runs while still on the start screen, for a bare
         # prompt as much as for a named target, so a failure lands in the setup
         # log where the user can fix it and retry rather than in a dead run.

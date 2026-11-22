@@ -669,3 +669,22 @@ async def test_perplexity_model_provider_and_search_service_stay_separate(
     directory = await controller.handle("providers.list", {})
     assert [row["connected"] for row in directory["search"]] == [False, True]
     os.environ.pop("PERPLEXITY_API_KEY", None)
+
+
+@pytest.mark.asyncio
+async def test_diff_scope_without_a_target_is_refused_before_the_mount_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRIX_LLM", "anthropic/claude-opus-5-5")
+    loader.reload_settings()
+
+    async def on_start() -> None:
+        return None
+
+    controller = TuiController(args(), on_start=on_start)
+    await controller.handle("settings.set", {"name": "scope_mode", "value": "diff"})
+
+    with pytest.raises(ValueError, match="Diff scope needs a repository target"):
+        await controller.handle("setup.start", {"mount_working_dir": True})
+    assert controller.setup_mode is True
+    assert controller.scan_started is False
