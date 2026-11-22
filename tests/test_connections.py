@@ -324,3 +324,17 @@ def test_a_scan_start_keeps_the_saved_key_under_a_shell_override(
     env = _document(isolated)["env"]
     assert (env["STRIX_LLM"], env["LLM_API_KEY"]) == ("anthropic/claude-opus-5-5", "sk-saved")
     loader.set_session_only("LLM_API_KEY", session_only=False)
+
+
+def test_a_lowercase_shell_key_is_not_saved_on_a_model_switch(
+    isolated: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STRIX_LLM", "anthropic/claude-opus-5-5")
+    monkeypatch.setenv("llm_api_key", "sk-shell")
+    monkeypatch.setattr(connections, "_shell_env", None)
+    loader.reload_settings()
+
+    connections.select_model("anthropic", "anthropic/claude-sonnet-5")
+
+    assert "LLM_API_KEY" not in _document(isolated)["env"]
+    loader.set_session_only("LLM_API_KEY", session_only=False)
