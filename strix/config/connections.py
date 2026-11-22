@@ -363,9 +363,10 @@ def select_model(provider_id: str, model: str) -> None:
     block = document.get("env")
     block = {str(k).upper(): v for k, v in block.items()} if isinstance(block, dict) else {}
     _keep_legacy_connection(document, block, provider.id)
-    file_key = None
+    file_key = file_base = None
     if _saved_provider(document, block) == provider.id:
         file_key = next((block[alias] for alias in _API_KEY_ALIASES if block.get(alias)), None)
+        file_base = next((block[alias] for alias in _API_BASE_ALIASES if block.get(alias)), None)
     for alias in (*_API_KEY_ALIASES, *_API_BASE_ALIASES):
         block.pop(alias, None)
         os.environ.pop(alias, None)
@@ -381,6 +382,15 @@ def select_model(provider_id: str, model: str) -> None:
         if saved_key:
             block["LLM_API_KEY"] = saved_key
     set_session_only("LLM_API_KEY", session_only=from_shell)
+    shell_base = any(value and key.upper() in _API_BASE_ALIASES for key, value in _shell().items())
+    if shell_base:
+        # An endpoint exported in the shell is for this run only, like the key.
+        # The file keeps its own endpoint, so a saved key never goes to the exported one.
+        saved_base = (_stored_providers(document).get(provider.id) or {}).get("api_base")
+        block.pop("LLM_API_BASE", None)
+        if saved_base or file_base:
+            block["LLM_API_BASE"] = saved_base or file_base
+    set_session_only("LLM_API_BASE", session_only=shell_base)
     document["env"] = block
     entry = {"provider": provider.id, "model": name}
     state = _model_state(document)

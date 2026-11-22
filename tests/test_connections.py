@@ -356,3 +356,27 @@ def test_a_shell_key_does_not_erase_a_key_saved_only_in_the_env_block(
 
     assert _document(isolated)["env"]["LLM_API_KEY"] == "sk-file"
     loader.set_session_only("LLM_API_KEY", session_only=False)
+
+
+def test_a_saved_key_is_never_stored_with_an_endpoint_exported_in_the_shell(
+    isolated: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated.write_text(
+        json.dumps({"env": {"STRIX_LLM": "openai/gpt-6", "LLM_API_KEY": "sk-file"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("STRIX_LLM", "openai/gpt-6")
+    monkeypatch.setenv("LLM_API_KEY", "sk-shell")
+    monkeypatch.setenv("LLM_API_BASE", "https://other.example/v1")
+    monkeypatch.setattr(connections, "_shell_env", None)
+    loader.reload_settings()
+
+    connections.select_model("openai", "openai/gpt-6-mini")
+    loader.persist_current()
+
+    env = _document(isolated)["env"]
+    assert env["LLM_API_KEY"] == "sk-file"
+    assert "LLM_API_BASE" not in env
+    assert load_settings().llm.api_base == "https://other.example/v1"
+    loader.set_session_only("LLM_API_KEY", session_only=False)
+    loader.set_session_only("LLM_API_BASE", session_only=False)
