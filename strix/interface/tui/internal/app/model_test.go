@@ -401,7 +401,7 @@ func TestSetupStartScreenFitsNarrowTerminal(t *testing.T) {
 func TestLeadingSlashIsPromptTextNotACommand(t *testing.T) {
 	connection := &recordingConn{}
 	model := New(&Client{conn: connection})
-	model.snapshot = protocol.Snapshot{SetupMode: true}
+	model.snapshot = protocol.Snapshot{SetupMode: true, Model: "openai/gpt-5.4"}
 	model.focus = focusInput
 	model.input.SetValue("/etc/passwd is world readable, check it")
 

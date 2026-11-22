@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 from pathlib import Path
 
 import pytest
 
-from strix.config import apply_config_override, loader
+from strix.config import apply_config_override, codex, connections, loader
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui.backend.controller import TuiController
+from strix.interface.tui.backend.protocol import MAX_COMMAND_BYTES
 
 
 class _SendingCoordinator:
@@ -151,7 +153,7 @@ async def test_start_validates_model_before_callback() -> None:
 
     controller = TuiController(args(), on_start=start)
     await controller.handle("setup.add_target", {"target": "https://example.com"})
-    with pytest.raises(ValueError, match="No model configured"):
+    with pytest.raises(ValueError, match="No model selected"):
         await controller.handle("setup.start", {})
     assert started is False
 
@@ -561,3 +563,88 @@ async def test_existing_viewer_is_reopened_and_closed(
     assert opened == [controller.viewer_url]
     assert server.shutdown_called is True
     assert server.close_called is True
+
+
+@pytest.mark.asyncio
+async def test_connect_and_select_model_from_the_interface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(connections, "_shell_env", {})
+    monkeypatch.setattr(codex, "is_authenticated", lambda: False)
+    changed = 0
+
+    def on_model_changed() -> None:
+        nonlocal changed
+        changed += 1
+
+    controller = TuiController(args(), on_model_changed=on_model_changed)
+    assert controller.snapshot()["model"] == ""
+
+    directory = await controller.handle("providers.list", {})
+    assert directory["popular"][2] == {
+        "id": "anthropic",
+        "name": "Anthropic",
+        "connected": False,
+        "methods": [{"id": "api_key", "label": "API key"}],
+        "needs_base": False,
+        "default_base": "",
+        "key_optional": False,
+    }
+    connected = await controller.handle(
+        "providers.connect", {"provider": "anthropic", "api_key": "sk-ant"}
+    )
+    assert connected["name"] == "Anthropic"
+    assert connected["models"] > 0
+
+    picker = await controller.handle("models.list", {})
+    model = picker["providers"][0]["models"][0]
+    await controller.handle("models.select", {"provider": "anthropic", "model": model})
+    await controller.handle("settings.set", {"name": "effort", "value": "low"})
+    await controller.handle("settings.set", {"name": "scan_mode", "value": "quick"})
+    await controller.handle("settings.set", {"name": "max_budget_usd", "value": "$12.5"})
+
+    snapshot = controller.snapshot()
+    assert (snapshot["model"], snapshot["effort"], snapshot["scan_mode"]) == (model, "low", "quick")
+    assert snapshot["max_budget_usd"] == 12.5
+    assert changed == 1
+    for key in ("STRIX_LLM", "LLM_API_KEY", "STRIX_REASONING_EFFORT"):
+        os.environ.pop(key, None)
+
+
+@pytest.mark.asyncio
+async def test_model_cannot_change_once_the_scan_started() -> None:
+    controller = TuiController(args())
+    controller.setup_mode = False
+    controller.scan_started = True
+    for command, payload in (
+        ("models.select", {"provider": "anthropic", "model": "anthropic/x"}),
+        ("providers.connect", {"provider": "anthropic", "api_key": "k"}),
+        ("settings.set", {"name": "effort", "value": "low"}),
+    ):
+        with pytest.raises(RuntimeError):
+            await controller.handle(command, payload)
+
+
+@pytest.mark.asyncio
+async def test_model_list_fits_the_command_frame(monkeypatch: pytest.MonkeyPatch) -> None:
+    huge = {
+        "current": None,
+        "recent": [],
+        "favorite": [],
+        "effort": "high",
+        "providers": [
+            {
+                "id": "a",
+                "name": "A",
+                "prefix": "a",
+                "models": [f"a/model-{n:05d}" for n in range(6000)],
+            },
+            {"id": "b", "name": "B", "prefix": "b", "models": ["b/one"]},
+        ],
+    }
+    monkeypatch.setattr(connections, "model_picker", lambda: huge)
+
+    picker = await TuiController(args()).handle("models.list", {})
+
+    assert len(json.dumps(picker)) < MAX_COMMAND_BYTES
+    assert picker["providers"][1]["models"] == ["b/one"]

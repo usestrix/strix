@@ -31,6 +31,11 @@ func (m Model) submit(value string) (tea.Model, tea.Cmd) {
 // instruction, and the prompt alone is enough to launch. With no target, the
 // backend scans the current working directory.
 func (m *Model) submitSetupPrompt(value string) (tea.Model, tea.Cmd) {
+	if strings.TrimSpace(m.snapshot.Model) == "" {
+		m.input.SetValue(value)
+		cmd := m.openModels("")
+		return *m, cmd
+	}
 	var commands []tea.Cmd
 	fields := strings.Fields(value)
 	targets := 0
@@ -444,9 +449,12 @@ func (m Model) setupSummaryView(width int) string {
 		} else {
 			chips = append(chips, chip)
 		}
+		if m.snapshot.Effort != "" {
+			chips = append(chips, render.Dim().Render(m.snapshot.Effort))
+		}
 	} else {
 		chips = append(chips, render.Col(amber).Render("○ no model")+
-			render.Dim().Render(" · set STRIX_LLM or configure one in your config"))
+			render.Dim().Render(" · ctrl+p to connect a provider"))
 	}
 	if m.snapshot.MaxBudgetUSD != nil {
 		chips = append(chips, render.Dim().Render(fmt.Sprintf("$%.2f budget", *m.snapshot.MaxBudgetUSD)))
@@ -503,7 +511,7 @@ func (m Model) setupHintsView(width int) string {
 	key := lipgloss.NewStyle().Foreground(white).Render
 	label := render.Dim().Render
 	hint := func(k, text string) string { return key(k) + label(" "+text) }
-	left := hint("enter", "launch scan") + label("   ") + hint("ctrl+c", "quit")
+	left := hint("enter", "launch scan") + label("   ") + hint("ctrl+p", "commands")
 	if lipgloss.Width(left) > inner {
 		left = hint("enter", "launch scan")
 	}

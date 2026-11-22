@@ -64,6 +64,7 @@ const (
 	modalStop
 	modalConfirmMount
 	modalVulnerability
+	modalDialog
 )
 
 type focusMode int
@@ -138,6 +139,8 @@ type Model struct {
 	seenMessages           map[string]bool
 	vulnerabilityCopied    bool
 	vulnerabilityCopyError string
+	dialog                 dialogState
+	chord                  bool
 }
 
 var (

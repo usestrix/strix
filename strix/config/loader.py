@@ -88,7 +88,33 @@ def persist_current() -> None:
             if os.environ[active]:
                 env_block[active] = os.environ[active]
 
-    write_secret_text(target, json.dumps({"env": env_block}, indent=2))
+    document = read_config_document()
+    document["env"] = env_block
+    write_config_document(document)
+
+
+def reload_settings() -> None:
+    global _cached  # noqa: PLW0603
+    _cached = None
+
+
+def config_path() -> Path:
+    return _override or _DEFAULT_PATH
+
+
+def read_config_document() -> dict[str, Any]:
+    path = config_path()
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_config_document(document: dict[str, Any]) -> None:
+    write_secret_text(config_path(), json.dumps(document, indent=2))
 
 
 def _aliases_for(finfo: FieldInfo) -> list[str]:

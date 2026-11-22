@@ -124,7 +124,7 @@ def _run_oauth_flow(
     manual: bool,
 ) -> dict[str, Any]:
     """Drive the browser (or manual) OAuth flow and return a token record."""
-    server = None if manual else _try_start_callback_server()
+    server = None if manual else start_callback_server()
 
     console.print("Open this URL in your browser to authorize:")
     console.print(f"[cyan]{authorize_url}[/]")
@@ -202,8 +202,11 @@ class _CallbackServer:
         self._httpd.shutdown()
         self._httpd.server_close()
 
+    def cancel(self) -> None:
+        self._event.set()
 
-def _try_start_callback_server() -> _CallbackServer | None:
+
+def start_callback_server() -> _CallbackServer | None:
     event = threading.Event()
     holder: dict[str, Any] = {}
 

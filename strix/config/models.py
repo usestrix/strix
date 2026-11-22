@@ -725,6 +725,14 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     _configure_extra_headers(llm)
 
 
+def reset_sdk_model_defaults() -> None:
+    import litellm
+
+    litellm.api_key = None
+    litellm.api_base = None
+    os.environ.pop("OPENAI_BASE_URL", None)
+
+
 def configure_sdk_api_route(model_name: str, settings: Settings) -> None:
     """Point SDK-native OpenAI requests for ``model_name`` at Responses or chat completions."""
     api_type = resolve_api_type(model_name, settings)

@@ -71,6 +71,9 @@ type Snapshot struct {
 	ScopeMode           string           `json:"scope_mode"`
 	DiffBase            string           `json:"diff_base"`
 	Model               string           `json:"model"`
+	Effort              string           `json:"effort"`
+	LoginState          string           `json:"login_state"`
+	LoginError          string           `json:"login_error"`
 	CaidoURL            string           `json:"caido_url"`
 	Messages            []Message        `json:"messages"`
 	Agents              []Agent          `json:"-"`

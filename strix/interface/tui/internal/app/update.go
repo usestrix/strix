@@ -9,7 +9,21 @@ import (
 )
 
 func (m Model) updateMain(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.chord {
+		m.chord = false
+		if key.String() == "m" && m.snapshot.SetupMode {
+			cmd := m.openModels("")
+			return m, cmd
+		}
+		return m, nil
+	}
 	switch key.String() {
+	case "ctrl+p":
+		m.openPalette()
+		return m, nil
+	case "ctrl+x":
+		m.chord = true
+		return m, nil
 	case "f1":
 		m.openModal(modalHelp)
 		return m, nil
@@ -571,6 +585,9 @@ func clampCycle(value, length int) int {
 }
 
 func (m Model) updateModal(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.modal == modalDialog {
+		return m.updateDialog(key)
+	}
 	if m.modal == modalHelp {
 		if key.String() != "" {
 			m.closeModal()

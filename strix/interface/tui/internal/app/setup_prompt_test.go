@@ -125,7 +125,7 @@ func startPayloadFlag(t *testing.T, envelopes []protocol.Envelope, field string)
 func TestSetupPromptWithoutTargetLaunchesAndRequestsMount(t *testing.T) {
 	connection := &recordingConn{}
 	model := New(&Client{conn: connection})
-	model.snapshot = protocol.Snapshot{SetupMode: true, WorkingDir: "/Users/me/code/api"}
+	model.snapshot = protocol.Snapshot{SetupMode: true, Model: "openai/gpt-5.4", WorkingDir: "/Users/me/code/api"}
 
 	updated, cmd := model.submit("find auth bugs in the login flow")
 	model = updated.(Model)
@@ -200,7 +200,7 @@ func TestMountConfirmationAnswers(t *testing.T) {
 		connection := &recordingConn{}
 		model := New(&Client{conn: connection})
 		model.width, model.height = 130, 40
-		model.snapshot = protocol.Snapshot{SetupMode: true, WorkingDir: "/Users/me/code/api"}
+		model.snapshot = protocol.Snapshot{SetupMode: true, Model: "openai/gpt-5.4", WorkingDir: "/Users/me/code/api"}
 		updated, _ := model.submit("find auth bugs in the login flow")
 		model = updated.(Model)
 		connection.Reset()
@@ -239,7 +239,7 @@ func TestMountConfirmationAnswers(t *testing.T) {
 func TestSetupPromptWithTargetLaunches(t *testing.T) {
 	connection := &recordingConn{}
 	model := New(&Client{conn: connection})
-	model.snapshot = protocol.Snapshot{SetupMode: true}
+	model.snapshot = protocol.Snapshot{SetupMode: true, Model: "openai/gpt-5.4"}
 
 	_, cmd := model.submit("https://juice-shop.example.com hit the coupon endpoint")
 	envelopes := drainCommands(t, cmd, connection)
@@ -277,7 +277,7 @@ func TestMountPromptButtonsAreClickable(t *testing.T) {
 		connection := &recordingConn{}
 		model := New(&Client{conn: connection})
 		model.width, model.height = 130, 40
-		model.snapshot = protocol.Snapshot{SetupMode: true, WorkingDir: "/Users/me/code/api"}
+		model.snapshot = protocol.Snapshot{SetupMode: true, Model: "openai/gpt-5.4", WorkingDir: "/Users/me/code/api"}
 		updated, _ := model.submit("find auth bugs in the login flow")
 		model = updated.(Model)
 		connection.Reset()
@@ -328,7 +328,7 @@ func TestSkippingTheMountKeepsTheScanRunning(t *testing.T) {
 	connection := &recordingConn{}
 	model := New(&Client{conn: connection})
 	model.width, model.height = 130, 40
-	model.snapshot = protocol.Snapshot{SetupMode: true, WorkingDir: "/Users/me/code/api"}
+	model.snapshot = protocol.Snapshot{SetupMode: true, Model: "openai/gpt-5.4", WorkingDir: "/Users/me/code/api"}
 	updated, _ := model.submit("find auth bugs in the login flow")
 	model = updated.(Model)
 	model.snapshot = protocol.Snapshot{

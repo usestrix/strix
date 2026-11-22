@@ -87,6 +87,7 @@ class GoTuiRuntime:
             on_start=self.start_from_setup,
             on_verify=self.ensure_model_verified,
             on_quit=self.quit,
+            on_model_changed=self.recheck_model,
         )
         self.server = TuiBackendServer(self.controller)
 
@@ -146,11 +147,19 @@ class GoTuiRuntime:
             return
         self.controller.add_message("Model connection verified")
 
+    def recheck_model(self) -> None:
+        previous = self._setup_preflight
+        if previous is not None and not previous.done():
+            previous.cancel()
+        self.model_verified = False
+        self._setup_preflight = asyncio.create_task(self.check_setup_model())
+
     async def ensure_model_verified(self) -> None:
         """Hold a setup launch until the model has answered once."""
         preflight = self._setup_preflight
         if preflight is not None and not preflight.done():
-            await asyncio.shield(preflight)
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.shield(preflight)
         if self.model_verified:
             return
         try:
@@ -455,7 +464,7 @@ class GoTuiRuntime:
             try:
                 if backend_socket is not None:
                     backend_socket.close()
-                await self._cancel_tasks(prepare_task, sync_task)
+                await self._cancel_tasks(prepare_task, sync_task, self._setup_preflight)
                 await self.quit()
                 await self.server.close()
             finally:
