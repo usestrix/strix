@@ -992,6 +992,16 @@ def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bo
     return resolve_api_type(model_name, settings) == "chat_completions"
 
 
+def _api_host(url: str) -> str | None:
+    """Hostname of a base URL, or None when it cannot be parsed."""
+    from urllib.parse import urlsplit
+
+    try:
+        return urlsplit(url if "://" in url else f"//{url}").hostname
+    except ValueError:
+        return None
+
+
 def supports_strict_tool_schemas(model_name: str, settings: Settings | None = None) -> bool:
     """Return whether the route accepts strict tool schemas for Strix's toolset.
 
@@ -1009,7 +1019,8 @@ def supports_strict_tool_schemas(model_name: str, settings: Settings | None = No
         override = getattr(settings.llm, "strict_tool_schemas", None)
         if override is not None:
             return override
-        if getattr(settings.llm, "api_base", None):
+        api_base = getattr(settings.llm, "api_base", None)
+        if api_base and _api_host(api_base) != "api.openai.com":
             return False
     name = model_name.strip().lower()
     return not any(marker in name for marker in _ANTHROPIC_MODEL_MARKERS)

@@ -84,6 +84,17 @@ def test_strict_tool_schemas_env_override(
 
 
 @pytest.mark.parametrize(
+    "url", ["https://api.openai.com/v1", "https://api.openai.com", "https://API.OPENAI.COM/v1/"]
+)
+def test_official_openai_base_url_keeps_strict_tool_schemas(
+    monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    """Pinning the official endpoint explicitly must not lose strict schemas."""
+    settings = _settings(monkeypatch, "gpt-5.4", url)
+    assert supports_strict_tool_schemas("gpt-5.4", settings) is True
+
+
+@pytest.mark.parametrize(
     ("model_name", "litellm"),
     [
         ("claude-sonnet-4-5", False),
