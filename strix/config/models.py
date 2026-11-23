@@ -992,14 +992,25 @@ def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bo
     return resolve_api_type(model_name, settings) == "chat_completions"
 
 
-def supports_strict_tool_schemas(model_name: str) -> bool:
+def supports_strict_tool_schemas(model_name: str, settings: Settings | None = None) -> bool:
     """Return whether the route accepts strict tool schemas for Strix's toolset.
 
     Claude caps a request at 20 strict tools and 16 union-typed parameters
     across all strict schemas. Strix ships ~30 tools and the strict dialect
     turns every optional parameter into a nullable union, so both caps are
     exceeded and the request is rejected outright.
+
+    The model name alone cannot tell us what an OpenAI-compatible gateway
+    supports: gateways may reject a request that mixes strict and non-strict
+    tools. A custom ``api_base`` is therefore treated as non-strict unless
+    ``STRIX_STRICT_TOOL_SCHEMAS`` explicitly overrides the decision.
     """
+    if settings is not None:
+        override = getattr(settings.llm, "strict_tool_schemas", None)
+        if override is not None:
+            return override
+        if getattr(settings.llm, "api_base", None):
+            return False
     name = model_name.strip().lower()
     return not any(marker in name for marker in _ANTHROPIC_MODEL_MARKERS)
 

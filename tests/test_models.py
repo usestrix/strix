@@ -65,6 +65,21 @@ def test_other_routes_keep_strict_tool_schemas(model_name: str) -> None:
     assert supports_strict_tool_schemas(model_name)
 
 
+def test_custom_base_url_disables_strict_tool_schemas(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A gateway's strict support cannot be inferred from the model name."""
+    settings = _settings(monkeypatch, "gpt-5.4", "https://gateway.example/v1")
+    assert not supports_strict_tool_schemas("gpt-5.4", settings)
+
+
+@pytest.mark.parametrize("override", ["0", "false", "1", "true"])
+def test_strict_tool_schemas_env_override(monkeypatch: pytest.MonkeyPatch, override: str) -> None:
+    """An explicit override wins over both the model name and the base URL."""
+    monkeypatch.setenv("STRIX_STRICT_TOOL_SCHEMAS", override)
+    settings = _settings(monkeypatch, "gpt-5.4", "https://gateway.example/v1")
+    expected = override in {"1", "true"}
+    assert supports_strict_tool_schemas("gpt-5.4", settings) is expected
+
+
 @pytest.mark.parametrize(
     ("model_name", "litellm"),
     [

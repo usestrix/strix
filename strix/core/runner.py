@@ -315,9 +315,9 @@ async def run_strix_scan(
         configure_sdk_api_route(resolved_model, settings)
     logger.info("LLM model resolved: %s", resolved_model)
     chat_completions_tools = uses_chat_completions_tool_schema(resolved_model, settings)
-    strict_tool_schemas = supports_strict_tool_schemas(resolved_model)
+    strict_tool_schemas = supports_strict_tool_schemas(resolved_model, settings)
     if not strict_tool_schemas:
-        logger.info("Sending non-strict tool schemas: %s caps strict tools", resolved_model)
+        logger.info("Sending non-strict tool schemas for %s", resolved_model)
     supports_images = model_supports_images(resolved_model)
     if not supports_images:
         logger.info("Leaving out image tools: %s does not accept images", resolved_model)

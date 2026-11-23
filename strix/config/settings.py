@@ -70,6 +70,11 @@ class LlmSettings(BaseSettings):
     cached_input_cost_per_mtok: float | None = Field(
         default=None, ge=0, allow_inf_nan=False, alias="STRIX_LLM_CACHED_INPUT_COST_PER_MTOK"
     )
+    strict_tool_schemas: bool | None = Field(
+        default=None,
+        alias="STRIX_STRICT_TOOL_SCHEMAS",
+        description="Override strict tool schema support; unset infers it from the route",
+    )
     force_required_tool_choice: bool = Field(
         default=False,
         alias="STRIX_FORCE_REQUIRED_TOOL_CHOICE",
