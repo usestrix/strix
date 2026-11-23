@@ -147,6 +147,27 @@ Trace the update pipeline as an executable supply chain:
 
 An attacker-controlled feed is not automatically native code execution if independent artifact signatures are mandatory. Conversely, HTTPS does not compensate for missing artifact authenticity or unsafe rollback behavior.
 
+## Dynamic Testing of a Linux Build
+
+Static review shows what the code can do. A running build shows which renderer origin can actually reach it. Run a packaged build only inside the sandbox, and only when the build is in scope.
+
+**Prepare the build**
+- Identify the artifact with `file` and check the architecture against `uname -m`. Do not substitute a build for another platform, or a fresh build from source, without stating the coverage difference.
+- Unpack without installing. Use `dpkg-deb -x` for a deb and never run its maintainer scripts. Use `--appimage-extract` for an AppImage, because the sandbox has no FUSE. List a tarball before extraction and reject absolute paths, traversal, and links that leave the extraction directory.
+- Locate the executable, `resources/app.asar`, and `app.asar.unpacked`. Extract a copy with `npx @electron/asar extract` and keep the original build unchanged.
+
+**Launch and attach**
+- A GUI build needs a display. If `Xvfb` is available, start one (`Xvfb :99 -screen 0 1440x900x24 -nolisten tcp`) and set `DISPLAY=:99`. Without a display server, `--ozone-platform=headless` still exposes the debugger, but screenshots can time out.
+- Start the executable with `--remote-debugging-port=<port>` and attach the browser tooling to that port. `http://127.0.0.1:<port>/json/list` lists every window and webview. Select the target that matches the origin under test.
+- Add `--inspect=<port>` to reach the main process when the build allows it. Electron fuses can disable both switches. If they do, use native input such as `xdotool` and rely on static analysis. Do not patch the build and present the result as the shipped behavior.
+- If Chromium aborts because the container has no usable SUID or namespace sandbox, retry with `--no-sandbox` and record that change.
+- Route traffic through the interception proxy with `--proxy-server`. The main process, native helpers, and pinned clients can ignore that switch, so confirm in proxy history which traffic was captured.
+
+**Keep instrumentation separate from findings**
+- The debugger ports and any `--no-sandbox` fallback exist because the test added them. Never report them as exposure in the shipped application.
+- JavaScript injected through the debugger runs with authority that a remote attacker does not have. Use it to enumerate the bridge and IPC surface, then prove reachability from content that an attacker can supply.
+- Report static coverage and live coverage separately. A build that failed to launch received static review only.
+
 ## Validation
 
 - Record the exact installed build, Electron version, preferences, preload, handler, and current document/frame origin.
