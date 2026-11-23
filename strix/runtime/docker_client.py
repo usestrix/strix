@@ -25,9 +25,11 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import socket
 import uuid
 from typing import Any, cast
 
+import docker.transport as _docker_transport  # type: ignore[import-untyped, unused-ignore]
 from agents.sandbox.errors import ExposedPortUnavailableError
 from agents.sandbox.manifest import Manifest
 from agents.sandbox.sandboxes.docker import (
@@ -35,10 +37,12 @@ from agents.sandbox.sandboxes.docker import (
     DockerSandboxSession,
     _build_docker_volume_mounts,
     _docker_port_key,
+    _DockerExecSocket,
     _manifest_requires_fuse,
     _manifest_requires_sys_admin,
 )
 from agents.sandbox.session.sandbox_session import SandboxSession
+from agents.sandbox.session.sandbox_session_state import SandboxSessionState
 from agents.sandbox.types import ExposedPortEndpoint
 from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
 from docker.models.containers import Container  # type: ignore[import-untyped, unused-ignore]
@@ -150,10 +154,54 @@ def _apply_run_labels(create_kwargs: dict[str, Any]) -> None:
         labels["strix-run-type"] = run_type
 
 
+def _is_npipe_socket(raw_sock: object) -> bool:
+    npipe_type = getattr(_docker_transport, "NpipeSocket", None)
+    return isinstance(npipe_type, type) and isinstance(raw_sock, npipe_type)
+
+
+def _guard_npipe_half_close(raw_sock: Any) -> None:
+    """Prevent ``shutdown(SHUT_WR)`` from closing a Windows named-pipe socket.
+
+    ``docker.transport.npipesocket.NpipeSocket.shutdown(how)`` ignores ``how``
+    and calls ``self.close()``, tearing down the full-duplex handle before the
+    exec reader thread drains stdout/stderr frames.
+    """
+    if not _is_npipe_socket(raw_sock):
+        return
+    orig_shutdown = getattr(raw_sock, "shutdown", None)
+    if not callable(orig_shutdown) or getattr(orig_shutdown, "_strix_npipe_guarded", False):
+        return
+
+    def _shutdown_without_wr_close(how: int) -> Any:
+        if how == socket.SHUT_WR:
+            return None
+        return orig_shutdown(how)
+
+    cast("Any", _shutdown_without_wr_close)._strix_npipe_guarded = True
+    raw_sock.shutdown = _shutdown_without_wr_close
+
+
 class StrixDockerSandboxSession(DockerSandboxSession):
     sandbox_network: str = ""
 
+    @staticmethod
+    def _start_exec_socket(
+        *,
+        api: Any,
+        exec_id: str,
+        tty: bool = False,
+    ) -> _DockerExecSocket:
+        exec_socket = DockerSandboxSession._start_exec_socket(
+            api=api,
+            exec_id=exec_id,
+            tty=tty,
+        )
+        _guard_npipe_half_close(exec_socket.raw_sock)
+        return exec_socket
+
     async def _resolve_exposed_port(self, port: int) -> ExposedPortEndpoint:
+        if not self.sandbox_network:
+            return await super()._resolve_exposed_port(port)
         try:
             self._container.reload()
         except docker_errors.APIError as e:
@@ -294,14 +342,23 @@ class StrixDockerSandboxClient(DockerSandboxClient):
         )
         return container
 
-    async def create(self, **kwargs: Any) -> SandboxSession:
-        session = await super().create(**kwargs)
+    @staticmethod
+    def _attach_session_subclass(session: SandboxSession) -> SandboxSession:
         network = _sandbox_network()
         inner = session._inner
-        if network and isinstance(inner, DockerSandboxSession):
+        if isinstance(inner, DockerSandboxSession):
             inner.__class__ = StrixDockerSandboxSession
-            cast("StrixDockerSandboxSession", inner).sandbox_network = network
+            if network:
+                cast("StrixDockerSandboxSession", inner).sandbox_network = network
         return session
+
+    async def create(self, **kwargs: Any) -> SandboxSession:
+        session = await super().create(**kwargs)
+        return self._attach_session_subclass(session)
+
+    async def resume(self, state: SandboxSessionState) -> SandboxSession:
+        session = await super().resume(state)
+        return self._attach_session_subclass(session)
 
     async def delete(self, session: SandboxSession) -> SandboxSession:
         container_id = getattr(getattr(session._inner, "state", None), "container_id", None)
