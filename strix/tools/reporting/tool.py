@@ -1068,8 +1068,10 @@ async def create_vulnerability_report(
     - No internal/system details: never mention paths like
       ``/workspace``, internal tools, agents, sandboxes, models, system
       prompts, internal errors / stack traces, or tester environment.
-      Never leak internal identifiers (proxy request IDs, internal
-      report IDs) into any field.
+      Never leak internal identifiers (internal report IDs, agent or
+      sandbox identifiers) into any field. Proxy request IDs are the one
+      exception: they belong only in ``http_exchange_ids``, never in
+      report text.
     - Tone: formal, objective, third-person, vendor-neutral, concise.
       Avoid internal-guidance headings like "QUICK", "Approach", or
       "Techniques" that read like an engineering runbook rather than a
@@ -1305,9 +1307,9 @@ async def create_vulnerability_report(
             Omit only when the finding has no captured HTTP evidence (for
             example a static-only code finding). Never invent IDs or drop
             them to bypass a verification error; retry the capture instead.
-            If the result carries a ``warning`` that the IDs were not
-            stored, the finding is filed without them: attach them with
-            ``update_vulnerability_report`` once the proxy responds.
+            If the result carries a ``warning`` that the IDs could not be
+            verified, they are still stored with the finding; no follow-up
+            ``update_vulnerability_report`` call is needed.
             Keep IDs out of ``evidence`` and all other report text.
 
             **How ``fix_before`` / ``fix_after`` work**: they're used as
