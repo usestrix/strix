@@ -807,6 +807,23 @@ class ReportState:
 
     def cleanup(self, status: str = "stopped") -> None:
         self.save_run_data(status=status)
+        self.redact_secrets()
+
+    def redact_secrets(self) -> None:
+        """Mask the ``STRIX_REDACT_ENV`` secrets in every file of the run directory.
+
+        Runs last in :meth:`cleanup`, after the final artifacts are written. It
+        never raises: a failed redaction is logged, not allowed to cost the run
+        its artifacts.
+        """
+        try:
+            from strix.report.redaction import configured_secrets, redact_run_dir
+
+            secrets = configured_secrets()
+            if secrets:
+                redact_run_dir(self.get_run_dir(), secrets)
+        except Exception:
+            logger.exception("Secret redaction failed")
 
     def _format_final_scan_result(self, scan_results: dict[str, Any]) -> str:
         return f"""# Executive Summary

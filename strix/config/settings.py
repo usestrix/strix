@@ -217,6 +217,14 @@ class IntegrationSettings(BaseSettings):
     )
 
 
+class RedactionSettings(BaseSettings):
+    model_config = _BASE_CONFIG
+
+    # Comma- or space-separated names of environment variables whose values are
+    # masked in every file under the run directory when the run ends.
+    env_names: str = Field(default="", alias="STRIX_REDACT_ENV")
+
+
 class ViewerSettings(BaseSettings):
     model_config = _BASE_CONFIG
 
@@ -236,3 +244,4 @@ class Settings(BaseSettings):
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     integrations: IntegrationSettings = Field(default_factory=IntegrationSettings)
     viewer: ViewerSettings = Field(default_factory=ViewerSettings)
+    redaction: RedactionSettings = Field(default_factory=RedactionSettings)
