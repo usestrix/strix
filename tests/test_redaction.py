@@ -147,6 +147,100 @@ def test_redact_run_dir_is_idempotent_and_leaves_clean_files_alone(tmp_path: Pat
     assert (tmp_path / "dirty.md").read_text() == MARKER
 
 
+def test_a_numeric_secret_keeps_json_files_and_stored_json_valid(tmp_path: Path) -> None:
+    secrets = {"PIN": "1234"}
+    record = {
+        "instruction": "Unlock with PIN 1234",
+        "llm_usage": {"input_tokens": 12345, "cost": 1234.5},
+        "pin": 1234,
+    }
+    (tmp_path / "run.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
+    (tmp_path / "events.jsonl").write_text(
+        json.dumps({"tokens": 12345, "text": "PIN 1234"}) + "\n" + json.dumps({"n": 1}) + "\n",
+        encoding="utf-8",
+    )
+    session = SQLiteSession(session_id="agent-1", db_path=tmp_path / "agents.db")
+    asyncio.run(
+        session.add_items(
+            [
+                {
+                    "type": "function_call",
+                    "call_id": "c1",
+                    "name": "terminal",
+                    "arguments": json.dumps({"timeout": 12345, "command": "unlock 1234"}),
+                }
+            ]
+        )
+    )
+    session.close()
+
+    summary = redact_run_dir(tmp_path, secrets)
+
+    assert summary.errors == []
+    expected = {
+        "instruction": "Unlock with PIN [REDACTED:PIN]",
+        "llm_usage": {"input_tokens": 12345, "cost": 1234.5},
+        "pin": "[REDACTED:PIN]",
+    }
+    assert (tmp_path / "run.json").read_text() == json.dumps(expected, indent=2)
+    lines = (tmp_path / "events.jsonl").read_text().splitlines()
+    assert [json.loads(line) for line in lines] == [
+        {"tokens": 12345, "text": "PIN [REDACTED:PIN]"},
+        {"n": 1},
+    ]
+    reopened = SQLiteSession(session_id="agent-1", db_path=tmp_path / "agents.db")
+    items = [cast("dict[str, Any]", i) for i in asyncio.run(reopened.get_items())]
+    reopened.close()
+    assert json.loads(items[0]["arguments"]) == {
+        "timeout": 12345,
+        "command": "unlock [REDACTED:PIN]",
+    }
+
+
+def test_a_form_encoded_passphrase_is_redacted_in_files_and_sqlite(tmp_path: Path) -> None:
+    secrets = {"PASSPHRASE": "long pass/word"}
+    body = "user=a&password=long+pass%2Fword&next=%2F"
+    (tmp_path / "request.txt").write_text(body, encoding="utf-8")
+    with sqlite3.connect(tmp_path / "proxy.db") as connection:
+        connection.execute("CREATE TABLE requests (body TEXT)")
+        connection.execute("INSERT INTO requests VALUES (?)", (body,))
+    connection.close()
+
+    redact_run_dir(tmp_path, secrets)
+
+    expected = "user=a&password=[REDACTED:PASSPHRASE]&next=%2F"
+    assert (tmp_path / "request.txt").read_text() == expected
+    with sqlite3.connect(tmp_path / "proxy.db") as connection:
+        assert connection.execute("SELECT body FROM requests").fetchone() == (expected,)
+    connection.close()
+    assert b"long+pass" not in (tmp_path / "proxy.db").read_bytes()
+
+
+def test_a_secret_left_only_in_deleted_rows_is_erased_from_the_database(tmp_path: Path) -> None:
+    path = tmp_path / "agents.db"
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA secure_delete=OFF")
+    connection.execute("CREATE TABLE messages (body TEXT)")
+    connection.execute("INSERT INTO messages VALUES (?)", (f"Credentials: {PASSWORD}",))
+    connection.execute("INSERT INTO messages VALUES ('compacted summary')")
+    connection.commit()
+    connection.execute("DELETE FROM messages WHERE body LIKE 'Credentials:%'")
+    connection.commit()
+    connection.close()
+    if PASSWORD.encode() not in path.read_bytes():
+        pytest.skip("this SQLite build erases deleted content itself")
+
+    summary = redact_run_dir(tmp_path, SECRETS)
+
+    assert summary.errors == []
+    assert PASSWORD.encode() not in path.read_bytes()
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT body FROM messages").fetchall() == [
+            ("compacted summary",)
+        ]
+    connection.close()
+
+
 def test_redact_run_dir_without_secrets_changes_nothing(tmp_path: Path) -> None:
     (tmp_path / "run.json").write_text(PASSWORD, encoding="utf-8")
     assert redact_run_dir(tmp_path, {}).files_changed == []

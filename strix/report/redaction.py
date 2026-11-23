@@ -9,9 +9,12 @@ agents wrote down. ``STRIX_REDACT_ENV`` names the environment variables whose
 values are secret; :func:`redact_run_dir` replaces each of those values with
 ``[REDACTED:<NAME>]`` in every file under the run directory.
 
-SQLite databases are rewritten through SQL rather than byte patching, with
-``secure_delete`` on and a ``VACUUM`` afterwards, so the old values do not
-survive in freed pages or in the write-ahead log.
+JSON, whether a whole file, one line of a JSON Lines file or a value stored in
+a database, is redacted inside its strings only, so a secret that is also a
+run of digits does not turn a token count into invalid JSON. SQLite databases
+are rewritten through SQL rather than byte patching, with ``secure_delete`` on
+and a ``VACUUM`` afterwards, so the old values do not survive in freed pages
+or in the write-ahead log.
 """
 
 from __future__ import annotations
@@ -19,12 +22,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
-from urllib.parse import quote
+from typing import TYPE_CHECKING, Any
+from urllib.parse import quote, quote_plus
 
 from strix.config.loader import load_settings
 
@@ -41,6 +45,7 @@ MIN_SECRET_LENGTH = 4
 
 _SQLITE_HEADER = b"SQLite format 3\x00"
 _SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+_JSON_INDENT = re.compile(r"\n( +)\S")
 
 
 @dataclass
@@ -96,9 +101,10 @@ def _encodings(value: str) -> set[str]:
 
     The raw text; JSON-escaped once (a JSON file) and twice (tool-call
     arguments, which are a JSON string inside a stored JSON message), each with
-    and without ASCII escaping; and percent-encoded, as in a form body or URL.
+    and without ASCII escaping; and percent-encoded with ``%20`` or ``+`` for a
+    space, as in a URL or a form body.
     """
-    forms = {value, quote(value, safe="")}
+    forms = {value, quote(value, safe=""), quote_plus(value, safe="")}
     for ensure_ascii in (True, False):
         once = _json_escaped(value, ensure_ascii=ensure_ascii)
         forms.add(once)
@@ -123,6 +129,68 @@ def redact_text(text: str, replacements: list[tuple[str, str]]) -> str:
     return text
 
 
+def _redact_json_value(value: Any, replacements: list[tuple[str, str]]) -> Any:
+    if isinstance(value, str):
+        return _redact_json_string(value, replacements)
+    if isinstance(value, dict):
+        return {
+            _redact_json_string(key, replacements): _redact_json_value(item, replacements)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_json_value(item, replacements) for item in value]
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        # A secret stored as a JSON number, such as a numeric PIN. Only an
+        # exact match is replaced, so a count or cost that merely contains the
+        # digits stays a number.
+        number = json.dumps(value)
+        for needle, marker in replacements:
+            if needle == number:
+                return marker
+    return value
+
+
+def _redact_json_string(text: str, replacements: list[tuple[str, str]]) -> str:
+    # A string can carry JSON of its own, such as a tool call's arguments.
+    document = _redact_json_document(text, replacements)
+    return redact_text(text, replacements) if document is None else document
+
+
+def _redact_json_document(text: str, replacements: list[tuple[str, str]]) -> str | None:
+    """Redact ``text`` inside its strings if it is a JSON object or array, else return None.
+
+    A changed document is written back with the indentation and ASCII escaping
+    it was read with.
+    """
+    if not text.lstrip().startswith(("{", "[")):
+        return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    redacted = _redact_json_value(parsed, replacements)
+    if redacted == parsed:
+        return text
+    indent = _JSON_INDENT.search(text)
+    dumped = json.dumps(
+        redacted,
+        indent=len(indent.group(1)) if indent else None,
+        ensure_ascii=text.isascii(),
+    )
+    return dumped + text[len(text.rstrip()) :]
+
+
+def _redact_document(text: str, replacements: list[tuple[str, str]]) -> str:
+    """Redact a file's or a database value's text, JSON inside its strings only."""
+    document = _redact_json_document(text, replacements)
+    if document is not None:
+        return document
+    # JSON Lines, a log, or prose: each line on its own.
+    return "".join(
+        _redact_json_string(line, replacements) for line in text.splitlines(keepends=True)
+    )
+
+
 def _is_sqlite(path: Path) -> bool:
     try:
         with path.open("rb") as handle:
@@ -141,25 +209,38 @@ def _redact_sqlite(path: Path, replacements: list[tuple[str, str]]) -> bool:
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             )
         ]
+        needles = [needle for needle, _ in replacements]
         changed = 0
         for table in tables:
             quoted_table = '"' + table.replace('"', '""') + '"'
             columns = [row[1] for row in connection.execute(f"PRAGMA table_info({quoted_table})")]
             for column in columns:
                 quoted_column = '"' + column.replace('"', '""') + '"'
-                for needle, marker in replacements:
-                    # Table and column names come from this database's own
-                    # schema and are quoted; the values are bound parameters.
+                contains_needle = " OR ".join([f"instr({quoted_column}, ?) > 0"] * len(needles))
+                # Table and column names come from this database's own schema
+                # and are quoted; the values are bound parameters. Values are
+                # redacted in Python so JSON stored in a column stays valid.
+                values = connection.execute(
+                    f"SELECT DISTINCT {quoted_column} FROM {quoted_table} "  # noqa: S608  # nosec B608
+                    f"WHERE typeof({quoted_column}) = 'text' AND ({contains_needle})",
+                    needles,
+                ).fetchall()
+                for (value,) in values:
+                    redacted = _redact_document(value, replacements)
+                    if redacted == value:
+                        continue
                     cursor = connection.execute(
-                        f"UPDATE {quoted_table} SET {quoted_column} = "  # noqa: S608  # nosec B608
-                        f"replace({quoted_column}, ?, ?) "
-                        f"WHERE typeof({quoted_column}) = 'text' AND instr({quoted_column}, ?) > 0",
-                        (needle, marker, needle),
+                        f"UPDATE {quoted_table} SET {quoted_column} = ? "  # noqa: S608  # nosec B608
+                        f"WHERE {quoted_column} = ?",
+                        (redacted, value),
                     )
                     changed += cursor.rowcount
         connection.commit()
-        if changed:
-            connection.execute("VACUUM")
+        # Rebuild the file even when no current row held a secret: rows
+        # deleted earlier, such as history that compaction replaced, can leave
+        # their old values in freed pages, and secure_delete only covers
+        # deletes made from now on.
+        connection.execute("VACUUM")
         # Fold the WAL back into the database and empty it, so no copy of the
         # pre-redaction pages stays on disk next to it. A database not in WAL
         # mode reports no frames; a busy one is an error the caller reports.
@@ -173,11 +254,15 @@ def _redact_sqlite(path: Path, replacements: list[tuple[str, str]]) -> bool:
 
 def _redact_file(path: Path, replacements: list[tuple[str, str]]) -> bool:
     original = path.read_bytes()
-    data = original
-    for needle, marker in replacements:
-        encoded = needle.encode("utf-8")
-        if encoded in data:
-            data = data.replace(encoded, marker.encode("utf-8"))
+    if not any(needle.encode("utf-8") in original for needle, _ in replacements):
+        return False
+    try:
+        data = _redact_document(original.decode("utf-8"), replacements).encode("utf-8")
+    except UnicodeDecodeError:
+        # Not text: patch the bytes.
+        data = original
+        for needle, marker in replacements:
+            data = data.replace(needle.encode("utf-8"), marker.encode("utf-8"))
     if data == original:
         return False
     mode = path.stat().st_mode & 0o777
