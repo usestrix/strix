@@ -27,14 +27,14 @@ import sqlite3
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, quote_plus
 
 from strix.config.loader import load_settings
 
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
 
 logger = logging.getLogger(__name__)
@@ -136,10 +136,10 @@ def _redact_json_value(value: Any, replacements: list[tuple[str, str]]) -> Any:
     if isinstance(value, dict):
         return {
             _redact_json_string(key, replacements): _redact_json_value(item, replacements)
-            for key, item in value.items()
+            for key, item in cast("dict[str, Any]", value).items()
         }
     if isinstance(value, list):
-        return [_redact_json_value(item, replacements) for item in value]
+        return [_redact_json_value(item, replacements) for item in cast("list[object]", value)]
     if isinstance(value, int | float) and not isinstance(value, bool):
         # A secret stored as a JSON number, such as a numeric PIN. Only an
         # exact match is replaced, so a count or cost that merely contains the
@@ -187,9 +187,16 @@ def _redact_document(text: str, replacements: list[tuple[str, str]]) -> str:
     if document is not None:
         return document
     # JSON Lines, a log, or prose: each line on its own.
-    return "".join(
+    text = "".join(
         _redact_json_string(line, replacements) for line in text.splitlines(keepends=True)
     )
+    # A multi-line secret, such as a private key, spans lines, so its raw form
+    # is matched against the whole text. A form with a line break cannot occur
+    # inside a JSON line, so this pass leaves JSON Lines valid.
+    spanning = [
+        (needle, marker) for needle, marker in replacements if "\n" in needle or "\r" in needle
+    ]
+    return redact_text(text, spanning)
 
 
 def _is_sqlite(path: Path) -> bool:
@@ -277,6 +284,26 @@ def _redact_file(path: Path, replacements: list[tuple[str, str]]) -> bool:
     return True
 
 
+def _redact_one(
+    path: Path,
+    redact: Callable[[Path, list[tuple[str, str]]], bool],
+    replacements: list[tuple[str, str]],
+    summary: RedactionSummary,
+) -> None:
+    """Run ``redact`` on one file and record the outcome in ``summary``.
+
+    Any error is recorded rather than raised: an unreadable file, a database
+    error or a document nested too deeply to parse must not stop the files
+    after it from being redacted.
+    """
+    try:
+        if redact(path, replacements):
+            summary.files_changed.append(path)
+    except Exception as exc:
+        logger.exception("Could not redact secrets in %s", path)
+        summary.errors.append((path, str(exc)))
+
+
 def redact_run_dir(run_dir: Path, secrets: dict[str, str]) -> RedactionSummary:
     """Replace every secret value in every file under ``run_dir``.
 
@@ -295,23 +322,13 @@ def redact_run_dir(run_dir: Path, secrets: dict[str, str]) -> RedactionSummary:
     # Databases first: the checkpoint inside empties their -wal files, which
     # are then skipped below along with the other SQLite sidecars.
     for path in databases:
-        try:
-            if _redact_sqlite(path, replacements):
-                summary.files_changed.append(path)
-        except (OSError, sqlite3.Error) as exc:
-            logger.exception("Could not redact secrets in %s", path)
-            summary.errors.append((path, str(exc)))
+        _redact_one(path, _redact_sqlite, replacements, summary)
 
     database_set = set(databases)
     for path in files:
         if path in database_set or path.name.endswith(_SQLITE_SIDECAR_SUFFIXES):
             continue
-        try:
-            if _redact_file(path, replacements):
-                summary.files_changed.append(path)
-        except OSError as exc:
-            logger.exception("Could not redact secrets in %s", path)
-            summary.errors.append((path, str(exc)))
+        _redact_one(path, _redact_file, replacements, summary)
 
     if summary.files_changed:
         logger.info(

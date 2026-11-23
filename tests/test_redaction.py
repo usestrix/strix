@@ -263,6 +263,49 @@ def test_a_secret_left_only_in_deleted_rows_is_erased_from_the_database(tmp_path
     connection.close()
 
 
+def test_a_multi_line_secret_is_redacted_in_prose_csv_and_sqlite(tmp_path: Path) -> None:
+    key = "-----BEGIN KEY-----\nMIIEvQIBADANBg\n-----END KEY-----"
+    marker = "[REDACTED:SIGNING_KEY]"
+    (tmp_path / "notes.md").write_text(f"Found the key:\n{key}\nin the repo.\n", encoding="utf-8")
+    report = {
+        "id": "vuln-0001",
+        "title": f"Leaked {key}",
+        "severity": "high",
+        "timestamp": "2026-11-23T00:00:00Z",
+    }
+    write_vulnerabilities(tmp_path, [report], {"vuln-0001"})
+    with sqlite3.connect(tmp_path / "agents.db") as connection:
+        connection.execute("CREATE TABLE messages (body TEXT)")
+        connection.execute("INSERT INTO messages VALUES (?)", (f"key:\n{key}",))
+    connection.close()
+
+    summary = redact_run_dir(tmp_path, {"SIGNING_KEY": key})
+
+    assert summary.errors == []
+    assert (tmp_path / "notes.md").read_text() == f"Found the key:\n{marker}\nin the repo.\n"
+    with (tmp_path / "vulnerabilities.csv").open(newline="", encoding="utf-8") as handle:
+        assert next(csv.DictReader(handle))["title"] == f"Leaked {marker}"
+    with sqlite3.connect(tmp_path / "agents.db") as connection:
+        assert connection.execute("SELECT body FROM messages").fetchone() == (f"key:\n{marker}",)
+    connection.close()
+    for path in tmp_path.rglob("*"):
+        if path.is_file():
+            assert b"MIIEvQIBADANBg" not in path.read_bytes(), f"secret left in {path}"
+
+
+def test_a_file_that_cannot_be_redacted_does_not_stop_the_others(tmp_path: Path) -> None:
+    # Nested deeper than the JSON parser's recursion limit.
+    depth = 100_000
+    unparsable = tmp_path / "a_nested.json"
+    unparsable.write_text("[" * depth + json.dumps(PASSWORD) + "]" * depth, encoding="utf-8")
+    (tmp_path / "z_notes.md").write_text(PASSWORD, encoding="utf-8")
+
+    summary = redact_run_dir(tmp_path, SECRETS)
+
+    assert [path for path, _ in summary.errors] == [unparsable]
+    assert (tmp_path / "z_notes.md").read_text() == MARKER
+
+
 def test_redact_run_dir_without_secrets_changes_nothing(tmp_path: Path) -> None:
     (tmp_path / "run.json").write_text(PASSWORD, encoding="utf-8")
     assert redact_run_dir(tmp_path, {}).files_changed == []
