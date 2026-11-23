@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import json
 import sqlite3
 from typing import TYPE_CHECKING, Any, cast
@@ -20,6 +21,7 @@ from strix.report.redaction import (
     secrets_from_env,
 )
 from strix.report.state import ReportState
+from strix.report.writer import write_vulnerabilities
 
 
 if TYPE_CHECKING:
@@ -214,6 +216,26 @@ def test_a_form_encoded_passphrase_is_redacted_in_files_and_sqlite(tmp_path: Pat
         assert connection.execute("SELECT body FROM requests").fetchone() == (expected,)
     connection.close()
     assert b"long+pass" not in (tmp_path / "proxy.db").read_bytes()
+
+
+def test_a_secret_with_quotes_is_redacted_in_the_vulnerability_csv(tmp_path: Path) -> None:
+    report = {
+        "id": "vuln-0001",
+        "title": f"Login accepts {PASSWORD}",
+        "severity": "high",
+        "timestamp": "2026-11-23T00:00:00Z",
+    }
+    # The id is passed as already saved so only the CSV and JSON exports are written.
+    write_vulnerabilities(tmp_path, [report], {"vuln-0001"})
+    assert PASSWORD.replace('"', '""') in (tmp_path / "vulnerabilities.csv").read_text()
+
+    summary = redact_run_dir(tmp_path, SECRETS)
+
+    assert summary.errors == []
+    _assert_no_secret_under(tmp_path)
+    with (tmp_path / "vulnerabilities.csv").open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows[0]["title"] == f"Login accepts {MARKER}"
 
 
 def test_a_secret_left_only_in_deleted_rows_is_erased_from_the_database(tmp_path: Path) -> None:

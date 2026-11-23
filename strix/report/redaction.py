@@ -101,10 +101,11 @@ def _encodings(value: str) -> set[str]:
 
     The raw text; JSON-escaped once (a JSON file) and twice (tool-call
     arguments, which are a JSON string inside a stored JSON message), each with
-    and without ASCII escaping; and percent-encoded with ``%20`` or ``+`` for a
-    space, as in a URL or a form body.
+    and without ASCII escaping; percent-encoded with ``%20`` or ``+`` for a
+    space, as in a URL or a form body; and with each quote doubled, as the
+    :mod:`csv` module writes a field such as a title in ``vulnerabilities.csv``.
     """
-    forms = {value, quote(value, safe=""), quote_plus(value, safe="")}
+    forms = {value, value.replace('"', '""'), quote(value, safe=""), quote_plus(value, safe="")}
     for ensure_ascii in (True, False):
         once = _json_escaped(value, ensure_ascii=ensure_ascii)
         forms.add(once)
