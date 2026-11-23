@@ -72,12 +72,15 @@ def test_custom_base_url_disables_strict_tool_schemas(monkeypatch: pytest.Monkey
 
 
 @pytest.mark.parametrize("override", ["0", "false", "1", "true"])
-def test_strict_tool_schemas_env_override(monkeypatch: pytest.MonkeyPatch, override: str) -> None:
-    """An explicit override wins over both the model name and the base URL."""
+@pytest.mark.parametrize("model", ["gpt-5.4", "claude-sonnet-4-6"])
+def test_strict_tool_schemas_env_override(
+    monkeypatch: pytest.MonkeyPatch, override: str, model: str
+) -> None:
+    """An explicit override wins over the model name, Claude detection, and the base URL."""
     monkeypatch.setenv("STRIX_STRICT_TOOL_SCHEMAS", override)
-    settings = _settings(monkeypatch, "gpt-5.4", "https://gateway.example/v1")
+    settings = _settings(monkeypatch, model, "https://gateway.example/v1")
     expected = override in {"1", "true"}
-    assert supports_strict_tool_schemas("gpt-5.4", settings) is expected
+    assert supports_strict_tool_schemas(model, settings) is expected
 
 
 @pytest.mark.parametrize(
