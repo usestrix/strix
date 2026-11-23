@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from agents.memory import SQLiteSession
@@ -126,10 +126,10 @@ def test_redact_run_dir_masks_json_text_and_sqlite_artifacts(tmp_path: Path) -> 
     assert (run_dir / "strix.log").stat().st_mode & 0o777 == 0o640
 
     reopened = SQLiteSession(session_id="agent-1", db_path=state_dir / "agents.db")
-    items = asyncio.run(reopened.get_items())
+    items = [cast("dict[str, Any]", i) for i in asyncio.run(reopened.get_items())]
     reopened.close()
-    assert items[0]["content"] == f"Credentials: {MARKER}"  # type: ignore[typeddict-item]
-    arguments = json.loads(items[1]["arguments"])  # type: ignore[typeddict-item]
+    assert items[0]["content"] == f"Credentials: {MARKER}"
+    arguments = json.loads(items[1]["arguments"])
     assert arguments == {"command": f"login --password '{MARKER}'"}
     with sqlite3.connect(state_dir / "agents.db") as connection:
         assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)

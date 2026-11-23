@@ -116,6 +116,7 @@ def build_replacements(secrets: dict[str, str]) -> list[tuple[str, str]]:
 
 
 def redact_text(text: str, replacements: list[tuple[str, str]]) -> str:
+    """Apply :func:`build_replacements` pairs to ``text``, in order."""
     for needle, marker in replacements:
         if needle in text:
             text = text.replace(needle, marker)
