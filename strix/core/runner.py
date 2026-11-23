@@ -50,6 +50,7 @@ from strix.core.inputs import (
     make_model_settings,
 )
 from strix.core.paths import run_dir_for, runtime_state_dir
+from strix.core.rate_limits import normalize_rate_limits
 from strix.core.sessions import open_agent_session
 from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
@@ -239,6 +240,7 @@ async def run_strix_scan(
     coverage_tools: bool = True,
     subagent_turn_limits: Mapping[str, int] | None = None,
     select_tools: Callable[..., Sequence[Tool]] | None = None,
+    rate_limits: Mapping[str, float] | None = None,
 ) -> RunResultBase | None:
     """Run or resume one Strix scan against a sandbox.
 
@@ -272,6 +274,8 @@ async def run_strix_scan(
     spawned with that skill (the largest applies). Agents are warned 10 turns
     before it and reminded past it, but never stopped.
     ``select_tools`` picks each agent's tools; see ``build_strix_agent``.
+    ``rate_limits`` maps a domain to the most requests per second the sandbox
+    proxy sends to it and its subdomains; every agent's prompt states the limits.
     """
 
     def report(phase: str) -> None:
@@ -387,6 +391,7 @@ async def run_strix_scan(
     else:
         root_id = uuid.uuid4().hex[:8]
 
+    request_rate_limits = normalize_rate_limits(rate_limits)
     logger.info("Bringing up sandbox session for scan %s", scan_id)
     set_scan_phase("sandbox_init")
     bundle = await session_manager.create_or_reuse(
@@ -395,6 +400,7 @@ async def run_strix_scan(
         local_sources=local_sources or [],
         extra_files=extra_files,
         status_sink=status_sink,
+        rate_limits=request_rate_limits,
     )
     report("Waiting for the first model response")
     logger.info("Sandbox ready for scan %s", scan_id)
@@ -458,6 +464,11 @@ async def run_strix_scan(
             coordinator.set_budget_extender(hooks.extend_budget)
 
         scope_context = build_scope_context(scan_config)
+        if request_rate_limits:
+            scope_context["rate_limits"] = [
+                {"domain": domain, "per_second": per_second}
+                for domain, per_second in request_rate_limits.items()
+            ]
 
         # Attach the run's MCP connections and hold their live sessions in a
         # per-run registry. The connections are source-agnostic: a caller

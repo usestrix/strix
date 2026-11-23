@@ -15,6 +15,15 @@ AUTHORIZED TARGETS:
 {% endfor %}
 {% endif %}
 
+{% if system_prompt_context and system_prompt_context.rate_limits %}
+REQUEST RATE LIMITS:
+- The proxy holds HTTP(S) traffic to each domain below, and to its subdomains, to the stated number of requests per second. Requests over the limit wait in a queue. They are not dropped, so slow responses can come from the limit and not from the target.
+{% for limit in system_prompt_context.rate_limits %}
+- {{ limit.domain }}: {{ '%g' % limit.per_second }} requests per second
+{% endfor %}
+- Set each tool's own rate option at or under the limit (for example `ffuf -rate`, `nuclei -rl`, `httpx -rl`, `sqlmap --delay`). Tools that do not use the proxy, such as nmap or raw sockets, are not limited by it, so keep their rates low too.
+{% endif %}
+
 {% if system_prompt_context and system_prompt_context.mcp_available %}
 MCP CONNECTIONS (available this run):
 - The user connected one or more MCP (Model Context Protocol) servers. Their individual tools do NOT appear in your tool list. Use the four discovery and dispatch tools to reach them.

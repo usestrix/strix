@@ -1,0 +1,16 @@
+{
+  "id": "strix-rate-limit",
+  "name": "Strix Rate Limit",
+  "version": "1.0.0",
+  "description": "Holds requests to each configured domain to a set number of requests per second.",
+  "author": { "name": "Strix" },
+  "plugins": [
+    {
+      "kind": "backend",
+      "id": "strix-rate-limit-backend",
+      "name": "Rate limit",
+      "runtime": "javascript",
+      "entrypoint": "backend/script.js"
+    }
+  ]
+}

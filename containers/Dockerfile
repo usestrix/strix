@@ -324,8 +324,12 @@ RUN echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/p
     echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:/app/.venv/bin:$PATH"' >> /home/pentester/.profile
 
 USER root
+COPY containers/caido-plugins/rate-limit /opt/strix-caido/rate-limit
+RUN cd /opt/strix-caido/rate-limit && \
+    python3 -m zipfile -c /opt/strix-caido/rate-limit.zip manifest.json backend
+COPY containers/caido-rate-limit.sh /usr/local/bin/caido-rate-limit.sh
 COPY containers/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/caido-rate-limit.sh
 
 USER pentester
 WORKDIR /workspace

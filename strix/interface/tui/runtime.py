@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, TextIO
 from strix.config import load_settings, persist_current
 from strix.core.agents import AgentCoordinator
 from strix.core.hooks import BudgetExceededError
+from strix.core.rate_limits import rate_limits_for_targets
 from strix.core.runner import run_strix_scan
 from strix.interface.scan_setup import (
     build_targets_info,
@@ -231,6 +232,11 @@ class GoTuiRuntime:
                 max_turns=self.args.max_turns,
                 max_budget_usd=self.args.max_budget_usd,
                 event_sink=self.capture_event,
+                rate_limits=(
+                    rate_limits_for_targets(self.scan_config, self.args.max_rps)
+                    if getattr(self.args, "max_rps", None)
+                    else None
+                ),
                 mcp_status_sink=self.capture_mcp_status,
             )
             await self._sync_agent_state()

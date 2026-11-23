@@ -77,6 +77,8 @@ fi
 
 sleep 2
 
+CAIDO_URL="http://127.0.0.1:${CAIDO_PORT}" caido-rate-limit.sh
+
 echo "Caido is up — host bootstraps the guest token + project via the Python SDK."
 
 echo "Configuring system-wide proxy settings..."

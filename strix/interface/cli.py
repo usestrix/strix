@@ -14,6 +14,7 @@ from rich.text import Text
 
 from strix.config import load_settings
 from strix.config.settings import DEFAULT_MAX_TURNS
+from strix.core.rate_limits import rate_limits_for_targets
 from strix.core.runner import run_strix_scan
 from strix.report.state import ReportState, set_global_report_state
 from strix.runtime import session_manager
@@ -27,6 +28,11 @@ from .utils import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def _rate_limits_from_args(args: Any, scan_config: dict[str, Any]) -> dict[str, float] | None:
+    max_rps = getattr(args, "max_rps", None)
+    return rate_limits_for_targets(scan_config, max_rps) if max_rps else None
 
 
 def _resolve_sandbox_image() -> str:
@@ -227,6 +233,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                     max_budget_usd=getattr(args, "max_budget_usd", None),
                     max_turns=getattr(args, "max_turns", DEFAULT_MAX_TURNS),
                     status_sink=_note_startup_phase,
+                    rate_limits=_rate_limits_from_args(args, scan_config),
                 )
             finally:
                 stop_updates.set()

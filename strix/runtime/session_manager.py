@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import inspect
 import io
+import json
 import logging
 import os
 import sys
@@ -276,6 +277,7 @@ async def create_or_reuse(
     extra_files: list[dict[str, Any]] | Awaitable[list[dict[str, Any]] | None] | None = None,
     status_sink: StatusSink | None = None,
     defer: bool = False,
+    rate_limits: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Return the existing session bundle for ``scan_id`` or create a new one.
 
@@ -288,6 +290,11 @@ async def create_or_reuse(
     and unpacked inside the sandbox right after bring-up. ``extra_files`` may
     also be an awaitable resolving to that list: provisioning starts at once and
     the files are awaited only when the sandbox is ready to receive them.
+
+    ``rate_limits`` maps a domain to the most requests per second the sandbox
+    proxy sends to it and its subdomains. It reaches the sandbox as
+    ``STRIX_RATE_LIMITS``, where the entrypoint installs the Caido plugin that
+    enforces it.
     """
 
     def report(phase: str) -> None:
@@ -326,6 +333,7 @@ async def create_or_reuse(
                 "https_proxy": container_caido_url,
                 "ALL_PROXY": container_caido_url,
                 "NO_PROXY": "localhost,127.0.0.1",
+                **({"STRIX_RATE_LIMITS": json.dumps(rate_limits)} if rate_limits else {}),
             },
         ),
     )

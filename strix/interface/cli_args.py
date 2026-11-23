@@ -308,6 +308,18 @@ Strix Cloud:
     )
 
     parser.add_argument(
+        "--max-rps",
+        dest="max_rps",
+        metavar="N",
+        type=_positive_budget,
+        default=None,
+        help=(
+            "Maximum requests per second the sandbox proxy sends to each target host and its "
+            "subdomains (> 0). Requests over the limit are queued, not dropped."
+        ),
+    )
+
+    parser.add_argument(
         "--max-turns",
         dest="max_turns",
         metavar="N",
