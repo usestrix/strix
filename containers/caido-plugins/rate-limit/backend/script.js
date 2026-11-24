@@ -1,7 +1,7 @@
 // Spaces requests to each configured domain (and its subdomains) so that at
 // most N per second go upstream. A key with a path ("api.example.com/v1")
 // limits that host's path and every path below it; such a request waits for
-// its endpoint slot and then for its domain slot. A request over the rate waits
+// each endpoint it is under and then for its domain. A request over the rate waits
 // for its slot; it is never dropped. Hosts outside the configured domains pass
 // through.
 //
@@ -48,15 +48,13 @@ function matchDomain(limits, host) {
   return best;
 }
 
-function matchEndpoint(limits, host, path) {
-  let best = null;
+function matchEndpoints(limits, host, path) {
+  const keys = [];
   for (const [key, limit] of limits) {
     if (!limit.path || host !== limit.host) continue;
-    if ((path === limit.path || path.startsWith(`${limit.path}/`)) && (!best || key.length > best.length)) {
-      best = key;
-    }
+    if (path === limit.path || path.startsWith(`${limit.path}/`)) keys.push(key);
   }
-  return best;
+  return keys.sort((a, b) => a.length - b.length);
 }
 
 export function init(sdk) {
@@ -65,22 +63,40 @@ export function init(sdk) {
   const intervals = Object.fromEntries([...limits].map(([key, limit]) => [key, limit.interval]));
   sdk.console.log(`Rate limits: ${JSON.stringify(intervals)} (ms between requests)`);
 
-  // Reserves the next free slot for a key and waits for it.
-  async function take(key) {
+  const sleepUntil = (time) => {
+    const delay = time - Date.now();
+    return delay > 0 ? new Promise((resolve) => setTimeout(resolve, delay)) : undefined;
+  };
+
+  // Domains reserve the next free slot, so one queue cannot hold back another.
+  async function takeDomain(key) {
     const now = Date.now();
     const slot = Math.max(now, nextSlot.get(key) ?? 0);
     nextSlot.set(key, slot + limits.get(key).interval);
-    if (slot > now) await new Promise((resolve) => setTimeout(resolve, slot - now));
+    await sleepUntil(slot);
+  }
+
+  // Endpoints send one request at a time, spaced from when the previous one
+  // actually left, so a wait for the domain slot cannot bunch them up.
+  const lastSent = new Map();
+  const chains = new Map();
+  function passEndpoints(keys, domain) {
+    if (keys.length === 0) return domain === null ? undefined : takeDomain(domain);
+    const [key, ...rest] = keys;
+    const run = (chains.get(key) ?? Promise.resolve()).then(async () => {
+      await sleepUntil((lastSent.get(key) ?? 0) + limits.get(key).interval);
+      await passEndpoints(rest, domain);
+      lastSent.set(key, Date.now());
+    });
+    chains.set(key, run.catch(() => undefined));
+    return run;
   }
 
   sdk.events.onUpstream(async (_sdk, request) => {
     const host = request.getHost().toLowerCase();
-    // The endpoint slot comes first, so a queue on one endpoint does not hold
-    // the domain's slots for the rest of its traffic.
-    const endpoint = matchEndpoint(limits, host, request.getPath());
-    if (endpoint !== null) await take(endpoint);
-    const domain = matchDomain(limits, host);
-    if (domain !== null) await take(domain);
+    // A request counts toward every endpoint whose path it is under, broadest
+    // first, and then toward its domain.
+    await passEndpoints(matchEndpoints(limits, host, request.getPath()), matchDomain(limits, host));
     return undefined;
   });
 }
