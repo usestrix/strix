@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from agents import RunContextWrapper, function_tool
 
+from strix.report.constants import BASELINE_RUN_CONFIG_KEY
 from strix.tools.nullish import clean_optional
 from strix.tools.proxy.tools import existing_request_ids
 
@@ -294,7 +295,7 @@ def _baseline_duplicate_response(
         ),
         "duplicate_of": duplicate_id,
         "duplicate_title": duplicate_title,
-        "baseline_run": baseline_run,
+        BASELINE_RUN_CONFIG_KEY: baseline_run,
         "confidence": dedupe.get("confidence", 0.0),
         "reason": dedupe.get("reason", ""),
     }

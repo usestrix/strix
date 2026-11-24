@@ -231,6 +231,35 @@ def _write_run_record(runs_dir: Path, run_name: str, record: dict[str, Any]) -> 
     (state_dir / "agents.json").write_text("{}", encoding="utf-8")
 
 
+def test_parse_arguments_rejects_resume_with_baseline_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_run_record(
+        tmp_path / RUNS_DIR_NAME,
+        "pentest-resume",
+        {
+            "run_name": "pentest-resume",
+            "targets_info": [{"type": "web_application", "original": TARGET_URL, "details": {}}],
+        },
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["strix", "--resume", "pentest-resume", "--baseline-run", BASELINE_RUN_NAME],
+    )
+
+    with pytest.raises(SystemExit):
+        cli_main.parse_arguments()
+
+    assert (
+        "Cannot combine --resume with --target/--target-list/--baseline-run"
+        in capsys.readouterr().err
+    )
+
+
 def test_resume_restores_and_validates_baseline_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

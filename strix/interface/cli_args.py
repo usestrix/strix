@@ -19,6 +19,7 @@ from strix.interface.utils import (
     resolve_workspace_files,
     validate_config_file,
 )
+from strix.report.constants import BASELINE_RUN_CONFIG_KEY
 from strix.report.runs import list_run_summaries
 from strix.skills import SKILLS_DIR_ENV, env_skill_dirs, validate_requested_skills
 
@@ -621,7 +622,7 @@ def load_resume_state(args: argparse.Namespace) -> None:
         attach_workspace_mount(args)
     if state.get("diff_scope"):
         args.diff_scope = state.get("diff_scope")
-    baseline_run = state.get("baseline_run")
+    baseline_run = state.get(BASELINE_RUN_CONFIG_KEY)
     if baseline_run is not None:
         try:
             _validate_baseline_run(baseline_run)

@@ -12,6 +12,7 @@ from uuid import uuid4
 from strix.config import codex
 from strix.config.loader import load_settings
 from strix.core.paths import run_dir_for, runtime_state_dir
+from strix.report.constants import BASELINE_RUN_CONFIG_KEY
 from strix.report.coverage import write_coverage
 from strix.report.pricing import resolve_litellm_model
 from strix.report.sarif import write_sarif
@@ -823,7 +824,7 @@ class ReportState:
                 "scope_mode": config.get("scope_mode", "auto"),
                 "diff_base": config.get("diff_base"),
                 "skills": list(config.get("skills") or []),
-                "baseline_run": config.get("baseline_run"),
+                BASELINE_RUN_CONFIG_KEY: config.get(BASELINE_RUN_CONFIG_KEY),
             }
         )
 
