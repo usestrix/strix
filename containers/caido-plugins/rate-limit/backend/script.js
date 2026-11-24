@@ -60,6 +60,7 @@ function matchEndpoints(limits, host, path) {
 export function init(sdk) {
   const limits = loadLimits(sdk);
   const nextSlot = new Map();
+  const endpointHosts = new Set([...limits.values()].filter((limit) => limit.path).map((limit) => limit.host));
   const intervals = Object.fromEntries([...limits].map(([key, limit]) => [key, limit.interval]));
   sdk.console.log(`Rate limits: ${JSON.stringify(intervals)} (ms between requests)`);
 
@@ -95,8 +96,12 @@ export function init(sdk) {
   sdk.events.onUpstream(async (_sdk, request) => {
     const host = request.getHost().toLowerCase();
     // A request counts toward every endpoint whose path it is under, broadest
-    // first, and then toward its domain.
-    await passEndpoints(matchEndpoints(limits, host, request.getPath()), matchDomain(limits, host));
+    // first, and then toward its domain. The upstream request is raw, so the
+    // path comes from its parsed spec, only for hosts with endpoint limits.
+    const endpoints = endpointHosts.has(host)
+      ? matchEndpoints(limits, host, request.getSpec().getPath())
+      : [];
+    await passEndpoints(endpoints, matchDomain(limits, host));
     return undefined;
   });
 }
