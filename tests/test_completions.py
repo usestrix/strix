@@ -128,12 +128,12 @@ def test_filesystem_completion_for_source_output_and_data(tmp_path: Any, monkeyp
 
 
 def test_filesystem_completion_omits_terminal_control_names(
-    tmp_path: Any, monkeypatch: Any, capsys: Any
+    tmp_path: Any, monkeypatch: Any, capsys: Any, write_control_character_file: Any
 ) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "safe.json").write_text("{}", encoding="utf-8")
-    (tmp_path / "unsafe\nname.json").write_text("{}", encoding="utf-8")
-    (tmp_path / "unsafe\x1b]52;c;payload\x07.json").write_text("{}", encoding="utf-8")
+    write_control_character_file(tmp_path, "unsafe\nname.json")
+    write_control_character_file(tmp_path, "unsafe\x1b]52;c;payload\x07.json")
 
     words = ["cloud", "scans", "start", "--data", "@"]
     assert completion_candidates(words) == ["@safe.json"]
