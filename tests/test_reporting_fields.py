@@ -978,7 +978,7 @@ async def test_dependency_report_suppresses_duplicate_from_baseline_run(
         advisory_cvss=0.0,
         technical_analysis=None,
         fix_effort="low",
-        reachability="imported",
+        reachability="reachable",
         reachability_evidence=_DEP_EVIDENCE,
         contextual_cvss_breakdown=_DEP_CONTEXT,
         contextual_cvss_reasoning=_DEP_REASONING,
