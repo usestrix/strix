@@ -1574,6 +1574,83 @@ def test_knowledge_policy_flags_use_the_api_field_names(
     }
 
 
+def test_posted_severities_parameter_and_help() -> None:
+    cmd = SPEC["pr-reviews"]["settings update"]
+    params = {param.name: param for param in cmd.body}
+    assert params["posted_severities"].kind == params["blocking_severities"].kind == "list"
+    assert not params["posted_severities"].required
+    help_text = " ".join(
+        runner._build_parser("pr-reviews", "settings update", cmd).format_help().split()
+    )
+    assert "--posted-severities" in help_text
+    assert "PR inline and summary comments" in help_text
+    assert "At most 4 values: critical, high, medium, low" in help_text
+    assert "Defaults to all four" in help_text
+    assert "Other severities stay in Strix but are not posted" in help_text
+    assert "never block or fail the status check" in help_text
+    assert "even if included in blocking_severities" in help_text
+    assert "min_posted_severity" not in params
+
+
+@pytest.mark.parametrize(
+    ("flags", "body"),
+    [
+        (
+            ["--posted-severities", "critical", "medium", "--blocking-severities", "high"],
+            {"posted_severities": ["critical", "medium"], "blocking_severities": ["high"]},
+        ),
+        (
+            ["--posted-severities", "critical", "high", "medium", "low"],
+            {"posted_severities": ["critical", "high", "medium", "low"]},
+        ),
+        (["--data", '{"posted_severities":[]}'], {"posted_severities": []}),
+        (
+            ["--blocking-severities", "critical", "high"],
+            {"blocking_severities": ["critical", "high"]},
+        ),
+    ],
+)
+def test_pr_review_settings_severity_serialization(
+    monkeypatch: pytest.MonkeyPatch,
+    flags: list[str],
+    body: dict[str, Any],
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> FakeResponse:
+        seen.update(method=method, path=path, body=kwargs.get("body"))
+        return FakeResponse(payload={"success": True, **body})
+
+    monkeypatch.setattr(http, "request", fake_request)
+    assert cloud.run_cloud(["pr-reviews", "settings", "update", *flags, "--json"]) == 0
+    assert seen == {"method": "PATCH", "path": "/pr-reviews/settings", "body": body}
+
+
+def test_posted_severities_server_validation_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: Any,
+) -> None:
+    def fake_request(_method: str, _path: str, **kwargs: Any) -> FakeResponse:
+        assert kwargs["body"] == {"posted_severities": ["invalid"]}
+        raise http.CloudError("Invalid posted severity.", exit_code=1)
+
+    monkeypatch.setattr(http, "request", fake_request)
+    assert (
+        cloud.run_cloud(
+            [
+                "pr-reviews",
+                "settings",
+                "update",
+                "--posted-severities",
+                "invalid",
+                "--json",
+            ]
+        )
+        == 1
+    )
+    assert "Invalid posted severity." in capsys.readouterr().out
+
+
 def test_pr_review_start_sends_provider_installation_and_pull_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
