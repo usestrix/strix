@@ -49,10 +49,13 @@ function matchDomain(limits, host) {
   return best;
 }
 
+// Endpoints match their exact host, counting www. as the same host.
+const bareHost = (host) => host.replace(/^www\./, "");
+
 function matchEndpoint(limits, host, path) {
   let best = null;
   for (const [key, limit] of limits) {
-    if (!limit.path || host !== limit.host) continue;
+    if (!limit.path || bareHost(host) !== bareHost(limit.host)) continue;
     if ((path === limit.path || path.startsWith(`${limit.path}/`)) && (!best || key.length > best.length)) {
       best = key;
     }
@@ -63,7 +66,7 @@ function matchEndpoint(limits, host, path) {
 export function init(sdk) {
   const limits = loadLimits(sdk);
   const nextSlot = new Map();
-  const endpointHosts = new Set([...limits.values()].filter((limit) => limit.path).map((limit) => limit.host));
+  const endpointHosts = new Set([...limits.values()].filter((limit) => limit.path).map((limit) => bareHost(limit.host)));
   const intervals = Object.fromEntries([...limits].map(([key, limit]) => [key, limit.interval]));
   sdk.console.log(`Rate limits: ${JSON.stringify(intervals)} (ms between requests)`);
 
@@ -96,7 +99,7 @@ export function init(sdk) {
     const host = request.getHost().toLowerCase();
     // The upstream request is raw, so the path comes from its parsed spec,
     // only for hosts with endpoint limits.
-    const endpoint = endpointHosts.has(host) ? matchEndpoint(limits, host, request.getSpec().getPath()) : null;
+    const endpoint = endpointHosts.has(bareHost(host)) ? matchEndpoint(limits, host, request.getSpec().getPath()) : null;
     if (endpoint !== null) {
       await takeEndpoint(endpoint);
     } else {

@@ -17,7 +17,7 @@ AUTHORIZED TARGETS:
 
 {% if system_prompt_context and system_prompt_context.rate_limits %}
 REQUEST RATE LIMITS:
-- The proxy holds HTTP(S) traffic to each domain below, and to its subdomains, to the stated number of requests per second. An entry with a path limits that path and all paths below it on that exact host. An endpoint's limit replaces the domain's limit for that path, and when entries nest, the longest matching path's limit applies. Requests over the limit wait in a queue. They are not dropped, so slow responses can come from the limit and not from the target.
+- The proxy holds HTTP(S) traffic to each domain below, and to its subdomains, to the stated number of requests per second. An entry with a path limits that path and all paths below it on that exact host, with or without www. An endpoint's limit replaces the domain's limit for that path, and when entries nest, the longest matching path's limit applies. Requests over the limit wait in a queue. They are not dropped, so slow responses can come from the limit and not from the target.
 {% for limit in system_prompt_context.rate_limits %}
 - {{ limit.domain }}: {{ '%g' % limit.per_second }} requests per second
 {% endfor %}
