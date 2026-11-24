@@ -1,9 +1,10 @@
 // Spaces requests to each configured domain (and its subdomains) so that at
 // most N per second go upstream. A key with a path ("api.example.com/v1")
-// limits that host's path and every path below it; such a request waits for
-// each endpoint it is under and then for its domain. A request over the rate waits
-// for its slot; it is never dropped. Hosts outside the configured domains pass
-// through.
+// limits that exact host's path and every path below it, and replaces the
+// domain's limit there: a request waits only for the longest endpoint path it
+// is under, and the domain's limit covers the paths with no endpoint limit. A
+// request over the rate waits for its slot; it is never dropped. Hosts outside
+// the configured domains pass through.
 //
 // The plugin runtime has no process environment, so the sandbox entrypoint
 // writes the STRIX_RATE_LIMITS map ({"example.com": 5}) to LIMITS_FILE before
@@ -48,13 +49,15 @@ function matchDomain(limits, host) {
   return best;
 }
 
-function matchEndpoints(limits, host, path) {
-  const keys = [];
+function matchEndpoint(limits, host, path) {
+  let best = null;
   for (const [key, limit] of limits) {
     if (!limit.path || host !== limit.host) continue;
-    if (path === limit.path || path.startsWith(`${limit.path}/`)) keys.push(key);
+    if ((path === limit.path || path.startsWith(`${limit.path}/`)) && (!best || key.length > best.length)) {
+      best = key;
+    }
   }
-  return keys.sort((a, b) => a.length - b.length);
+  return best;
 }
 
 export function init(sdk) {
@@ -77,16 +80,12 @@ export function init(sdk) {
     await sleepUntil(slot);
   }
 
-  // Endpoints send one request at a time, spaced from when the previous one
-  // actually left, so a wait for the domain slot cannot bunch them up.
+  // Endpoints send one request at a time, spaced from when the previous one left.
   const lastSent = new Map();
   const chains = new Map();
-  function passEndpoints(keys, domain) {
-    if (keys.length === 0) return domain === null ? undefined : takeDomain(domain);
-    const [key, ...rest] = keys;
+  function takeEndpoint(key) {
     const run = (chains.get(key) ?? Promise.resolve()).then(async () => {
       await sleepUntil((lastSent.get(key) ?? 0) + limits.get(key).interval);
-      await passEndpoints(rest, domain);
       lastSent.set(key, Date.now());
     });
     chains.set(key, run.catch(() => undefined));
@@ -95,13 +94,15 @@ export function init(sdk) {
 
   sdk.events.onUpstream(async (_sdk, request) => {
     const host = request.getHost().toLowerCase();
-    // A request counts toward every endpoint whose path it is under, broadest
-    // first, and then toward its domain. The upstream request is raw, so the
-    // path comes from its parsed spec, only for hosts with endpoint limits.
-    const endpoints = endpointHosts.has(host)
-      ? matchEndpoints(limits, host, request.getSpec().getPath())
-      : [];
-    await passEndpoints(endpoints, matchDomain(limits, host));
+    // The upstream request is raw, so the path comes from its parsed spec,
+    // only for hosts with endpoint limits.
+    const endpoint = endpointHosts.has(host) ? matchEndpoint(limits, host, request.getSpec().getPath()) : null;
+    if (endpoint !== null) {
+      await takeEndpoint(endpoint);
+    } else {
+      const domain = matchDomain(limits, host);
+      if (domain !== null) await takeDomain(domain);
+    }
     return undefined;
   });
 }
