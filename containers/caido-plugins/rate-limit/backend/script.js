@@ -52,11 +52,14 @@ function matchDomain(limits, host) {
 // Endpoints match their exact host, counting www. as the same host.
 const bareHost = (host) => host.replace(/^www\./, "");
 
+// The longest path wins; on a tie, the rule for the request's own host.
 function matchEndpoint(limits, host, path) {
   let best = null;
   for (const [key, limit] of limits) {
     if (!limit.path || bareHost(host) !== bareHost(limit.host)) continue;
-    if ((path === limit.path || path.startsWith(`${limit.path}/`)) && (!best || key.length > best.length)) {
+    if (path !== limit.path && !path.startsWith(`${limit.path}/`)) continue;
+    const bestPath = best ? limits.get(best).path : "";
+    if (!best || limit.path.length > bestPath.length || (limit.path.length === bestPath.length && limit.host === host)) {
       best = key;
     }
   }
