@@ -1,0 +1,317 @@
+---
+title: "Anthropic via Microsoft Entra ID"
+description: "Run Strix on Claude with no API key, federating Microsoft Entra ID identities to Anthropic"
+---
+
+Strix can call Claude without an `LLM_API_KEY`. It exchanges a short-lived Microsoft Entra ID token for a short-lived Anthropic access token (`sk-ant-oat01-…`) through Anthropic's [Workload Identity Federation](https://platform.claude.com/docs/en/manage-claude/workload-identity-federation), and repeats the exchange before it expires, so long scans keep running. No static Anthropic key exists anywhere.
+
+This guide covers two kinds of host:
+
+| Host | Entra identity | Token source |
+|---|---|---|
+| Azure VM | The VM's managed identity | `ANTHROPIC_IDENTITY_TOKEN_COMMAND` querying the instance metadata service (IMDS) |
+| Any other Linux host: a laptop or desktop, a local VM, or a VM on-premises or in another public or private cloud | Your Entra user | `strix auth login entra` |
+
+<Note>
+  Federation applies only to `anthropic/…` models, which call Anthropic directly. **An API key always wins:** if `LLM_API_KEY` is set, in the environment or in the Strix config file, Strix uses it and prints a warning. Federated runs record `"auth_mode": "workload_identity"` in `strix_runs/<run>/run.json`.
+</Note>
+
+## How setup fits together
+
+Setup is done once; after that you just run scans.
+
+| Step | Who | Where | How often |
+|---|---|---|---|
+| [1. Entra ID setup](#1-entra-id-setup) | Entra admin | Admin workstation | Once per tenant |
+| [2. Prepare the identity](#2-prepare-the-identity) | The user, or the VM's owner | The Strix host | Once per user, or per VM |
+| [3. Claude Console setup](#3-claude-console-setup) | Anthropic org admin | Claude Console | Issuer once per tenant; a rule and service account per user or VM |
+| [4. Configure Strix and test](#4-configure-strix-and-test) | The user | The Strix host | Once per host |
+| [5. Everyday use](#5-everyday-use) | The user | The Strix host | Every scan |
+
+Step 2 comes before the Console because the federation rule matches claims (`oid`, `sub`) that you can only read from the identity's token. Do steps 3 and 4 in one sitting: running `strix auth test` within 15 minutes of finishing the Console wizard marks the connection as verified there.
+
+**Prerequisites:** Strix and Docker on the Strix host (plus `curl` and `jq` on an Azure VM), and outbound HTTPS from it to `login.microsoftonline.com` and `api.anthropic.com`.
+
+**Placeholders:**
+
+| Placeholder | Value | Found in |
+|---|---|---|
+| `<TENANT_ID>` | Your Entra tenant ID | Entra ID → Overview, or step 1.1 |
+| `<APP_ID>` | Client ID of the `claude-api-federation` app registration | Step 1.1 |
+| `<USER_OID>`, `<USER_SUB>` | The user's `oid` and `sub` claims | Step 2, Entra user |
+| `<VM_MI_OID>` | The VM managed identity's object ID | Step 2, Azure VM |
+
+## 1. Entra ID setup
+
+Once per tenant. You need an Entra role that can create app registrations. Run these from an admin workstation.
+
+<Warning>
+  A common Conditional Access policy, "Azure management – limit to administrative roles", blocks `az login` for non-admins, because `az login` always requests an Azure management token. Nothing at runtime needs Azure management; only these setup steps (and enabling a VM's managed identity in step 2) use `az`.
+</Warning>
+
+<Steps>
+  <Step title="Create the audience app registration">
+    Entra only issues tokens for an audience that exists in your tenant. This app is the "Claude API" audience. It has no secrets and no permissions.
+
+    ```bash
+    az login
+    TENANT_ID=$(az account show --query tenantId -o tsv)
+    APP_ID=$(az ad app create --display-name claude-api-federation --query appId -o tsv)
+    OBJ_ID=$(az ad app show --id "$APP_ID" --query id -o tsv)
+    ```
+  </Step>
+
+  <Step title="Set the identifier URI and v2.0 tokens">
+    `az ad app update --set api.requestedAccessTokenVersion=2` fails on a new app (`Couldn't find 'api' in ''`), so patch through Microsoft Graph:
+
+    ```bash
+    az rest --method PATCH \
+      --uri "https://graph.microsoft.com/v1.0/applications/$OBJ_ID" \
+      --headers 'Content-Type=application/json' \
+      --body "{\"identifierUris\":[\"api://$APP_ID\"],\"api\":{\"requestedAccessTokenVersion\":2}}"
+    ```
+
+    v2.0 tokens carry `iss` = `https://login.microsoftonline.com/<TENANT_ID>/v2.0` and `aud` = `<APP_ID>` (the bare GUID).
+  </Step>
+
+  <Step title="Create the service principal">
+    ```bash
+    az ad sp create --id "$APP_ID"
+    ```
+
+    The output should show `accountEnabled: true`, `servicePrincipalNames` including `api://<APP_ID>`, and `appRoleAssignmentRequired: false`. Any identity in the tenant can then get a token for this audience; the Anthropic federation rule decides who is accepted.
+  </Step>
+
+  <Step title="For user sign-in: expose a scope and make the app its own public client">
+    `strix auth login entra` signs in **as this app** (`client_id` = `<APP_ID>`), so the app is both the OAuth client and the API. It needs a delegated scope and a `http://localhost` public-client redirect. An app requesting its own scope needs no consent, so users see no prompt and no admin grant is required. Skip this step if you only use managed identities.
+
+    ```bash
+    SCOPE_ID=$(uuidgen)
+    az rest --method PATCH \
+      --uri "https://graph.microsoft.com/v1.0/applications/$OBJ_ID" \
+      --headers 'Content-Type=application/json' \
+      --body "{\"api\":{\"requestedAccessTokenVersion\":2,\"oauth2PermissionScopes\":[{
+        \"id\":\"$SCOPE_ID\",\"value\":\"user_impersonation\",\"type\":\"User\",\"isEnabled\":true,
+        \"adminConsentDisplayName\":\"Access Claude API federation\",
+        \"adminConsentDescription\":\"Request tokens for Anthropic workload identity federation\",
+        \"userConsentDisplayName\":\"Access Claude API federation\",
+        \"userConsentDescription\":\"Request tokens for Anthropic workload identity federation\"}]}}"
+
+    az rest --method PATCH \
+      --uri "https://graph.microsoft.com/v1.0/applications/$OBJ_ID" \
+      --headers 'Content-Type=application/json' \
+      --body '{"publicClient":{"redirectUris":["http://localhost"]}}'
+
+    az ad app show --id "$APP_ID" --query '{ver:api.requestedAccessTokenVersion, scopes:api.oauth2PermissionScopes[].value, redirects:publicClient.redirectUris, preauth:api.preAuthorizedApplications[].appId}'
+    # → ver: 2, scopes: ["user_impersonation"], redirects: ["http://localhost"], preauth: []
+    ```
+
+    Keep `preAuthorizedApplications` empty. Using this app, rather than a client such as the Azure CLI, keeps the stored refresh token limited to this audience (see [Security](#security)).
+  </Step>
+</Steps>
+
+## 2. Prepare the identity
+
+Once per user, or per VM. This gets the identity working on its Strix host and gives you the claims the Console rule needs.
+
+<Tabs>
+  <Tab title="Entra user (any other host)">
+    On the Strix host, sign in. This needs only step 1, no Anthropic settings yet.
+
+    ```bash
+    export STRIX_ENTRA_TENANT_ID="<TENANT_ID>"
+    export STRIX_ENTRA_APP_ID="<APP_ID>"
+    strix auth login entra             # over SSH: strix auth login entra --manual
+    ```
+
+    Strix prints a sign-in URL. Open it in a browser and sign in.
+
+    - **On the host itself,** the browser returns to a local callback on port 8400 and the sign-in completes.
+    - **Over SSH,** use `--manual`. Open the URL in your workstation's browser; after sign-in it lands on a `http://localhost:8400/?code=…` page that won't load. Copy that URL from the address bar and paste it into Strix. Alternatively, tunnel the port (`ssh -L 8400:127.0.0.1:8400 <user>@<strix-host>`) and run without `--manual`.
+
+    Sign-in happens in your browser, so device-based Conditional Access is evaluated there. Strix stores the sign-in in `~/.strix/entra-auth.json` and refreshes the Entra token from the host from then on.
+
+    Read the claims:
+
+    ```bash
+    strix auth status
+    # Microsoft Entra ID (Anthropic Workload Identity Federation)
+    #   ...
+    #   aud:    OK
+    #   azp:    <APP_ID>
+    #   oid:    <USER_OID>
+    #   sub:    <USER_SUB>
+    ```
+
+    Check that `aud` shows `OK` and `azp` is `<APP_ID>`. `oid` is the user's object ID (also on **Entra ID → Users → (user) → Object ID**). `sub` appears only in tokens: it is specific to the user *and* the app, so it has to come from a token for `<APP_ID>`, as here. Neither changes across sign-ins, token refreshes or password changes, or between hosts, so one rule covers the user wherever they sign in.
+
+    <Tip>
+      `STRIX_ENTRA_TENANT_ID` and `STRIX_ENTRA_APP_ID` are the defaults for `strix auth login entra` (or pass `--tenant` and `--app`). The sign-in remembers its tenant and app; if those variables later name a different one, the stored sign-in isn't used.
+    </Tip>
+  </Tab>
+
+  <Tab title="Azure VM">
+    No sign-in and no secrets: the VM gets its Entra token from IMDS. Steps 1.1–1.3 are required; 1.4 isn't.
+
+    From the admin workstation, enable the VM's system-assigned managed identity; the command prints its object ID:
+
+    ```bash
+    az vm identity assign -g <RG> -n <VM> --query systemAssignedIdentity -o tsv   # → <VM_MI_OID>
+    ```
+
+    On the VM, check that it gets a token for the app:
+
+    ```bash
+    curl -sSf -H 'Metadata: true' \
+      "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=api://<APP_ID>" \
+      | jq -r .access_token \
+      | jq -R 'split(".")[1] | gsub("-";"+") | gsub("_";"/") | @base64d | fromjson | {ver, aud, oid, sub}'
+    ```
+
+    Expect `ver` 2.0, `aud` = `<APP_ID>`, and `oid` = `sub` = `<VM_MI_OID>`: in a managed identity token the subject is the object ID, so there's no separate value to look up.
+
+    With a user-assigned identity, add `&client_id=<IDENTITY_CLIENT_ID>` to the IMDS URL, here and in step 4. Any process on the VM can request this identity's token, which is why the rule pins the managed identity's `oid` and the VM gets its own service account.
+  </Tab>
+</Tabs>
+
+## 3. Claude Console setup
+
+You need the admin, owner or primary owner role in the Anthropic organization. All workloads in a tenant share **one issuer**, created by the first run of the wizard. Create **one federation rule and one service account per user or VM**, so each can be audited and revoked on its own.
+
+<Steps>
+  <Step title="Run the Connect workload wizard">
+    Open **Settings → Workload identity → Connect workload → Microsoft Entra ID**.
+
+    - **Token issuer:** choose **v2.0 (login.microsoftonline.com)**; the default, v1, is wrong for this setup. The issuer URL is `https://login.microsoftonline.com/<TENANT_ID>/v2.0`. Click **Verify issuer**.
+    - **Match conditions:**
+
+      | Field | Entra user | Azure VM |
+      |---|---|---|
+      | **Object (principal) ID** (required) | `<USER_OID>` | `<VM_MI_OID>` |
+      | **Application (client) ID** | `<APP_ID>` | `<APP_ID>` |
+      | Advanced → **Subject pattern** | `<USER_SUB>` (exact, no `*`) | leave Advanced untouched |
+      | Advanced → **Expected audience** | `<APP_ID>` | — |
+      | Advanced → claims `oid` / `tid` / `azp` | `<USER_OID>` / `<TENANT_ID>` / `<APP_ID>` | — |
+
+    - **Service account:** **Create a new one**, named after the workload (for example `strix-<host>-<user>` or `strix-azure-vm`), in the workspace whose rate limits and billing Strix should use. Scope `workspace:developer`, token lifetime 600 s.
+
+    Record the `federation_rule_id` (`fdrl_…`), `service_account_id` (`svac_…`), `organization_id` and `workspace_id` (`wrkspc_…`) shown in the wizard's test snippet; step 4 needs them. Don't run the snippet itself: it always queries IMDS, and step 4 tests the same exchange on any host with `strix auth test`.
+  </Step>
+
+  <Step title="Raise the issuer's JWT lifetime (first VM only)">
+    The wizard creates the issuer with `max_jwt_lifetime_seconds = 7500`. Managed identity tokens live up to 24 hours, so VM exchanges fail with an opaque `401` until you raise it: **Settings → Workload identity → Issuers → (issuer) → Edit → `max_jwt_lifetime_seconds` = `86400`**. This is an issuer setting, so do it once. User tokens (60–90 minutes) work with either value.
+  </Step>
+</Steps>
+
+<Note>
+  Why the Entra user rule needs **Advanced match options**: the guided fields assume a managed identity, where `sub` equals `oid`. In a user token, `sub` is a different opaque value, so set **Subject pattern** to it explicitly. Once you edit the Advanced section it replaces the guided fields, so **Expected audience** must be filled in; blank means "the default Anthropic API audience", which Entra tokens never carry. A user's `sub` and `oid` don't change across sign-ins, token refreshes or password changes. Never use a wildcard or partial value: every identity in the tenant can get a token for `<APP_ID>`, so the `oid` match is what restricts access.
+</Note>
+
+## 4. Configure Strix and test
+
+Once per host. On the Strix host, set the IDs from step 3, with no API key:
+
+```bash
+export STRIX_LLM="anthropic/claude-sonnet-4-6"
+export ANTHROPIC_ORGANIZATION_ID="<org uuid>"
+export ANTHROPIC_WORKSPACE_ID="wrkspc_..."
+export ANTHROPIC_FEDERATION_RULE_ID="fdrl_..."
+export ANTHROPIC_SERVICE_ACCOUNT_ID="svac_..."
+export LLM_API_KEY=                    # empty, not unset: also clears a key saved in the Strix config
+```
+
+On an Azure VM, also tell Strix how to get the managed identity's token. An Entra user needs nothing more: the sign-in from step 2 is the token source.
+
+```bash
+export ANTHROPIC_IDENTITY_TOKEN_COMMAND="sh -c 'curl -sSf -H Metadata:true \"http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=api://<APP_ID>\" | jq -r .access_token'"
+```
+
+Test the exchange with the same settings and identity token source a scan would use:
+
+```bash
+strix auth test
+# Anthropic Workload Identity Federation
+#   Identity token source: Entra ID sign-in (strix auth login entra)
+#   iss:    https://login.microsoftonline.com/<TENANT_ID>/v2.0
+#   aud:    <APP_ID>
+#   azp:    <APP_ID>
+#   oid:    <USER_OID>
+#   sub:    <USER_SUB>
+#   Exchange OK: sk-ant-oat01-… valid for 600s
+```
+
+On a VM the source is `ANTHROPIC_IDENTITY_TOKEN_COMMAND` and `oid` = `sub` = `<VM_MI_OID>`. `strix auth test` exits `0` on success and `1` otherwise, printing why: a missing setting, the token source's error, or Anthropic's error with its `request-id` (the reason for a `401` is in the Console's authentication history; see [Troubleshooting](#troubleshooting)). It never prints a token. It also warns when `LLM_API_KEY` or a non-Anthropic `STRIX_LLM` would stop scans using federation.
+
+Then run a first scan from the same shell:
+
+```bash
+strix -n -t <target> --scan-mode quick
+```
+
+When a scan starts, Strix saves these settings (including `STRIX_ENTRA_*` and the token command) to its config file, `~/.strix/cli-config.json`, and deletes any saved `LLM_API_KEY`, because you set it to empty. Later shells don't need the exports. If you run Strix with `--config PATH`, the settings go to that file instead; pass the same `--config PATH` to `strix auth test`.
+
+## 5. Everyday use
+
+Run scans as usual:
+
+```bash
+strix -n -t <target>
+```
+
+Strix exchanges a token at startup, and again roughly every 8 minutes during long scans, refreshing the Entra token as needed. A healthy run:
+
+- exits immediately with *"Anthropic workload identity federation failed: …"* if the setup is wrong, before any scanning starts;
+- prints no *"LLM_API_KEY is set, so it is used instead of …"* warning;
+- records `"auth_mode": "workload_identity"` in `run.json`;
+- shows successful exchanges for your rule in **Console → Settings → Workload identity → Authentication history**.
+
+| When | Do |
+|---|---|
+| A scan fails with *"Entra ID sign-in failed (…); run: strix auth login entra"* | Sign in again with `strix auth login entra` (`--manual` over SSH). The refresh token expires after about 90 days unused, or sooner under a tenant sign-in frequency policy. |
+| You want to check the setup before a long scan | `strix auth test` |
+| You want to see who is signed in on this host | `strix auth status` |
+| You stop using this host | `strix auth logout` removes the stored sign-ins (ChatGPT and Entra). It doesn't revoke the Entra session; revoke the user's sessions in Entra if the host may be compromised. |
+| A user leaves, or a VM is retired | Disable or delete their federation rule and service account in the Console. |
+| You add another user or VM | Repeat steps 2–4 for it. Step 1 and the issuer are reused. |
+
+## Security
+
+| Asset | Where | If it leaks |
+|---|---|---|
+| Entra refresh token (user sign-in) | `~/.strix/entra-auth.json`, mode `600` | Mints Claude-audience Entra tokens as the user for up to ~90 days. Revoke the user's sessions in Entra, or disable the federation rule. |
+| Entra access token (aud = `<APP_ID>`) | The same file, and Strix's memory | Exchangeable at Anthropic until it expires (60–90 minutes; Entra tokens carry no `jti`). Disable the federation rule. |
+| Anthropic access token (`sk-ant-oat01-…`) | Strix's memory only | Usable for at most the rule's token lifetime (600 s). |
+
+**The stored refresh token only works for the Claude audience.** A refresh token can be redeemed for whatever its client app may access, so the client decides what a stolen token is worth. `strix auth login entra` signs in as `claude-api-federation` itself, not as a broad first-party client such as the Azure CLI, whose refresh tokens reach Microsoft Graph, Azure Resource Manager and more. Redeemed directly at Entra, this refresh token gets:
+
+| Redeemed for | Result |
+|---|---|
+| `api://<APP_ID>/user_impersonation` | Token issued |
+| Microsoft Graph | `AADSTS65001`: the app has no consent for Graph |
+| Azure Resource Manager | Refused: no consent (and Conditional Access, where it applies) |
+| Any resource, as another client | `AADSTS70000`: the refresh token is bound to `<APP_ID>` |
+
+Keep it that way: don't add API permissions or consent grants to the app, and keep `preAuthorizedApplications` empty. For an Entra-side allow-list of users, use a separate client app registration with "Assignment required"; turning that on for `claude-api-federation` would also block VMs' managed identities unless they get an app role assignment.
+
+The sign-in callback listens on `127.0.0.1:8400` only and uses PKCE and `state`. The Docker sandbox receives none of the `ANTHROPIC_*` settings, and token commands run on the host. **Don't use your home directory as a scan target**, which would copy `~/.strix` into the sandbox.
+
+## Troubleshooting
+
+The token endpoint only ever returns `401 Authentication failed`. **The reason is on the Console's Settings → Workload identity → Authentication history page.**
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `AADSTS53003` from `az login` | Conditional Access blocks Azure management for non-admins | Expected; use `strix auth login entra` |
+| `AADSTS50011` (redirect URI mismatch) on `strix auth login entra` | No `http://localhost` public-client redirect | Step 1.4 |
+| `AADSTS65001` on `strix auth login entra` | Wrong `--app`, or the scope is missing | Step 1.4; check `STRIX_ENTRA_APP_ID` |
+| `AADSTS500011` / `AADSTS50001` | Audience app or its service principal missing | Steps 1.1–1.3 |
+| Over SSH, sign-in waits and then asks for a URL | The browser can't reach the host's port 8400 | Use `--manual` and paste the redirect URL, or tunnel the port |
+| Token `ver` is `"1.0"` | v2.0 setting didn't apply | Step 1.2 |
+| `401`, history: audience mismatch | **Expected audience** blank or set to `api://…` | Set it to the bare `<APP_ID>` GUID |
+| `401`, history: subject mismatch | Rule subject is the `oid`, but user tokens have a different `sub` | Set **Subject pattern** to the `sub` from `strix auth status` |
+| `401`, history: claim mismatch on `azp` | Rule's `azp` isn't `<APP_ID>` | Set it to `<APP_ID>` |
+| `401`, history: lifetime (VM) | Issuer still at 7500 s | Raise `max_jwt_lifetime_seconds` to `86400` |
+| `Entra ID sign-in failed (invalid_grant: …); run: strix auth login entra` | Refresh token expired or revoked | Sign in again |
+| Strix warns *"LLM_API_KEY is set…"* | A key in the environment or the Strix config file | `export LLM_API_KEY=` (empty) |
+
+See also: the [Anthropic provider page](/llm-providers/anthropic) for the federation variables and other identity providers, and Anthropic's [WIF with Microsoft Entra ID](https://platform.claude.com/docs/en/manage-claude/wif-providers/azure) guide.

@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.config import IntegrationSettings, codex, load_settings
+from strix.config import IntegrationSettings, anthropic_wif, codex, load_settings
 from strix.interface.utils import (
     check_docker_connection,
     image_exists,
@@ -53,7 +53,30 @@ def validate_environment() -> None:
     if not settings.llm.model:
         missing_required_vars.append("STRIX_LLM")
 
-    if not settings.llm.api_key:
+    uses_wif = anthropic_wif.applies(settings.llm.model, settings.llm.api_key)
+    if uses_wif:
+        try:
+            anthropic_wif.get_valid_token()
+        except anthropic_wif.WifAuthError as exc:
+            console.print(
+                f"[red]Anthropic workload identity federation failed:[/] {exc}",
+                highlight=False,
+            )
+            report_error("workload_identity_exchange_failed")
+            sys.exit(1)
+        logger.info("Anthropic workload identity token exchange OK")
+    elif (
+        settings.llm.api_key
+        and anthropic_wif.is_anthropic_model(settings.llm.model or "")
+        and anthropic_wif.is_configured()
+    ):
+        console.print(
+            "[yellow]LLM_API_KEY is set, so it is used instead of the configured "
+            "Anthropic workload identity federation.[/] Unset it to federate.",
+            highlight=False,
+        )
+
+    if not settings.llm.api_key and not uses_wif:
         missing_optional_vars.append("LLM_API_KEY")
 
     if not settings.llm.api_base:
