@@ -212,6 +212,12 @@ When remote vars are set, Strix dual-writes telemetry to both local JSONL and th
   Timeout in seconds for connecting to the sandbox container.
 </ParamField>
 
+<ParamField path="STRIX_CAIDO_BOOTSTRAP_TIMEOUT" default="180" type="integer">
+  Seconds to wait for the in-container Caido proxy to become ready before disabling
+  proxy tools for the scan. Raise it when the sandbox runs under a host UID that differs
+  from the image's, which makes the entrypoint re-own the home directory before Caido starts.
+</ParamField>
+
 ## Config File
 
 Strix stores configuration in `~/.strix/cli-config.json`. You can also specify a custom config file:
