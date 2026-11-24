@@ -23,16 +23,23 @@ RATE_LIMITS_ENV = "STRIX_RATE_LIMITS"
 
 
 def normalize_rate_limits(raw: Mapping[str, Any] | None) -> dict[str, float]:
-    """Keep the entries that name a host and a finite rate above zero."""
+    """Keep the entries that name a host and a finite rate above zero.
+
+    A key with a path (``api.example.com/v1``) limits one endpoint; its host is
+    lowercased and its path keeps its case.
+    """
     limits: dict[str, float] = {}
     for domain, rate in (raw or {}).items():
-        host = str(domain).strip().lower().removeprefix("*.").rstrip(".")
+        text = str(domain).strip()
+        host, slash, path = text.partition("/")
+        host = host.lower().removeprefix("*.").rstrip(".")
+        key = host + (slash + path).rstrip("/") if slash else host
         try:
             per_second = float(rate)
         except (TypeError, ValueError):
             continue
         if host and math.isfinite(per_second) and per_second > 0:
-            limits[host] = per_second
+            limits[key] = per_second
     return limits
 
 

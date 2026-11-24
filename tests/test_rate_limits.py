@@ -27,6 +27,10 @@ def test_normalize_keeps_valid_hosts_and_rates() -> None:
     assert normalize_rate_limits(None) == {}
 
 
+def test_normalize_keeps_endpoint_path_case() -> None:
+    assert normalize_rate_limits({"API.Example.com/V1/Pay/": 1}) == {"api.example.com/V1/Pay": 1.0}
+
+
 def test_targets_map_to_their_hosts() -> None:
     scan_config = {
         "targets": [
