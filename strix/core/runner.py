@@ -402,6 +402,8 @@ async def run_strix_scan(
         status_sink=status_sink,
         rate_limits=request_rate_limits,
     )
+    # A reused sandbox keeps the limits it started with; the prompt states those.
+    request_rate_limits = bundle.get("rate_limits", request_rate_limits)
     report("Waiting for the first model response")
     logger.info("Sandbox ready for scan %s", scan_id)
     set_scan_phase("agent_setup")

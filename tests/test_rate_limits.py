@@ -10,6 +10,7 @@ import pytest
 from strix.agents.prompt import render_scope_prompt
 from strix.core.rate_limits import normalize_rate_limits, rate_limits_for_targets
 from strix.interface.cli_args import _positive_budget
+from strix.runtime import session_manager
 
 
 def test_normalize_keeps_valid_hosts_and_rates() -> None:
@@ -71,3 +72,15 @@ def test_max_rps_rejects_non_positive_values() -> None:
     with pytest.raises(Exception, match="greater than 0"):
         _positive_budget("0")
     assert json.loads(json.dumps({"a": _positive_budget("2")})) == {"a": 2.0}
+
+
+@pytest.mark.asyncio
+async def test_reused_sandbox_keeps_its_rate_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    cached = {"session": object(), "rate_limits": {"example.com": 5.0}}
+    monkeypatch.setitem(session_manager._SESSION_CACHE, "scan-1", cached)
+
+    bundle = await session_manager.create_or_reuse(
+        "scan-1", image="img", local_sources=[], rate_limits={"example.com": 50.0}
+    )
+
+    assert bundle["rate_limits"] == {"example.com": 5.0}

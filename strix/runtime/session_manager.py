@@ -398,6 +398,7 @@ async def create_or_reuse(
             "caido_client": CaidoBootstrapHandle(
                 asyncio.create_task(_caido_when_up(), name=f"caido-bootstrap-{scan_id}")
             ),
+            "rate_limits": rate_limits or {},
         }
         _SESSION_CACHE[scan_id] = bundle
         logger.info("Sandbox session for scan %s deferred and cached", scan_id)
@@ -413,6 +414,7 @@ async def create_or_reuse(
         "client": client,
         "session": session,
         "caido_client": caido_client,
+        "rate_limits": rate_limits or {},
     }
     _SESSION_CACHE[scan_id] = bundle
     logger.info("Sandbox session for scan %s ready and cached", scan_id)
