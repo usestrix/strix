@@ -14,7 +14,7 @@ from strix.config import codex
 from strix.config.loader import load_settings
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.report.coverage import write_coverage
-from strix.report.pricing import resolve_litellm_model
+from strix.report.pricing import price_litellm_usage, resolve_litellm_model
 from strix.report.sarif import write_sarif
 from strix.report.writer import (
     read_run_record,
@@ -1179,8 +1179,6 @@ def _estimate_response_cost(kwargs: Any, completion_response: Any) -> float | No
     returns no ``response_cost`` for models missing from its cost map, so try
     the provider-prefixed name, the raw name, and the bare model name.
     """
-    from litellm import completion_cost
-
     model = kwargs.get("model") if isinstance(kwargs, dict) else None
     if not isinstance(model, str) or not model:
         if isinstance(completion_response, dict):
@@ -1211,10 +1209,7 @@ def _estimate_response_cost(kwargs: Any, completion_response: Any) -> float | No
         if not resolved:
             continue
         try:
-            value = completion_cost(
-                completion_response={"model": resolved, "usage": usage_payload},
-                model=resolved,
-            )
+            value = price_litellm_usage(resolved, usage_payload)
         except Exception:  # nosec B112  # noqa: BLE001, S112
             continue
         if isinstance(value, int | float) and value > 0:

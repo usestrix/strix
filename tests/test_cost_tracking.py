@@ -170,6 +170,25 @@ def test_cost_callback_estimates_cost_with_bare_model_fallback() -> None:
     report_state.record_observed_llm_cost.assert_called_once_with(0.025)
 
 
+def test_cost_callback_prices_a_copilot_alias_without_provider_discovery() -> None:
+    report_state = MagicMock()
+    model = "github_copilot/test-sonnet"
+    response = {"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
+
+    with (
+        patch("strix.report.state.get_global_report_state", return_value=report_state),
+        patch.dict(
+            litellm.model_cost,
+            {model: {"input_cost_per_token": 0.01, "output_cost_per_token": 0.02}},
+        ),
+        patch("litellm.get_llm_provider", side_effect=AssertionError) as discover,
+    ):
+        litellm_cost_callback({"model": "test-sonnet"}, response)
+
+    discover.assert_not_called()
+    report_state.record_observed_llm_cost.assert_called_once_with(pytest.approx(0.2))
+
+
 def test_cost_callback_records_nothing_when_no_cost_available() -> None:
     report_state = MagicMock()
     response = {"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
