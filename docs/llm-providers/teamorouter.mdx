@@ -1,0 +1,46 @@
+---
+title: "TeamoRouter"
+description: "Configure Strix with models via TeamoRouter"
+---
+
+[TeamoRouter](https://teamorouter.com) is an OpenAI-compatible API gateway: one API key for GLM, Kimi, DeepSeek, Qwen, Claude, GPT, Gemini and more.
+
+## Setup
+
+```bash
+export STRIX_LLM="openai/glm-5.3"
+export LLM_API_KEY="your-teamorouter-api-key"
+export LLM_API_BASE="https://api.teamorouter.com/v1"
+```
+
+## Available Models
+
+Use the TeamoRouter model ID with the `openai/` prefix:
+
+| Model | Configuration |
+|-------|---------------|
+| GLM-5.3 (recommended) | `openai/glm-5.3` |
+| GLM-5.3 Flash | `openai/glm-5.3-flash` |
+| Kimi K3.1 Pro | `openai/kimi-k3.1-pro` |
+| DeepSeek V4 Pro | `openai/deepseek-v4-pro` |
+| DeepSeek V4 Flash | `openai/deepseek-v4-flash` |
+| Qwen3.8 Max | `openai/qwen3.8-max` |
+| Claude Sonnet 5.5 | `openai/claude-sonnet-5-5` |
+| GPT-6.2 Astra | `openai/gpt-6.2-astra` |
+
+The full model list and current prices are at [teamorouter.com/models](https://teamorouter.com/models).
+
+OpenAI, Anthropic and Gemini models keep their provider safeguards on TeamoRouter. Security testing with them needs [Daybreak](https://openai.com/daybreak/), [CVP](https://support.claude.com/en/articles/14604842-cyber-verification-program) or [Fairwind](https://deepmind.google/fairwind-program/) access.
+
+## Get API Key
+
+1. Sign up at [teamorouter.com](https://teamorouter.com)
+2. Open **API Keys** in the dashboard
+3. Create a new key and copy it
+
+## Benefits
+
+- **Single API** — GLM, Kimi, DeepSeek, Qwen, Claude, GPT and Gemini behind one key
+- **OpenAI-compatible** — Drop-in replacement using `LLM_API_BASE`
+- **Function calling** — All listed models support tool/function calling
+- **Pay as you go** — Prepaid balance from $5, no subscription
