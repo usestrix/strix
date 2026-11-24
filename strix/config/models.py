@@ -690,7 +690,9 @@ DEFAULT_MODEL_RETRY = ModelRetrySettings(
         initial_delay=2.0,
         max_delay=90.0,
         multiplier=2.0,
-        jitter=False,
+        # Concurrent agents fail together when a provider drops its connections;
+        # jitter keeps their retries from landing on it in lockstep.
+        jitter=True,
     ),
     policy=retry_policies.any(
         retry_policies.provider_suggested(),

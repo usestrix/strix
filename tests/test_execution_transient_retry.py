@@ -5,6 +5,9 @@ from typing import Any, cast
 import httpx
 import pytest
 from agents import RunConfig, Runner
+from agents.items import ModelResponse
+from agents.stream_events import RawResponsesStreamEvent
+from agents.usage import Usage
 from openai import (
     APIConnectionError,
     APIError,
@@ -15,9 +18,19 @@ from openai import (
     RateLimitError,
 )
 
-from strix.config import codex
+from strix.config import codex, loader
+from strix.config.models import _completed_stream_event
 from strix.core import execution
 from strix.core.agents import AgentCoordinator
+
+
+@pytest.fixture(autouse=True)
+def _isolate_llm_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """Resolve the retry settings from defaults and this test's env only."""
+    for key in ("STRIX_LLM_MAX_RETRIES", "STRIX_LLM_RETRY_MAX_DELAY"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(loader, "_override", tmp_path / "no-config.json")
+    monkeypatch.setattr(loader, "_cached", None)
 
 
 def _request() -> httpx.Request:
@@ -90,21 +103,20 @@ def test_client_errors_are_transient() -> None:
 
 
 class _FakeStream:
-    def __init__(self, exc: BaseException | None = None) -> None:
+    def __init__(self, exc: BaseException | None = None, events: list[Any] | None = None) -> None:
         self._exc = exc
-        self._events: list[Any] = []
+        self._events: list[Any] = list(events or [])
         self.run_loop_exception: BaseException | None = None
 
     async def stream_events(self) -> Any:
-        if self._exc is not None:
-            raise self._exc
         for event in self._events:
             yield event
+        if self._exc is not None:
+            raise self._exc
 
 
 def _patch_fast_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(execution, "_TRANSIENT_MODEL_RETRY_BASE_DELAY_S", 0.0)
-    monkeypatch.setattr(execution, "_TRANSIENT_MODEL_RETRY_MAX_DELAY_S", 0.0)
 
 
 async def _run_once(
@@ -156,10 +168,8 @@ async def test_run_cycle_retries_transient_midstream_error(
 async def test_run_cycle_gives_up_after_max_retries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    streams = [
-        _FakeStream(exc=_midstream_api_error())
-        for _ in range(execution._MAX_TRANSIENT_MODEL_RETRIES + 1)
-    ]
+    max_retries = loader.load_settings().llm.max_retries
+    streams = [_FakeStream(exc=_midstream_api_error()) for _ in range(max_retries + 1)]
     with pytest.raises(APIError):
         await _run_once(monkeypatch, streams)
 
@@ -171,6 +181,122 @@ async def test_run_cycle_does_not_retry_permanent_error(
     streams = [_FakeStream(exc=ValueError("nope")), _FakeStream()]
     with pytest.raises(ValueError, match="nope"):
         await _run_once(monkeypatch, streams)
+
+
+def _dropped_stream_error() -> httpx.RemoteProtocolError:
+    # What the OpenAI SDK lets through when a provider answers 200 and then closes
+    # the connection before the streamed body ends.
+    return httpx.RemoteProtocolError(
+        "peer closed connection without sending complete message body (incomplete chunked read)"
+    )
+
+
+def _completed_response_event() -> RawResponsesStreamEvent:
+    response = ModelResponse(output=[], usage=Usage(), response_id=None)
+    return RawResponsesStreamEvent(data=_completed_stream_event(response, "model"))
+
+
+def test_midstream_transport_errors_are_transient() -> None:
+    for exc in (
+        _dropped_stream_error(),
+        httpx.ReadError("connection reset by peer"),
+        httpx.ConnectError("connection refused"),
+        httpx.ReadTimeout("timed out"),
+    ):
+        assert execution._is_transient_model_error(exc) is True, exc
+
+
+def test_transport_error_raised_from_a_wrapper_is_transient() -> None:
+    try:
+        try:
+            raise _dropped_stream_error()
+        except httpx.RemoteProtocolError as dropped:
+            raise RuntimeError("stream failed") from dropped
+    except RuntimeError as wrapped:
+        assert execution._is_transient_model_error(wrapped) is True
+
+
+def test_local_transport_misconfiguration_is_not_transient() -> None:
+    assert execution._is_transient_model_error(httpx.UnsupportedProtocol("ftp://x")) is False
+    assert execution._is_transient_model_error(httpx.LocalProtocolError("bad header")) is False
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_replays_turn_after_dropped_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streams = [_FakeStream(exc=_dropped_stream_error()), _FakeStream()]
+    result, attempts, coordinator = await _run_once(monkeypatch, streams)
+
+    assert result is streams[1]
+    assert attempts == 2
+    assert coordinator.statuses.get("root") != "crashed"
+
+
+@pytest.mark.asyncio
+async def test_retry_budget_resets_after_a_completed_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRIX_LLM_MAX_RETRIES", "1")
+    streams = [
+        _FakeStream(exc=_dropped_stream_error()),
+        # A turn completes before the next drop, so that drop is the first in a row.
+        _FakeStream(exc=_dropped_stream_error(), events=[_completed_response_event()]),
+        _FakeStream(),
+    ]
+    result, attempts, _coordinator = await _run_once(monkeypatch, streams)
+
+    assert result is streams[2]
+    assert attempts == 3
+
+
+@pytest.mark.asyncio
+async def test_consecutive_drops_without_progress_exhaust_the_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRIX_LLM_MAX_RETRIES", "1")
+    streams = [_FakeStream(exc=_dropped_stream_error()) for _ in range(2)] + [_FakeStream()]
+    with pytest.raises(httpx.RemoteProtocolError):
+        await _run_once(monkeypatch, streams)
+
+
+@pytest.mark.asyncio
+async def test_retries_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIX_LLM_MAX_RETRIES", "0")
+    streams = [_FakeStream(exc=_dropped_stream_error()), _FakeStream()]
+    with pytest.raises(httpx.RemoteProtocolError):
+        await _run_once(monkeypatch, streams)
+
+
+def test_retry_settings_read_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIX_LLM_MAX_RETRIES", "12")
+    monkeypatch.setenv("STRIX_LLM_RETRY_MAX_DELAY", "240")
+    llm = loader.load_settings().llm
+    assert llm.max_retries == 12
+    assert llm.retry_max_delay == 240
+
+
+def test_retry_delay_doubles_up_to_the_cap_with_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(execution.random, "uniform", lambda _low, high: high)
+    assert [execution._transient_model_retry_delay(n, 90.0) for n in range(1, 9)] == [
+        2.0,
+        4.0,
+        8.0,
+        16.0,
+        32.0,
+        64.0,
+        90.0,
+        90.0,
+    ]
+    monkeypatch.setattr(execution.random, "uniform", lambda low, _high: low)
+    assert execution._transient_model_retry_delay(3, 90.0) == 4.0
+    assert execution._transient_model_retry_delay(30, 240.0) == 120.0
+
+
+def test_retry_delay_is_randomized() -> None:
+    delays = {execution._transient_model_retry_delay(4, 90.0) for _ in range(50)}
+    assert len(delays) > 1
+    assert all(8.0 <= delay <= 16.0 for delay in delays)
 
 
 @pytest.mark.parametrize(
