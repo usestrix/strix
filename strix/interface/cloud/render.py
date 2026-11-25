@@ -612,6 +612,15 @@ def emit(  # noqa: PLR0911, PLR0912, PLR0915
     if view == "GET /chat/{chatId}/credentials" and _is_record(data):
         _print_chat_credentials(console, data)
         return
+    if view == "GET /scans/{scanId}/approvals" and _is_record(data):
+        _print_detail(console, {key: value for key, value in data.items() if key != "approvals"})
+        approvals = data.get("approvals", [])
+        if not approvals:
+            console.print("[dim]No approvals.[/]")
+        for approval in approvals:
+            console.print()
+            _print_detail(console, approval)
+        return
     detail_key = _DETAIL_ENVELOPE_KEYS.get(view or "")
     if detail_key and _is_record(data):
         detail = data.get(detail_key)

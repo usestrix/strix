@@ -55,6 +55,162 @@ def _token_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STRIX_API_TOKEN", "test-token")
 
 
+@pytest.mark.parametrize("verb,approved", [("approve", True), ("deny", False)])
+def test_action_decision_body(monkeypatch: pytest.MonkeyPatch, verb: str, approved: bool) -> None:
+    calls: list[Any] = []
+
+    def request(method: str, path: str, **kwargs: Any) -> FakeResponse:
+        calls.append((method, path, kwargs.get("body")))
+        return FakeResponse(payload={"resolved": True})
+
+    monkeypatch.setattr(http, "request", request)
+    assert (
+        cloud.run_cloud(
+            ["scans", verb, "scan-1", "approval-1", "--data", '{"approved":null}', "--json"]
+        )
+        == 0
+    )
+    assert calls == [("POST", "/scans/scan-1/approvals/approval-1", {"approved": approved})]
+
+
+@pytest.mark.parametrize("prefix", [["scans", "start"], ["schedules", "update", "s1"]])
+@pytest.mark.parametrize("value", ['{"enabled":true,"mode":"ask"}', "{}"])
+def test_action_approval_option(
+    monkeypatch: pytest.MonkeyPatch, prefix: list[str], value: str
+) -> None:
+    bodies: list[Any] = []
+
+    def request(*_args: Any, **kwargs: Any) -> FakeResponse:
+        bodies.append(kwargs.get("body"))
+        return FakeResponse(payload={"id": "s1"})
+
+    monkeypatch.setattr(http, "request", request)
+    assert cloud.run_cloud([*prefix, "--action-approvals", value, "--json"]) == 0
+    assert bodies == [{"action_approvals": json.loads(value)}]
+    assert cloud.run_cloud([*prefix, "--action-approvals", "not-json"]) == http.EXIT_USAGE
+    assert len(bodies) == 1
+
+
+@pytest.mark.parametrize("provider", ["linear", "jira", "slack"])
+def test_integration_settings_commands(monkeypatch: pytest.MonkeyPatch, provider: str) -> None:
+    calls: list[Any] = []
+
+    def request(method: str, path: str, **kwargs: Any) -> FakeResponse:
+        calls.append((method, path, kwargs.get("body")))
+        return FakeResponse(payload={"success": True})
+
+    monkeypatch.setattr(http, "request", request)
+    assert cloud.run_cloud(["integrations", "settings", "get", provider, "--json"]) == 0
+    body = (
+        {"auto_sync_enabled": False}
+        if provider != "slack"
+        else {"slack_notify_action_approvals": True}
+    )
+    assert (
+        cloud.run_cloud(
+            ["integrations", "settings", "update", provider, "--data", json.dumps(body), "--json"]
+        )
+        == 0
+    )
+    assert calls[0][:2] == ("GET", f"/integrations/{provider}/settings")
+    assert calls[1] == ("PATCH", f"/integrations/{provider}/settings", body)
+
+
+def test_all_slack_setting_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    body: dict[str, Any] = {}
+
+    def request(*_args: Any, **kwargs: Any) -> FakeResponse:
+        body.update(kwargs["body"])
+        return FakeResponse(payload={"success": True})
+
+    monkeypatch.setattr(http, "request", request)
+    args = ["integrations", "settings", "update", "slack", "--json"]
+    expected: dict[str, Any] = {}
+    for param in SPEC["integrations"]["settings update"].body:
+        flag = "--" + param.name.replace("_", "-")
+        if param.kind == "bool":
+            args.append(flag)
+            expected[param.name] = True
+        elif param.kind == "json":
+            args.extend([flag, '{"pentests":"C1"}'])
+            expected[param.name] = {"pentests": "C1"}
+        elif param.kind == "list":
+            args.extend([flag, "critical", "high"])
+            expected[param.name] = ["critical", "high"]
+        else:
+            args.extend([flag, "C1"])
+            expected[param.name] = "C1"
+    assert cloud.run_cloud(args) == 0
+    assert body == expected
+    body.clear()
+    assert (
+        cloud.run_cloud(
+            ["integrations", "settings", "update", "slack", "--no-slack-notify-action-approvals"]
+        )
+        == 0
+    )
+    assert body == {"slack_notify_action_approvals": False}
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_action_approvals_human_output(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any, empty: bool
+) -> None:
+    calls: list[Any] = []
+    approval = {
+        "id": "approval-123",
+        "status": "pending",
+        "tool": "shell",
+        "summary": "inspect target",
+        "risky": True,
+        "expires_at": "2030-01-01",
+    }
+
+    def request(method: str, path: str, **_kwargs: Any) -> FakeResponse:
+        calls.append((method, path))
+        return FakeResponse(
+            payload={
+                "timeout_seconds": 300,
+                "on_timeout": "block",
+                "approvals": [] if empty else [approval],
+            }
+        )
+
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(http, "request", request)
+    assert cloud.run_cloud(["scans", "approvals", "scan-1"]) == 0
+    assert calls == [("GET", "/scans/scan-1/approvals")]
+    output = capsys.readouterr().out
+    assert "300" in output and "block" in output
+    if empty:
+        assert "No approvals." in output
+    else:
+        for value in ("approval-123", "pending", "shell", "inspect target", "risky", "2030-01-01"):
+            assert value in output
+
+
+def test_action_approval_help(capsys: Any) -> None:
+    for verb in ("approve", "deny"):
+        assert cloud.run_cloud(["scans", verb, "--help"]) == 0
+        output = capsys.readouterr().out
+        for text in ("scans:approve", "personal API token", "409", "502", "503"):
+            assert text in output
+    help_text = SPEC["scans"]["approvals"].help
+    assert all(text in help_text for text in ("100", "scans:read", "truncated", "whole action"))
+    for group, verb in (("scans", "start"), ("schedules", "update")):
+        param = next(p for p in SPEC[group][verb].body if p.name == "action_approvals")
+        assert param.kind == "json"
+        assert all(t in param.help for t in ("false", "auto", "ask", "300", "block", "allow"))
+
+
+@pytest.mark.parametrize("status", [409, 502, 503])
+def test_action_decision_errors(monkeypatch: pytest.MonkeyPatch, status: int) -> None:
+    monkeypatch.setattr(
+        http, "request", lambda *_a, **_k: FakeResponse(status, {"detail": "decision failed"})
+    )
+    assert cloud.run_cloud(["scans", "approve", "s1", "a1", "--json"]) == http.EXIT_ERROR
+
+
 def test_help_returns_zero() -> None:
     assert cloud.run_cloud([]) == 0
     assert cloud.run_cloud(["--help"]) == 0
