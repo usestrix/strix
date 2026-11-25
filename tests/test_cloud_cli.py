@@ -256,6 +256,31 @@ def test_bulk_retest_request_and_response(
     assert json.loads(capsys.readouterr().out) == payload
 
 
+def test_bulk_retest_human_response_shows_batch_ids(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(
+        http,
+        "request",
+        lambda *_a, **_k: FakeResponse(
+            status_code=202,
+            payload={
+                "accepted": 2,
+                "total": 2,
+                "skipped_running": 0,
+                "skipped_ineligible": 0,
+                "batches": [{"scan_id": "scan-1", "batch_id": "batch-1", "accepted": 2}],
+            },
+        ),
+    )
+
+    assert cloud.run_cloud(["vulns", "retest-bulk", "--vulnerability-ids", "finding-1"]) == 0
+    output = capsys.readouterr().out
+    assert "scan-1" in output
+    assert "batch-1" in output
+
+
 @pytest.mark.parametrize(
     "flags", [[], ["--vulnerability-ids"], ["--vulnerability-ids", "one", "--wait"]]
 )
