@@ -84,9 +84,6 @@ logger = logging.getLogger(__name__)
 
 _MCP_PROMPT_WARMUP_TIMEOUT_SECONDS = 30.0
 
-# How often a scan paused on an exhausted LLM provider account retries one call.
-DEFAULT_PROVIDER_PROBE_INTERVAL_S = 300.0
-
 StreamEventSink = Callable[[str, Any], None]
 
 # Receives the run's MCP connection roster as a list of non-secret status dicts
@@ -233,7 +230,6 @@ async def run_strix_scan(
     max_turns: int = DEFAULT_MAX_TURNS,
     max_budget_usd: float | None = None,
     budget_policy: BudgetPolicy = "stop",
-    provider_probe_interval: float | None = DEFAULT_PROVIDER_PROBE_INTERVAL_S,
     model: str | None = None,
     cleanup_on_exit: bool = True,
     event_sink: StreamEventSink | None = None,
@@ -271,10 +267,9 @@ async def run_strix_scan(
     it. ``coordinator.pause_budget()`` parks a running scan the same way.
     When the LLM provider rejects a call because the account is out of quota or
     credits, the scan pauses under either policy: every agent parks with its
-    session intact and ``coordinator.pause_reason`` is set. It continues on
-    ``coordinator.resume_budget()``, on a user message in interactive mode, or
-    by itself once a retry made every ``provider_probe_interval`` seconds goes
-    through (``None`` disables those retries).
+    session intact and ``coordinator.pause_reason`` is set. It stays paused until
+    ``coordinator.resume_budget()``, a user message in interactive mode, or a
+    restart with ``--resume``.
     ``mcp_connection_requests`` supplies the run's MCP connections from any
     source: when given, the engine connects those requests; when ``None`` (the
     command-line default) it reads ``~/.strix/mcp-servers.json`` itself. Either
@@ -360,7 +355,6 @@ async def run_strix_scan(
         )
     coordinator.set_snapshot_path(agents_path)
     coordinator.set_budget_policy(budget_policy)
-    coordinator.provider_probe_interval = provider_probe_interval
     coordinator.root_finish_tool = root_finish_tool.name
 
     from strix.tools.coverage.tools import hydrate_coverage_from_disk

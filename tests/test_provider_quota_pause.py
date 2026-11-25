@@ -181,44 +181,6 @@ async def test_provider_pause_holds_until_resumed() -> None:
     assert coordinator.pause_reason is None
 
 
-async def test_one_parked_agent_probes_and_success_resumes_everyone() -> None:
-    coordinator = await _coordinator("root", "a", "b")
-    coordinator.provider_probe_interval = 0.05
-    epoch = await coordinator.pause_for_provider("a", "provider_quota", "out of credits")
-    await coordinator.pause_for_provider("b", "provider_quota", "out of credits")
-
-    wait_a = asyncio.create_task(coordinator.wait_for_budget_resume("a", parked_epoch=epoch))
-    wait_b = asyncio.create_task(coordinator.wait_for_budget_resume("b", parked_epoch=epoch))
-    done, pending = await asyncio.wait({wait_a, wait_b}, timeout=0.3)
-
-    assert len(done) == 1
-    assert len(pending) == 1
-    probe = "a" if wait_a in done else "b"
-    other = "b" if probe == "a" else "a"
-    assert coordinator.is_provider_probe(probe)
-    assert coordinator.statuses[probe] == "running"
-    assert coordinator.statuses[other] == "budget_paused"
-    assert coordinator.pause_reason == "provider_quota"
-
-    await coordinator.provider_call_succeeded(probe)
-    await asyncio.wait_for(next(iter(pending)), 1)
-    assert coordinator.statuses[other] == "running"
-    assert coordinator.pause_reason is None
-
-
-async def test_failed_probe_parks_again() -> None:
-    coordinator = await _coordinator("root")
-    coordinator.provider_probe_interval = 0.02
-    epoch = await coordinator.pause_for_provider("root", "provider_quota", "out of credits")
-    await asyncio.wait_for(coordinator.wait_for_budget_resume("root", parked_epoch=epoch), 1)
-    assert coordinator.is_provider_probe("root")
-
-    await coordinator.pause_for_provider("root", "provider_quota", "still out of credits")
-    assert not coordinator.is_provider_probe("root")
-    assert coordinator.statuses["root"] == "budget_paused"
-    assert coordinator.pause_detail == "still out of credits"
-
-
 async def test_user_message_resumes_a_provider_pause() -> None:
     coordinator = await _coordinator("root")
     await coordinator.pause_for_provider("root", "provider_quota", "out of credits")
@@ -228,18 +190,10 @@ async def test_user_message_resumes_a_provider_pause() -> None:
     assert not coordinator.operator_paused
 
 
-async def test_provider_recovery_keeps_an_operator_pause() -> None:
+async def test_ending_a_provider_pause_keeps_an_operator_pause() -> None:
     coordinator = await _coordinator("root", "child")
-    coordinator.provider_probe_interval = 0.02
     epoch = await coordinator.pause_for_provider("child", "provider_quota", "out of credits")
-    await asyncio.wait_for(coordinator.wait_for_budget_resume("child", parked_epoch=epoch), 1)
     await coordinator.pause_budget()
-    await coordinator.provider_call_succeeded("child")
-    assert coordinator.pause_reason is None
-    assert coordinator.operator_paused
-    assert coordinator.budget_paused
-
-    await coordinator.pause_for_provider("child", "provider_quota", "out of credits")
     await coordinator.send("root", {"from": "user", "content": "topped up"})
     assert coordinator.operator_paused
 
@@ -249,29 +203,14 @@ async def test_provider_recovery_keeps_an_operator_pause() -> None:
     assert coordinator.operator_paused
     assert coordinator.statuses["child"] == "budget_paused"
 
-    # No agent checks the provider while the operator holds the scan.
     await coordinator.pause_for_provider("child", "provider_quota", "out of credits")
     waiter = asyncio.create_task(coordinator.wait_for_budget_resume("child", parked_epoch=epoch))
-    await asyncio.sleep(0.1)
+    await asyncio.sleep(0.05)
     assert not waiter.done()
-    assert not coordinator.is_provider_probe("child")
 
     assert await coordinator.resume_budget() == ["child"]
     await asyncio.wait_for(waiter, 1)
     assert not coordinator.operator_paused
-
-
-async def test_probe_hitting_another_error_parks_again() -> None:
-    coordinator = await _coordinator("root")
-    coordinator.provider_probe_interval = 0.02
-    assert await coordinator.repark_provider_probe("root") is None
-    epoch = await coordinator.pause_for_provider("root", "provider_quota", "out of credits")
-    await asyncio.wait_for(coordinator.wait_for_budget_resume("root", parked_epoch=epoch), 1)
-
-    assert await coordinator.repark_provider_probe("root") == epoch
-    assert not coordinator.is_provider_probe("root")
-    assert coordinator.statuses["root"] == "budget_paused"
-    assert coordinator.pause_detail == "out of credits"
 
 
 async def test_pause_reason_survives_a_snapshot() -> None:
@@ -338,19 +277,14 @@ async def _until(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
     await asyncio.wait_for(poll(), timeout)
 
 
-@pytest.mark.parametrize(
-    ("probe_interval", "budget_policy"),
-    [(None, "stop"), (0.05, "stop"), (0.05, "pause")],
-)
+@pytest.mark.parametrize("budget_policy", ["stop", "pause"])
 async def test_scan_pauses_on_quota_and_finishes_after_it_is_restored(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    probe_interval: float | None,
     budget_policy: BudgetPolicy,
 ) -> None:
     state: dict[str, Any] = {"broke": True, "attempts": []}
     coordinator = AgentCoordinator()
-    coordinator.provider_probe_interval = probe_interval
     hooks = ReportUsageHooks(model="test-model", max_budget_usd=None, budget_policy=budget_policy)
 
     class _Runner:
@@ -396,9 +330,13 @@ async def test_scan_pauses_on_quota_and_finishes_after_it_is_restored(
     assert "quota" in (coordinator.pause_detail or "")
     assert not any(task.done() for task in tasks)
 
+    attempts = len(state["attempts"])
+    # The account being restored changes nothing by itself: the scan waits for a resume.
     state["broke"] = False
-    if probe_interval is None:
-        await coordinator.resume_budget()
+    await asyncio.sleep(0.05)
+    assert not any(task.done() for task in tasks)
+    assert len(state["attempts"]) == attempts
+    await coordinator.resume_budget()
 
     await asyncio.wait_for(asyncio.gather(*tasks), 5)
     assert coordinator.statuses == {"root": "completed", "child": "completed"}

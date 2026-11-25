@@ -181,8 +181,8 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                 status_text.append(coordinator.pause_detail[:300], style="dim")
                 status_text.append("\n\n")
             status_text.append(
-                "Nothing is lost. Strix retries every few minutes and continues once the "
-                f"provider accepts calls again. To continue later: strix --resume {args.run_name}",
+                "Nothing is lost. Restore the quota, then stop this run (Ctrl+C) and continue "
+                f"it with: strix --resume {args.run_name}",
                 style="dim",
             )
             status_text.append("\n\n")
