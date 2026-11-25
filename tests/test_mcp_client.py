@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from agents.mcp import MCPServer, MCPServerStdio, MCPServerStreamableHttp
 from agents.tool_context import ToolContext
-from mcp.types import CallToolResult, ImageContent, TextContent
+from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
 from mcp.types import Tool as MCPTool
 from pydantic import ValidationError
 
@@ -681,6 +681,45 @@ async def test_search_then_get_one_schema_without_returning_other_schemas() -> N
         json.dumps({"connection": "docs", "tool": "fetch_page"}),
     )
     assert schema["input_schema"]["properties"] == {"page_id": {"type": "string"}}
+
+
+@pytest.mark.asyncio
+async def test_get_schema_includes_tool_annotations_when_declared() -> None:
+    registry = McpRegistry()
+    registry.add(
+        name="docs",
+        server=FakeMCPServer(
+            "docs",
+            [
+                MCPTool(
+                    name="delete_page",
+                    description="Delete a page",
+                    inputSchema={"type": "object"},
+                    annotations=ToolAnnotations(
+                        readOnlyHint=False, destructiveHint=True, openWorldHint=False
+                    ),
+                ),
+                _mcp_tool("plain_tool"),
+            ],
+        ),
+        config=McpConnectionConfig(name="docs", url="https://example.invalid/mcp"),
+    )
+
+    annotated = await get_mcp_tool_schema.on_invoke_tool(
+        _ctx(registry),
+        json.dumps({"connection": "docs", "tool": "delete_page"}),
+    )
+    assert annotated["annotations"] == {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "openWorldHint": False,
+    }
+
+    plain = await get_mcp_tool_schema.on_invoke_tool(
+        _ctx(registry),
+        json.dumps({"connection": "docs", "tool": "plain_tool"}),
+    )
+    assert "annotations" not in plain
 
 
 @pytest.mark.asyncio
