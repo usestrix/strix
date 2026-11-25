@@ -76,7 +76,12 @@ _SCAN_START_BODY = (
     P("notify_on_completion", "bool", help="Send an email when the scan completes."),
     P("notification_emails", "list", help="Extra notification email addresses."),
     P("scan_tier", help=SUPPRESS),
-    P("model_config_id", help="Self-hosted only: model configuration ID to run with."),
+    P(
+        "model_config_id",
+        help="Self-hosted installs and hosted organizations on their own LLM keys: "
+        "run with a named model config from Settings → LLM Models "
+        "instead of the default assignment.",
+    ),
     P("max_budget_usd", "float", help="Self-hosted only: budget limit for the scan in USD."),
 )
 
@@ -555,6 +560,14 @@ SPEC: dict[str, dict[str, Cmd]] = {
                 P("timezone", help="Time zone for the cron expression."),
                 P("name", help="Display name of the schedule."),
                 P(
+                    "model_config_id",
+                    help="Self-hosted installs and hosted organizations on their own LLM keys: "
+                    "run each fired scan with this named model config from Settings → LLM Models. "
+                    "If the config is deleted later, each fire fails until you choose another "
+                    "config or clear it. Use --data '{\"model_config_id\": null}' "
+                    "to restore the default assignment.",
+                ),
+                P(
                     "max_budget_usd",
                     "float",
                     help=(
@@ -1004,21 +1017,33 @@ SPEC: dict[str, dict[str, Cmd]] = {
         "overview": Cmd(
             "GET",
             "/llm-costs",
-            "Self-hosted only: show the LLM cost overview.",
+            "Show the LLM cost overview. "
+            "For self-hosted installs and hosted organizations on their own LLM keys. "
+            "Returns 404 elsewhere. Requires an unrestricted token.",
             query=_q("range", "from", "to"),
         ),
         "run": Cmd(
             "GET",
             "/llm-costs/runs/{runType}/{runId}",
-            "Self-hosted only: get the LLM costs of one run.",
+            "Get the LLM costs of one run. "
+            "For self-hosted installs and hosted organizations on their own LLM keys. "
+            "Returns 404 elsewhere. Requires an unrestricted token.",
         ),
     },
     "llm-settings": {
-        "get": Cmd("GET", "/llm-settings", "Self-hosted only: get the LLM settings."),
+        "get": Cmd(
+            "GET",
+            "/llm-settings",
+            "Get the LLM settings. "
+            "For self-hosted installs and hosted organizations on their own LLM keys. "
+            "Returns 404 elsewhere.",
+        ),
         "update": Cmd(
             "PUT",
             "/llm-settings",
-            "Self-hosted only: update the LLM settings.",
+            "Update the LLM settings. "
+            "For self-hosted installs and hosted organizations on their own LLM keys. "
+            "Returns 404 elsewhere.",
             body=(
                 P(
                     "modelConfigs",
@@ -1155,8 +1180,10 @@ GROUP_HELP: dict[str, str] = {
     "webhooks": "Manage webhooks",
     "analytics": "Read analytics data",
     "audit": "Read the audit log",
-    "costs": "Self-hosted only: read LLM cost data",
-    "llm-settings": "Self-hosted only: manage LLM model settings",
+    "costs": "Read LLM cost data for self-hosted installs and hosted organizations "
+    "on their own LLM keys. Returns 404 elsewhere. Requires an unrestricted token.",
+    "llm-settings": "Manage LLM model settings for self-hosted installs and hosted organizations "
+    "on their own LLM keys. Returns 404 elsewhere.",
     "settings": "Manage notification settings",
     "license": "Read license information",
     "tokens": "Manage API tokens",

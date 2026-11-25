@@ -1370,7 +1370,10 @@ def test_scan_start_parameter_contract_and_help() -> None:
         assert "--scan-tier" not in help_text
         assert "lite" not in help_text
         assert "standard" not in help_text
-    assert "self-hosted" in params["model_config_id"].help.lower()
+    assert "hosted organizations on their own LLM keys" in params["model_config_id"].help
+    assert (
+        "Settings → LLM Models instead of the default assignment" in params["model_config_id"].help
+    )
     assert "self-hosted" in params["max_budget_usd"].help.lower()
 
 
@@ -1585,9 +1588,45 @@ def test_corrected_help_distinguishes_inboxes_reports_and_self_hosted_commands()
     assert "file type" in report["type"]
 
     for command in (*SPEC["costs"].values(), *SPEC["llm-settings"].values()):
-        assert "self-hosted only" in command.help.lower()
-    assert "self-hosted only" in GROUP_HELP["costs"].lower()
-    assert "self-hosted only" in GROUP_HELP["llm-settings"].lower()
+        assert "self-hosted installs and hosted organizations on their own LLM keys" in command.help
+        assert "Returns 404 elsewhere" in command.help
+    for group in ("costs", "llm-settings"):
+        assert "self-hosted installs and hosted organizations" in GROUP_HELP[group]
+        assert "on their own LLM keys" in GROUP_HELP[group]
+        assert "Returns 404 elsewhere" in GROUP_HELP[group]
+    for command in SPEC["costs"].values():
+        assert "Requires an unrestricted token" in command.help
+
+
+@pytest.mark.parametrize(
+    ("flags", "expected"),
+    [
+        (["--model-config-id", "config-1"], {"model_config_id": "config-1"}),
+        (["--data", '{"model_config_id": null}'], {"model_config_id": None}),
+        ([], {}),
+    ],
+)
+def test_schedule_update_model_config(
+    monkeypatch: pytest.MonkeyPatch, flags: list[str], expected: dict[str, Any]
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> FakeResponse:
+        seen.update(method=method, path=path, body=kwargs.get("body"))
+        return FakeResponse(payload={"success": True})
+
+    monkeypatch.setattr(http, "request", fake_request)
+    assert cloud.run_cloud(["schedules", "update", "schedule-1", *flags, "--json"]) == 0
+    assert seen == {
+        "method": "PATCH",
+        "path": "/schedules/schedule-1",
+        "body": expected,
+    }
+    param = next(p for p in SPEC["schedules"]["update"].body if p.name == "model_config_id")
+    assert "each fired scan" in param.help
+    assert "each fire fails" in param.help
+    assert """--data '{"model_config_id": null}'""" in param.help
+    assert "default assignment" in param.help
 
 
 def test_every_command_builds_a_parser() -> None:
