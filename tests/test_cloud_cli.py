@@ -55,6 +55,119 @@ def _token_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STRIX_API_TOKEN", "test-token")
 
 
+@pytest.mark.parametrize(
+    "prefix,method,path,option,value,expected",
+    [
+        (
+            ["scans", "start"],
+            "POST",
+            "/scans",
+            "--domain-rate-limits",
+            '{"api.example.com:8443":2,"api.example.com/v1/payments":1}',
+            {"domain_rate_limits": {"api.example.com:8443": 2, "api.example.com/v1/payments": 1}},
+        ),
+        (
+            ["schedules", "update", "s1"],
+            "PATCH",
+            "/schedules/s1",
+            "--domain-rate-limits",
+            '{"api.example.com":2}',
+            {"domain_rate_limits": {"api.example.com": 2}},
+        ),
+        (
+            ["domains", "update", "d1"],
+            "PATCH",
+            "/domains/d1",
+            "--max-rps",
+            "2.5",
+            {"max_rps": 2.5},
+        ),
+        (
+            ["schedules", "create"],
+            "POST",
+            "/schedules",
+            "--data",
+            '{"domain_rate_limits":{"api.example.com":2}}',
+            {"domain_rate_limits": {"api.example.com": 2}},
+        ),
+        (
+            ["domains", "update", "d1"],
+            "PATCH",
+            "/domains/d1",
+            "--data",
+            '{"max_rps":null}',
+            {"max_rps": None},
+        ),
+        (
+            ["schedules", "update", "s1"],
+            "PATCH",
+            "/schedules/s1",
+            "--data",
+            '{"domain_rate_limits":null}',
+            {"domain_rate_limits": None},
+        ),
+        (
+            ["scans", "start"],
+            "POST",
+            "/scans",
+            "--domain-rate-limits",
+            "{}",
+            {"domain_rate_limits": {}},
+        ),
+    ],
+)
+def test_rate_limit_request_bodies(
+    monkeypatch: pytest.MonkeyPatch,
+    prefix: list[str],
+    method: str,
+    path: str,
+    option: str,
+    value: str,
+    expected: dict[str, Any],
+) -> None:
+    calls: list[Any] = []
+
+    def request(actual_method: str, actual_path: str, **kwargs: Any) -> FakeResponse:
+        calls.append((actual_method, actual_path, kwargs.get("body")))
+        return FakeResponse(payload={"id": "result"})
+
+    monkeypatch.setattr(http, "request", request)
+    assert cloud.run_cloud([*prefix, option, value, "--json"]) == 0
+    assert calls == [(method, path, expected)]
+    if option == "--max-rps":
+        assert isinstance(calls[0][2]["max_rps"], float)
+
+
+@pytest.mark.parametrize(
+    "prefix,option",
+    [
+        (["scans", "start"], "--domain-rate-limits"),
+        (["schedules", "update", "s1"], "--domain-rate-limits"),
+        (["domains", "update", "d1"], "--max-rps"),
+    ],
+)
+def test_rate_limit_invalid_input(
+    monkeypatch: pytest.MonkeyPatch, prefix: list[str], option: str
+) -> None:
+    def request(*_args: Any, **_kwargs: Any) -> FakeResponse:
+        pytest.fail("Invalid input must not send a request")
+
+    monkeypatch.setattr(http, "request", request)
+    assert cloud.run_cloud([*prefix, option, "not-a-value", "--json"]) == http.EXIT_USAGE
+
+
+def test_rate_limit_help(capsys: Any) -> None:
+    for prefix, texts in [
+        (["scans", "start"], ["--domain-rate-limits", "port", "endpoint", "1000", "max_rps"]),
+        (["schedules", "update"], ["--domain-rate-limits", "hostname", "null", "1000"]),
+        (["domains", "update"], ["--max-rps", "subdomains", "domain_rate_limits", "null", "1000"]),
+        (["schedules", "create"], ["--data", "scans start", "domain_rate_limits"]),
+    ]:
+        assert cloud.run_cloud([*prefix, "--help"]) == 0
+        output = capsys.readouterr().out
+        assert all(text in output for text in texts)
+
+
 def test_help_returns_zero() -> None:
     assert cloud.run_cloud([]) == 0
     assert cloud.run_cloud(["--help"]) == 0

@@ -58,6 +58,15 @@ _SCAN_START_BODY = (
     ),
     P("domain_ids", "list", help="Domain asset IDs to test."),
     P("domain_paths", "json", help="JSON map of domain ID to start paths."),
+    P(
+        "domain_rate_limits",
+        "json",
+        help="JSON object of requests per second by registered target domain, including any port, "
+        "or domain plus path for one endpoint. Values must be above 0 and at most 1000. "
+        "Each value replaces the domain's max_rps for that domain and its subdomains. "
+        "Endpoint limits apply to the path and paths below it instead of the domain limit. "
+        "Strix ignores keys that match no target.",
+    ),
     P("repository_ids", "list", help="Repository asset IDs to test."),
     P("repository_branches", "json", help="JSON map of repository ID to branch."),
     P("credentials", "json", help="JSON list of credential objects."),
@@ -385,6 +394,14 @@ SPEC: dict[str, dict[str, Cmd]] = {
             "/domains/{domainId}",
             "Update a domain asset.",
             body=(
+                P(
+                    "max_rps",
+                    "float",
+                    help="Most HTTP requests per second any pentest sends to this domain "
+                    "and its subdomains. Must be above 0 and at most 1000. "
+                    "A pentest's domain_rate_limits replaces it. "
+                    "Use --data '{\"max_rps\": null}' to clear it.",
+                ),
                 P("context", help="Extra context about the asset."),
                 P("tags", "list", help="Tags for the asset."),
                 P("business_unit", help="Business unit for the asset."),
@@ -541,7 +558,8 @@ SPEC: dict[str, dict[str, Cmd]] = {
         "create": Cmd(
             "POST",
             "/schedules",
-            "Create a scan schedule. Use --data for the fields.",
+            "Create a scan schedule. Use --data for scans start fields, "
+            "including domain_rate_limits.",
             idempotent=True,
         ),
         "get": Cmd("GET", "/schedules/{scheduleId}", "Get one schedule."),
@@ -551,6 +569,15 @@ SPEC: dict[str, dict[str, Cmd]] = {
             "Update a schedule. Use --data for fields that have no option.",
             body=(
                 P("action", help="Lifecycle action, for example pause or resume."),
+                P(
+                    "domain_rate_limits",
+                    "json",
+                    help="JSON object of requests per second keyed by target hostname. "
+                    "Values must be above 0 and at most 1000. "
+                    "Each value replaces the domain's max_rps for that domain and its subdomains. "
+                    "Strix ignores hostnames that match no target. "
+                    "Use --data '{\"domain_rate_limits\": null}' to clear them.",
+                ),
                 P("cron_expression", help="Cron expression for the schedule."),
                 P("timezone", help="Time zone for the cron expression."),
                 P("name", help="Display name of the schedule."),

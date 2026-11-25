@@ -5,6 +5,15 @@ from typing import Any
 from strix.interface.completions import completion_candidates, run_completions
 
 
+def test_rate_limit_completions() -> None:
+    for prefix in (["scans", "start"], ["schedules", "update"]):
+        assert "--domain-rate-limits" in completion_candidates(["cloud", *prefix, "--"])
+    assert "--max-rps" in completion_candidates(["cloud", "domains", "update", "--"])
+    assert "--domain-rate-limits" not in completion_candidates(
+        ["cloud", "schedules", "create", "--"]
+    )
+
+
 def test_root_completion_candidates() -> None:
     assert completion_candidates(["cl"]) == ["cloud"]
     assert "completions" in completion_candidates([""])
