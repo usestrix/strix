@@ -44,6 +44,8 @@ _QUOTA_CODES = frozenset(
         *(str(code) for code in (1308, 1309, 1310, 1311, 1314, *range(1316, 1322))),
         "creditlimitexceeded",
         "payment_required",
+        # Google's ErrorInfo reason for a project whose billing is off.
+        "billing_disabled",
     }
 )
 # Only consulted on a 429 or a statusless error. Gemini words its per-minute

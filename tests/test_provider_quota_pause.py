@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
-from openai import APIStatusError, RateLimitError
+from openai import APIStatusError, PermissionDeniedError, RateLimitError
 
 from strix.core import execution
 from strix.core.agents import AgentCoordinator, BudgetPolicy
@@ -72,6 +72,11 @@ def _status_error(cls: type[APIStatusError], status: int, body: dict[str, Any]) 
             '[{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}]\\n  }\\n}\\n\''
         ),
         _status_error(RateLimitError, 429, {"message": "Your project exceeded its spending cap."}),
+        _status_error(
+            PermissionDeniedError,
+            403,
+            {"message": "Billing is off.", "details": [{"reason": "BILLING_DISABLED"}]},
+        ),
         # Gemini's per-day quota: same message as its per-minute throttle, told apart by quotaId.
         _status_error(
             RateLimitError,
@@ -221,6 +226,45 @@ async def test_user_message_resumes_a_provider_pause() -> None:
     assert await coordinator.send("root", {"from": "user", "content": "I topped up, continue"})
     assert coordinator.pause_reason is None
     assert not coordinator.operator_paused
+
+
+async def test_provider_recovery_keeps_an_operator_pause() -> None:
+    coordinator = await _coordinator("root", "child")
+    coordinator.provider_probe_interval = 0.02
+    epoch = await coordinator.pause_for_provider("child", "provider_quota", "out of credits")
+    await coordinator.pause_budget()
+
+    await asyncio.wait_for(coordinator.wait_for_budget_resume("child", parked_epoch=epoch), 1)
+    await coordinator.provider_call_succeeded("child")
+    assert coordinator.pause_reason is None
+    assert coordinator.operator_paused
+    assert coordinator.budget_paused
+
+    await coordinator.pause_for_provider("child", "provider_quota", "out of credits")
+    await coordinator.send("root", {"from": "user", "content": "topped up"})
+    assert coordinator.operator_paused
+
+    await coordinator.pause_for_provider("child", "provider_quota", "out of credits")
+    await coordinator.restore(await coordinator.snapshot())
+    assert await coordinator.clear_restored_provider_pause()
+    assert coordinator.operator_paused
+    assert coordinator.statuses["child"] == "budget_paused"
+
+    assert await coordinator.resume_budget() == ["child"]
+    assert not coordinator.operator_paused
+
+
+async def test_probe_hitting_another_error_parks_again() -> None:
+    coordinator = await _coordinator("root")
+    coordinator.provider_probe_interval = 0.02
+    assert await coordinator.repark_provider_probe("root") is None
+    epoch = await coordinator.pause_for_provider("root", "provider_quota", "out of credits")
+    await asyncio.wait_for(coordinator.wait_for_budget_resume("root", parked_epoch=epoch), 1)
+
+    assert await coordinator.repark_provider_probe("root") == epoch
+    assert not coordinator.is_provider_probe("root")
+    assert coordinator.statuses["root"] == "budget_paused"
+    assert coordinator.pause_detail == "out of credits"
 
 
 async def test_pause_reason_survives_a_snapshot() -> None:

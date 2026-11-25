@@ -905,6 +905,16 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     resume_epoch=epoch,
                     operator_pause=True,
                 ) from exc
+            if (isinstance(exc, APIError) or _is_transient_model_error(exc)) and (
+                parked_epoch := await coordinator.repark_provider_probe(agent_id)
+            ) is not None:
+                # The recovery check hit an unrelated provider error: the scan
+                # stays paused and a later check tries again.
+                raise BudgetPausedError(
+                    "scan paused; the LLM provider account is out of quota or credits",
+                    resume_epoch=parked_epoch,
+                    operator_pause=True,
+                ) from exc
             if model_retries < _MAX_TRANSIENT_MODEL_RETRIES and _is_transient_model_error(exc):
                 model_retries += 1
                 delay = _transient_model_retry_delay(model_retries)
