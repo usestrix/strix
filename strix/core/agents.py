@@ -79,6 +79,10 @@ class AgentCoordinator:
         self._budget_paused = False
         self._operator_paused = False
         self._resume_epoch = 0
+        self._pause_reason: str | None = None
+        self._pause_detail: str | None = None
+        self._probe_agent: str | None = None
+        self.provider_probe_interval: float | None = None
         self._budget_policy: BudgetPolicy = "stop"
         self._extend_budget: Callable[[], None] | None = None
         self._set_budget_limit: Callable[[float | None], None] | None = None
@@ -113,6 +117,18 @@ class AgentCoordinator:
     @property
     def operator_paused(self) -> bool:
         return self._operator_paused
+
+    @property
+    def pause_reason(self) -> str | None:
+        """Why the scan is paused when the LLM provider caused it, else ``None``."""
+        return self._pause_reason
+
+    @property
+    def pause_detail(self) -> str | None:
+        return self._pause_detail
+
+    def is_provider_probe(self, agent_id: str) -> bool:
+        return self._probe_agent == agent_id
 
     @property
     def resume_epoch(self) -> int:
@@ -151,6 +167,34 @@ class AgentCoordinator:
         await self._maybe_snapshot()
         return True
 
+    async def pause_for_provider(self, agent_id: str, reason: str, detail: str) -> int:
+        """Pause the whole scan because the LLM provider account is out of budget.
+
+        ``agent_id`` parks now with its failed call still pending; every other
+        agent parks before its next call. Returns the ``resume_epoch`` to wait on.
+        """
+        async with self._lock:
+            first = self._pause_reason is None
+            self._budget_paused = True
+            self._operator_paused = True
+            self._pause_reason = reason
+            self._pause_detail = detail
+            if self._probe_agent == agent_id:
+                self._probe_agent = None
+            epoch = self._resume_epoch
+            if self.statuses.get(agent_id) == "running":
+                self._set_status_locked(agent_id, "budget_paused")
+        if first:
+            logger.warning("scan paused: the LLM provider rejected a call (%s): %s", reason, detail)
+        await self._maybe_snapshot()
+        return epoch
+
+    async def provider_call_succeeded(self, agent_id: str) -> None:
+        """A probe call went through: the provider is back, so resume the scan."""
+        if self._probe_agent == agent_id:
+            logger.info("LLM provider accepts calls again; resuming the scan")
+            await self.resume_budget()
+
     async def pause_budget(self) -> None:
         """Operator pause: every agent parks before its next LLM call.
 
@@ -176,6 +220,9 @@ class AgentCoordinator:
         async with self._lock:
             self._budget_paused = False
             self._operator_paused = False
+            self._pause_reason = None
+            self._pause_detail = None
+            self._probe_agent = None
             self._resume_epoch += 1
             woken = [aid for aid, status in self.statuses.items() if status == "budget_paused"]
             for aid in woken:
@@ -204,7 +251,25 @@ class AgentCoordinator:
                     break
                 wake = runtime.wake
                 wake.clear()
-            await wake.wait()
+                probe_after = (
+                    self.provider_probe_interval if self._pause_reason is not None else None
+                )
+            try:
+                await asyncio.wait_for(wake.wait(), timeout=probe_after)
+            except TimeoutError:
+                # Nobody resumed: one agent retries its call to see whether the
+                # provider accepts calls again, the rest stay parked.
+                async with self._lock:
+                    probe = self._probe_agent
+                    if self._pause_reason is None or (
+                        probe is not None and self.statuses.get(probe) == "running"
+                    ):
+                        continue
+                    if self.statuses.get(agent_id) != "budget_paused":
+                        return
+                    self._probe_agent = agent_id
+                    self._set_status_locked(agent_id, "running")
+                break
         logger.info("agent.status %s=running", agent_id)
         await self._maybe_snapshot()
 
@@ -449,6 +514,8 @@ class AgentCoordinator:
             and self._budget_policy != "pause"
         ):
             await self.resume_from_budget_pause(exclude=target_agent_id)
+        if from_user and self._pause_reason is not None:
+            await self.resume_budget()
         async with self._lock:
             if target_agent_id not in self.statuses:
                 logger.debug("agent.send dropped unknown target=%s", target_agent_id)
@@ -671,6 +738,8 @@ class AgentCoordinator:
                 "reserve_stopped": self._reserve_stopped,
                 "budget_paused": self._budget_paused,
                 "operator_paused": self._operator_paused,
+                "pause_reason": self._pause_reason,
+                "pause_detail": self._pause_detail,
             }
 
     async def restore(self, snap: dict[str, Any]) -> None:
@@ -694,6 +763,10 @@ class AgentCoordinator:
             self._reserve_stopped = bool(snap.get("reserve_stopped", False))
             self._budget_paused = bool(snap.get("budget_paused", False))
             self._operator_paused = bool(snap.get("operator_paused", False))
+            reason = snap.get("pause_reason")
+            self._pause_reason = reason if isinstance(reason, str) else None
+            detail = snap.get("pause_detail")
+            self._pause_detail = detail if isinstance(detail, str) else None
             for aid in self.statuses:
                 self.runtimes.setdefault(aid, AgentRuntime())
 

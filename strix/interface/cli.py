@@ -14,6 +14,7 @@ from rich.text import Text
 
 from strix.config import load_settings
 from strix.config.settings import DEFAULT_MAX_TURNS
+from strix.core.agents import AgentCoordinator
 from strix.core.runner import run_strix_scan
 from strix.report.state import ReportState, set_global_report_state
 from strix.runtime import session_manager
@@ -166,11 +167,28 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
     set_global_report_state(report_state)
 
     startup_phase: list[str] = ["Starting up"]
+    coordinator = AgentCoordinator()
 
     def create_live_status() -> Panel:
         status_text = Text()
-        status_text.append("Penetration test in progress", style="bold #22c55e")
-        status_text.append("\n\n")
+        if coordinator.pause_reason is not None:
+            status_text.append(
+                "Paused: the LLM provider account is out of quota or credits",
+                style="bold #f59e0b",
+            )
+            status_text.append("\n\n")
+            if coordinator.pause_detail:
+                status_text.append(coordinator.pause_detail[:300], style="dim")
+                status_text.append("\n\n")
+            status_text.append(
+                "Nothing is lost. Strix retries every few minutes and continues once the "
+                f"provider accepts calls again. To continue later: strix --resume {args.run_name}",
+                style="dim",
+            )
+            status_text.append("\n\n")
+        else:
+            status_text.append("Penetration test in progress", style="bold #22c55e")
+            status_text.append("\n\n")
 
         if not has_model_response(report_state):
             status_text.append(f"{startup_phase[0]}...", style="dim")
@@ -227,6 +245,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                     max_budget_usd=getattr(args, "max_budget_usd", None),
                     max_turns=getattr(args, "max_turns", DEFAULT_MAX_TURNS),
                     status_sink=_note_startup_phase,
+                    coordinator=coordinator,
                 )
             finally:
                 stop_updates.set()

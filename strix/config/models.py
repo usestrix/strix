@@ -45,6 +45,7 @@ from strix.config.tool_call_arguments import repair_input
 from strix.config.tool_call_ids import TurnCallIdRewriter, dedupe_input
 from strix.config.tool_call_limits import TurnToolCallLimiter
 from strix.llm import request_log
+from strix.llm.provider_errors import classify_provider_failure
 
 
 if TYPE_CHECKING:
@@ -73,10 +74,23 @@ def request_timeout_extra_args(timeout_s: float | None) -> dict[str, float] | No
     return {"timeout": timeout_s}
 
 
+def _unless_out_of_quota(policy: Any) -> Any:
+    """Skip retries for an exhausted provider account; the scan pauses on those instead."""
+
+    def decide(context: RetryPolicyContext) -> Any:
+        if classify_provider_failure(context.error) is not None:
+            return False
+        return policy(context)
+
+    return decide
+
+
 def _retry_statusless_provider_errors(context: RetryPolicyContext) -> bool:
     """Retry statusless provider errors (e.g. mid-stream quota/billing), but not aborts."""
     normalized = context.normalized
     if normalized.is_abort:
+        return False
+    if classify_provider_failure(context.error) is not None:
         return False
     if codex.is_content_guardrail_error(context.error):
         return False
@@ -692,11 +706,13 @@ DEFAULT_MODEL_RETRY = ModelRetrySettings(
         multiplier=2.0,
         jitter=False,
     ),
-    policy=retry_policies.any(
-        retry_policies.provider_suggested(),
-        retry_policies.network_error(),
-        retry_policies.http_status((429, 500, 502, 503, 504)),
-        _retry_statusless_provider_errors,
+    policy=_unless_out_of_quota(
+        retry_policies.any(
+            retry_policies.provider_suggested(),
+            retry_policies.network_error(),
+            retry_policies.http_status((429, 500, 502, 503, 504)),
+            _retry_statusless_provider_errors,
+        )
     ),
 )
 

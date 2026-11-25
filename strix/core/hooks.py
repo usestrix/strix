@@ -240,6 +240,8 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
     def _pause_if_operator_paused(self, context: RunContextWrapper[dict[str, Any]]) -> None:
         coordinator = coordinator_from_context(context.context)
         if coordinator is not None and coordinator.operator_paused:
+            if coordinator.is_provider_probe(str(context.context.get("agent_id"))):
+                return
             raise BudgetPausedError(
                 "scan paused; waiting for the operator to resume",
                 resume_epoch=coordinator.resume_epoch,
@@ -413,6 +415,9 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         agent: Agent[dict[str, Any]],
         response: ModelResponse,
     ) -> None:
+        coordinator = coordinator_from_context(context.context)
+        if coordinator is not None and coordinator.pause_reason is not None:
+            await coordinator.provider_call_succeeded(str(context.context.get("agent_id")))
         report_state = get_global_report_state()
         if report_state is None:
             return
