@@ -302,9 +302,8 @@ class AgentCoordinator:
                     break
                 wake = runtime.wake
                 wake.clear()
-                probe_after = (
-                    self.provider_probe_interval if self._pause_reason is not None else None
-                )
+                probing = self._pause_reason is not None and not self._operator_hold
+                probe_after = self.provider_probe_interval if probing else None
             try:
                 await asyncio.wait_for(wake.wait(), timeout=probe_after)
             except TimeoutError:
@@ -312,8 +311,10 @@ class AgentCoordinator:
                 # provider accepts calls again, the rest stay parked.
                 async with self._lock:
                     probe = self._probe_agent
-                    if self._pause_reason is None or (
-                        probe is not None and self.statuses.get(probe) == "running"
+                    if (
+                        self._pause_reason is None
+                        or self._operator_hold
+                        or (probe is not None and self.statuses.get(probe) == "running")
                     ):
                         continue
                     if self.statuses.get(agent_id) != "budget_paused":

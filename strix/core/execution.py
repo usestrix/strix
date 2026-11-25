@@ -194,6 +194,14 @@ def _is_transient_model_error(exc: BaseException) -> bool:
     return isinstance(exc, APIError)
 
 
+def _is_passing_provider_error(exc: BaseException) -> bool:
+    """An error that says nothing about the request itself: the network, a throttle, a 5xx."""
+    code = _model_error_status_code(exc)
+    if code is not None:
+        return code in (408, 409, 429) or code >= 500
+    return _is_transient_model_error(exc)
+
+
 def _transient_model_retry_delay(attempt: int) -> float:
     delay = _TRANSIENT_MODEL_RETRY_BASE_DELAY_S * float(2 ** (attempt - 1))
     return min(delay, _TRANSIENT_MODEL_RETRY_MAX_DELAY_S)
@@ -906,7 +914,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     operator_pause=True,
                 ) from exc
             if (
-                _is_transient_model_error(exc)
+                _is_passing_provider_error(exc)
                 and (parked_epoch := await coordinator.repark_provider_probe(agent_id)) is not None
             ):
                 # The recovery check hit a passing provider error: the scan stays

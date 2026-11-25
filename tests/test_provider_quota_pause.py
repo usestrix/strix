@@ -232,9 +232,8 @@ async def test_provider_recovery_keeps_an_operator_pause() -> None:
     coordinator = await _coordinator("root", "child")
     coordinator.provider_probe_interval = 0.02
     epoch = await coordinator.pause_for_provider("child", "provider_quota", "out of credits")
-    await coordinator.pause_budget()
-
     await asyncio.wait_for(coordinator.wait_for_budget_resume("child", parked_epoch=epoch), 1)
+    await coordinator.pause_budget()
     await coordinator.provider_call_succeeded("child")
     assert coordinator.pause_reason is None
     assert coordinator.operator_paused
@@ -250,7 +249,15 @@ async def test_provider_recovery_keeps_an_operator_pause() -> None:
     assert coordinator.operator_paused
     assert coordinator.statuses["child"] == "budget_paused"
 
+    # No agent checks the provider while the operator holds the scan.
+    await coordinator.pause_for_provider("child", "provider_quota", "out of credits")
+    waiter = asyncio.create_task(coordinator.wait_for_budget_resume("child", parked_epoch=epoch))
+    await asyncio.sleep(0.1)
+    assert not waiter.done()
+    assert not coordinator.is_provider_probe("child")
+
     assert await coordinator.resume_budget() == ["child"]
+    await asyncio.wait_for(waiter, 1)
     assert not coordinator.operator_paused
 
 
