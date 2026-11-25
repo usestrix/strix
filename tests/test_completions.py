@@ -27,6 +27,10 @@ def test_cloud_leaf_flag_candidates_come_from_command_spec() -> None:
     settings_flags = completion_candidates(["cloud", "pr-reviews", "settings", "update", "--"])
     assert "--posted-severities" in settings_flags
     assert "--blocking-severities" in settings_flags
+    assert "retest-bulk" in completion_candidates(["cloud", "vulns", "retest-"])
+    retest_flags = completion_candidates(["cloud", "vulns", "retest-bulk", "--"])
+    assert "--vulnerability-ids" in retest_flags
+    assert "--wait" not in retest_flags
     candidates = completion_candidates(["cloud", "scans", "start", "--"])
     assert "--domain-ids" in candidates
     assert "--json" in candidates
