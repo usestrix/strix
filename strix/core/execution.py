@@ -311,6 +311,8 @@ async def _run_agent_loop(
         await coordinator.send(agent_id, _reserve_notice(coordinator.root_finish_tool))
 
     if not (start_parked and interactive):
+        # A restored agent may hold messages queued while it was parked.
+        await coordinator.consume_pending(agent_id)
         with contextlib.suppress(BudgetPausedError):
             result = await _run_until_lifecycle(
                 agent,

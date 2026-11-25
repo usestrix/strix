@@ -297,3 +297,49 @@ async def test_restarting_a_quota_paused_scan_puts_parked_agents_back_to_work() 
     assert not restored.budget_paused
     assert restored.pause_reason is None
     assert not await restored.clear_restored_provider_pause()
+
+
+async def test_restarted_agent_reads_messages_queued_while_it_was_parked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parked = AgentCoordinator()
+    await parked.register("root", "root", None)
+    await parked.register("child", "child", "root")
+    await parked.pause_for_provider("child", "provider_quota", "out of credits")
+    await parked.send("child", {"from": "root", "content": "also check /admin"})
+
+    coordinator = AgentCoordinator()
+    await coordinator.restore(await parked.snapshot())
+    await coordinator.clear_restored_provider_pause()
+
+    state: dict[str, Any] = {"broke": False, "attempts": []}
+    hooks = ReportUsageHooks(model="test-model", max_budget_usd=None, budget_policy="stop")
+
+    class _Runner:
+        @staticmethod
+        def run_streamed(*_args: Any, context: dict[str, Any], **_kwargs: Any) -> _QuotaStream:
+            return _QuotaStream(state, hooks, context, coordinator)
+
+    monkeypatch.setattr(execution, "Runner", _Runner)
+    monkeypatch.setattr(execution, "_compact_session", _noop_compact)
+    monkeypatch.setattr("strix.core.hooks.get_global_report_state", lambda: None)
+
+    session = open_agent_session("child", tmp_path / "agents.sqlite")
+    await asyncio.wait_for(
+        run_agent_loop(
+            agent=MagicMock(),
+            initial_input=[],
+            run_config=MagicMock(),
+            context={"agent_id": "child", "parent_id": "root", "coordinator": coordinator},
+            max_turns=50,
+            coordinator=coordinator,
+            agent_id="child",
+            interactive=False,
+            session=session,
+            hooks=hooks,
+        ),
+        5,
+    )
+
+    assert "also check /admin" in str(await session.get_items())
+    assert coordinator.statuses["child"] == "completed"
