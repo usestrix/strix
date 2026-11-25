@@ -905,11 +905,12 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     resume_epoch=epoch,
                     operator_pause=True,
                 ) from exc
-            if (isinstance(exc, APIError) or _is_transient_model_error(exc)) and (
-                parked_epoch := await coordinator.repark_provider_probe(agent_id)
-            ) is not None:
-                # The recovery check hit an unrelated provider error: the scan
-                # stays paused and a later check tries again.
+            if (
+                _is_transient_model_error(exc)
+                and (parked_epoch := await coordinator.repark_provider_probe(agent_id)) is not None
+            ):
+                # The recovery check hit a passing provider error: the scan stays
+                # paused and a later check tries again. A rejected key still fails.
                 raise BudgetPausedError(
                     "scan paused; the LLM provider account is out of quota or credits",
                     resume_epoch=parked_epoch,
