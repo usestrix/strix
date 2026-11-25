@@ -169,12 +169,14 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
     startup_phase: list[str] = ["Starting up"]
     coordinator = AgentCoordinator()
     max_budget = getattr(args, "max_budget_usd", None)
-    resume_command = f"strix --resume {args.run_name}" + (
-        f" --max-budget {max_budget:g}" if max_budget else ""
+    resume_command = (
+        ("strix -n" if getattr(args, "non_interactive", False) else "strix")
+        + f" --resume {args.run_name}"
+        + (f" --max-budget {max_budget:g}" if max_budget else "")
     )
     pause_notice = (
         "Nothing is lost. Restore the quota, then stop this run (Ctrl+C) and continue "
-        f"it with: {resume_command}"
+        f"it with: {resume_command} (plus any MCP or skills options this run started with)"
     )
 
     def create_live_status() -> Panel:
