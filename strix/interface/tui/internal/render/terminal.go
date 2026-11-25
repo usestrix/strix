@@ -83,6 +83,10 @@ func cleanShellOutput(output string) string {
 }
 
 func truncateShellLine(line string) string {
+	// The reason an action was blocked is read in full to understand the decision.
+	if strings.HasPrefix(line, "Blocked by action approvals") {
+		return line
+	}
 	if len(line) > maxLineLength {
 		return line[:maxLineLength-3] + "..."
 	}

@@ -3,6 +3,7 @@
 import { memo } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { AgentNode as AgentNodeData } from "@/types/events";
+import { AgentApprovalStatus } from "./ActionApprovals";
 
 const STATUS_STYLES: Record<string, string> = {
   running: "bg-blue-500",
@@ -39,6 +40,8 @@ function AgentNodeComponent({ data, selected }: NodeProps) {
           {agent.name}
         </span>
       </div>
+
+      <AgentApprovalStatus agentId={agent.id} />
 
       <Handle type="source" position={Position.Bottom} isConnectable={false} className={`!w-1.5 !h-1.5 !border-0 ${agent.children && agent.children.length > 0 ? "!bg-[#444]" : "!bg-transparent"}`} />
     </div>

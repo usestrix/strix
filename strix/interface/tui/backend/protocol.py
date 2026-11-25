@@ -11,6 +11,7 @@ PROTOCOL_CAPABILITIES = (
     "collection-deltas",
     "structured-command-errors",
     "agents-collection",
+    "action-approvals",
 )
 
 # Commands and control messages are intentionally small. Event and finding
