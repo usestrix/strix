@@ -48,6 +48,13 @@ def _status_error(cls: type[APIStatusError], status: int, body: dict[str, Any]) 
         ),
         _status_error(APIStatusError, 400, {"message": "x", "code": "billing_hard_limit_reached"}),
         RuntimeError("stream ended: insufficient credits"),
+        _status_error(RateLimitError, 429, {"message": "Insufficient balance, please recharge"}),
+        _status_error(
+            APIStatusError,
+            403,
+            {"message": "x", "metadata": {"error_type": "insufficient_credits"}},
+        ),
+        RuntimeError('mid-stream error: {"error": {"type": "billing_error", "message": "x"}}'),
     ],
 )
 def test_out_of_budget_errors_are_classified(exc: BaseException) -> None:
@@ -58,6 +65,26 @@ def test_out_of_budget_errors_are_classified(exc: BaseException) -> None:
     "exc",
     [
         _status_error(RateLimitError, 429, {"message": "Rate limit reached for requests"}),
+        # Gemini's per-minute throttle talks about quota but is a rate limit.
+        _status_error(
+            RateLimitError,
+            429,
+            {
+                "message": "You exceeded your current quota, please check your plan and billing"
+                " details. Please retry in 31s.",
+                "status": "RESOURCE_EXHAUSTED",
+            },
+        ),
+        # Cerebras's per-minute token throttle.
+        _status_error(
+            RateLimitError, 429, {"message": "Tokens per minute", "code": "token_quota_exceeded"}
+        ),
+        _status_error(RateLimitError, 429, {"message": "Rate limit exhausted, slow down"}),
+        # Account wording outside a 429 is not evidence: a 400 quoting the prompt can say anything.
+        _status_error(
+            APIStatusError, 400, {"message": "Invalid input: 'usage limit' is not valid"}
+        ),
+        _status_error(APIStatusError, 500, {"message": "quota exceeded while proxying"}),
         _status_error(APIStatusError, 401, {"message": "Incorrect API key provided"}),
         _status_error(APIStatusError, 500, {"message": "The server had an error"}),
         TimeoutError("timed out"),
