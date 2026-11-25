@@ -57,7 +57,7 @@ _ACTION_APPROVALS = P(
     "json",
     help="Pentest-only approval checks as a JSON object: enabled (default false), mode auto or ask "
     "(default ask), timeout_seconds above 0 (default 300), on_timeout block or allow "
-    "(default block). Supply-chain scans reject enabled: true.",
+    "(default block). Supply-chain scans and schedules reject enabled: true.",
 )
 
 _APPROVAL_DECISION_HELP = (
@@ -579,7 +579,7 @@ SPEC: dict[str, dict[str, Cmd]] = {
             "POST",
             "/schedules",
             "Create a scan schedule. Use --data for every scans start field, "
-            "including action_approvals. Schedules reject action_approvals with enabled: true.",
+            "including action_approvals.",
             idempotent=True,
         ),
         "get": Cmd("GET", "/schedules/{scheduleId}", "Get one schedule."),
@@ -913,8 +913,7 @@ SPEC: dict[str, dict[str, Cmd]] = {
         "settings get": Cmd(
             "GET",
             "/integrations/{provider}/settings",
-            "Get settings for linear, jira or slack. Requires integrations:read. "
-            "Personal tokens must belong to an organization administrator.",
+            "Get settings for linear, jira or slack. Requires integrations:read.",
         ),
         "settings update": Cmd(
             "PATCH",
