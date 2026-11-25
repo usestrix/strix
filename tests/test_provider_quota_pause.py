@@ -65,6 +65,12 @@ def _status_error(cls: type[APIStatusError], status: int, body: dict[str, Any]) 
             RateLimitError, 429, {"message": "x", "type": "exceeded_current_quota_error"}
         ),
         _status_error(RateLimitError, 429, {"message": "plan limit", "code": "1308"}),
+        # A streaming route that embeds the body as the repr of its bytes.
+        RuntimeError(
+            'RateLimitError: b\'{\\n  "error": {\\n    "code": 429,\\n    "message": "Resource has '
+            'been exhausted.",\\n    "status": "RESOURCE_EXHAUSTED", "details": [{"violations":'
+            '[{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}]\\n  }\\n}\\n\''
+        ),
         _status_error(RateLimitError, 429, {"message": "Your project exceeded its spending cap."}),
         # Gemini's per-day quota: same message as its per-minute throttle, told apart by quotaId.
         _status_error(
@@ -109,6 +115,9 @@ def test_out_of_budget_errors_are_classified(exc: BaseException) -> None:
                 ],
             },
         ),
+        # Z.ai's fair-use restriction and wrong-product key.
+        _status_error(RateLimitError, 429, {"message": "restricted", "code": "1313"}),
+        _status_error(RateLimitError, 429, {"message": "wrong key type", "code": "1315"}),
         # Z.ai's throttle code.
         _status_error(RateLimitError, 429, {"message": "slow down", "code": "1302"}),
         # Cerebras's per-minute token throttle.

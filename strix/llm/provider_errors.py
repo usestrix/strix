@@ -38,9 +38,10 @@ _QUOTA_CODES = frozenset(
         "enforced_spend_limit_reached",
         # Moonshot sends an empty balance as a 429 with this type.
         "exceeded_current_quota_error",
-        # Z.ai balance and plan-limit codes; its throttle (1302) and overload (1305) are not here.
+        # Z.ai balance and plan-limit codes. Its throttle (1302), overload (1305), fair-use
+        # restriction (1313) and wrong-product key (1315) are not: topping up fixes none of them.
         "1113",
-        *(str(code) for code in (1308, 1309, 1310, 1311, *range(1313, 1322))),
+        *(str(code) for code in (1308, 1309, 1310, 1311, 1314, *range(1316, 1322))),
         "creditlimitexceeded",
         "payment_required",
     }
@@ -73,15 +74,19 @@ def _record(value: Any) -> dict[str, Any]:
 
 
 def _parsed(raw: Any) -> dict[str, Any]:
-    if isinstance(raw, str):
-        start = raw.find("{")
-        if start < 0:
-            return {}
+    if not isinstance(raw, str):
+        return _record(raw)
+    start = raw.find("{")
+    if start < 0:
+        return {}
+    # Some routes embed the body as the repr of its bytes, so newlines arrive escaped
+    # and a quote trails the object.
+    for text in (raw[start:], raw[start:].replace("\\n", "\n")):
         try:
-            raw = json.loads(raw[start:])
+            return _record(json.JSONDecoder().raw_decode(text)[0])
         except ValueError:
-            return {}
-    return _record(raw)
+            continue
+    return {}
 
 
 def _daily_quota(raw: Any) -> bool:
