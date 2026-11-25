@@ -189,6 +189,73 @@ def test_placeholder_substitution_percent_encodes_path_segments(
     assert seen["path"] == "/knowledge/repos/usestrix%2F.github/entries"
 
 
+def test_batch_vulnerability_help() -> None:
+    cmd = SPEC["vulns"]["get-batch"]
+    assert [(p.name, p.kind, p.required) for p in cmd.query] == [("ids", "list", True)]
+    help_text = " ".join(runner._build_parser("vulns", "get-batch", cmd).format_help().split())
+    for text in (
+        "--ids",
+        "up to 100",
+        "order of ids",
+        "not_found",
+        "Duplicate IDs",
+        "vulnerabilities:read",
+        "dependencies:read",
+        "containers:read",
+    ):
+        assert text in help_text
+    for scope in ("dependencies:read", "containers:read"):
+        assert scope in SPEC["vulns"]["get"].help
+
+
+@pytest.mark.parametrize("ids", [["a", "b"], [str(i) for i in range(101)]])
+def test_batch_vulnerability_query(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any, ids: list[str]
+) -> None:
+    seen: dict[str, Any] = {}
+    payload = {"data": [], "not_found": ids}
+
+    def fake_request(method: str, url: str, **kwargs: Any) -> FakeResponse:
+        prepared = requests.Request(method, url, params=kwargs["params"]).prepare()
+        seen.update(method=method, url=prepared.url)
+        return FakeResponse(payload=payload)
+
+    monkeypatch.setattr(requests, "request", fake_request)
+    assert cloud.run_cloud(["vulns", "get-batch", "--ids", *ids, "--json"]) == 0
+    assert seen["method"] == "GET"
+    assert urllib.parse.urlsplit(seen["url"]).path.endswith("/vulnerabilities/batch")
+    assert urllib.parse.parse_qsl(urllib.parse.urlsplit(seen["url"]).query) == [
+        ("ids", value) for value in ids
+    ]
+    assert json.loads(capsys.readouterr().out) == payload
+
+
+@pytest.mark.parametrize("flags", [[], ["--ids"]])
+def test_batch_vulnerability_missing_ids(monkeypatch: pytest.MonkeyPatch, flags: list[str]) -> None:
+    def unexpected_request(*_a: Any, **_k: Any) -> FakeResponse:
+        pytest.fail("Missing IDs must not send a request.")
+
+    monkeypatch.setattr(http, "request", unexpected_request)
+    assert cloud.run_cloud(["vulns", "get-batch", *flags]) == 2
+
+
+@pytest.mark.parametrize("findings", [[], [{"id": "a", "title": "Batch finding"}]])
+def test_batch_vulnerability_human_output(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any, findings: list[dict[str, str]]
+) -> None:
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(
+        http,
+        "request",
+        lambda *_a, **_k: FakeResponse(payload={"data": findings, "not_found": ["missing-id"]}),
+    )
+    assert cloud.run_cloud(["vulns", "get-batch", "--ids", "a", "missing-id"]) == 0
+    output = capsys.readouterr().out
+    assert "missing-id" in output
+    if findings:
+        assert "Batch finding" in output
+
+
 def test_bulk_retest_help_and_parameters() -> None:
     cmd = SPEC["vulns"]["retest-bulk"]
     assert [(p.name, p.kind, p.required) for p in cmd.body] == [
