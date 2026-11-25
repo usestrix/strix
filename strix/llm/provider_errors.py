@@ -30,6 +30,17 @@ _QUOTA_CODES = frozenset(
         "billing_hard_limit_reached",
         "billing_not_active",
         "credit_balance_too_low",
+        "credit_balance_exhausted",
+        "organization_spend_limit_exceeded",
+        "project_spend_limit_exceeded",
+        "organization_usage_limit_exceeded",
+        # Anthropic's monthly tier spend cap, sent as a ``rate_limit_error``.
+        "enforced_spend_limit_reached",
+        # Moonshot sends an empty balance as a 429 with this type.
+        "exceeded_current_quota_error",
+        # Z.ai balance and plan-limit codes; its throttle (1302) and overload (1305) are not here.
+        "1113",
+        *(str(code) for code in (1308, 1309, 1310, 1311, *range(1313, 1322))),
         "creditlimitexceeded",
         "payment_required",
     }
@@ -44,6 +55,7 @@ _QUOTA_TEXT = re.compile(
     r"|usage limit"
     r"|(?<!rate)(?<!rate[-_\s])limit exhausted"
     r"|out of credits"
+    r"|\bspend(?:ing)? cap\b"
     r"|package has expired"
     r"|plan does not yet include",
     re.IGNORECASE,
@@ -60,23 +72,44 @@ def _record(value: Any) -> dict[str, Any]:
     return cast("dict[str, Any]", value) if isinstance(value, dict) else {}
 
 
-def _body_codes(raw: Any) -> list[str]:
-    """Error codes a provider error body carries, wherever the provider puts them."""
+def _parsed(raw: Any) -> dict[str, Any]:
     if isinstance(raw, str):
         start = raw.find("{")
         if start < 0:
-            return []
+            return {}
         try:
             raw = json.loads(raw[start:])
         except ValueError:
-            return []
-    body = _record(raw)
+            return {}
+    return _record(raw)
+
+
+def _daily_quota(raw: Any) -> bool:
+    """Whether a Google error body names a per-day quota, which no wait within the scan restores.
+
+    Gemini sends ``RESOURCE_EXHAUSTED`` with the same message for per-minute and
+    per-day limits; only the ``google.rpc.QuotaFailure`` violations tell them apart.
+    """
+    details = _record(_parsed(raw).get("error")).get("details")
+    for detail in details if isinstance(details, list) else []:
+        violations = _record(detail).get("violations")
+        for violation in violations if isinstance(violations, list) else []:
+            quota_id = _record(violation).get("quotaId")
+            if isinstance(quota_id, str) and ("PerDay" in quota_id or "Daily" in quota_id):
+                return True
+    return False
+
+
+def _body_codes(raw: Any) -> list[str]:
+    """Error codes a provider error body carries, wherever the provider puts them."""
+    body = _parsed(raw)
     if not body:
         return []
     error = _record(body.get("error"))
     response = _record(body.get("response"))
     details = error.get("details")
     return _strings(
+        *(str(code) for code in (body.get("code"), error.get("code")) if isinstance(code, int)),
         body.get("code"),
         body.get("type"),
         body.get("error_type"),
@@ -96,6 +129,7 @@ def _body_codes(raw: Any) -> list[str]:
 def classify_provider_failure(exc: BaseException) -> ProviderFailure | None:
     """Return ``"provider_quota"`` when ``exc`` says the provider account is out of budget."""
     status: int | None = None
+    daily_quota = False
     codes: set[str] = set()
     texts: list[str] = []
     seen: set[int] = set()
@@ -107,6 +141,8 @@ def classify_provider_failure(exc: BaseException) -> ProviderFailure | None:
             status = found
         text = str(current)
         texts.append(text)
+        daily_quota = daily_quota or _daily_quota(getattr(current, "body", None))
+        daily_quota = daily_quota or _daily_quota(text)
         for code in (
             *_strings(getattr(current, "code", None), getattr(current, "type", None)),
             *_body_codes(getattr(current, "body", None)),
@@ -115,7 +151,7 @@ def classify_provider_failure(exc: BaseException) -> ProviderFailure | None:
             codes.add(code.lower())
         current = current.__cause__ or current.__context__
 
-    if status == 402 or codes & _QUOTA_CODES:
+    if status == 402 or daily_quota or codes & _QUOTA_CODES:
         return "provider_quota"
     text = "\n".join(texts)
     if status in (None, 429) and _QUOTA_TEXT.search(text):

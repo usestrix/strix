@@ -55,6 +55,29 @@ def _status_error(cls: type[APIStatusError], status: int, body: dict[str, Any]) 
             {"message": "x", "metadata": {"error_type": "insufficient_credits"}},
         ),
         RuntimeError('mid-stream error: {"error": {"type": "billing_error", "message": "x"}}'),
+        _status_error(
+            RateLimitError, 429, {"message": "x", "code": "project_spend_limit_exceeded"}
+        ),
+        _status_error(
+            RateLimitError, 429, {"message": "x", "type": "enforced_spend_limit_reached"}
+        ),
+        _status_error(
+            RateLimitError, 429, {"message": "x", "type": "exceeded_current_quota_error"}
+        ),
+        _status_error(RateLimitError, 429, {"message": "plan limit", "code": "1308"}),
+        _status_error(RateLimitError, 429, {"message": "Your project exceeded its spending cap."}),
+        # Gemini's per-day quota: same message as its per-minute throttle, told apart by quotaId.
+        _status_error(
+            RateLimitError,
+            429,
+            {
+                "message": "You exceeded your current quota.",
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [
+                    {"violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel"}]}
+                ],
+            },
+        ),
     ],
 )
 def test_out_of_budget_errors_are_classified(exc: BaseException) -> None:
@@ -75,6 +98,19 @@ def test_out_of_budget_errors_are_classified(exc: BaseException) -> None:
                 "status": "RESOURCE_EXHAUSTED",
             },
         ),
+        _status_error(
+            RateLimitError,
+            429,
+            {
+                "message": "You exceeded your current quota.",
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [
+                    {"violations": [{"quotaId": "GenerateRequestsPerMinutePerProjectPerModel"}]}
+                ],
+            },
+        ),
+        # Z.ai's throttle code.
+        _status_error(RateLimitError, 429, {"message": "slow down", "code": "1302"}),
         # Cerebras's per-minute token throttle.
         _status_error(
             RateLimitError, 429, {"message": "Tokens per minute", "code": "token_quota_exceeded"}
