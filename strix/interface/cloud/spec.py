@@ -310,6 +310,27 @@ SPEC: dict[str, dict[str, Cmd]] = {
             body=(P("upload_ids", "list", help="Upload IDs with updated code."),),
             wait_path="/scans/{id}",
         ),
+        "retest-bulk": Cmd(
+            "POST",
+            "/vulnerabilities/retest",
+            "Retest selected findings across scans. Requires scans:write. "
+            "Strix groups findings by source scan and starts a retest batch for each scan. "
+            "Each batch includes only the selected findings. "
+            "Strix skips findings without a source scan, container image findings, "
+            "findings outside the token scope, and ignored or unused findings. "
+            "Strix also skips findings with a retest already running or starting. "
+            "Use vulns retest for container image findings. "
+            "Read each batch with strix cloud scans retests SCAN_ID. "
+            "This command does not support --wait.",
+            body=(
+                P(
+                    "vulnerability_ids",
+                    "list",
+                    required=True,
+                    help="Finding IDs to retest. Supply at least one non-empty ID.",
+                ),
+            ),
+        ),
         "fix-pr": Cmd(
             "POST",
             "/vulnerabilities/{vulnerabilityId}/create-fix-pr",
