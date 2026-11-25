@@ -172,7 +172,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
     resume_command = (
         ("strix -n" if getattr(args, "non_interactive", False) else "strix")
         + f" --resume {args.run_name}"
-        + (f" --max-budget {max_budget:g}" if max_budget else "")
+        + (f" --max-budget {max_budget!r}" if max_budget else "")
     )
     pause_notice = (
         "Nothing is lost. Restore the quota, then stop this run (Ctrl+C) and continue "
