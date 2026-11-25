@@ -1535,7 +1535,7 @@ def _nested_summary(value: dict[str, Any] | list[Any]) -> str:
         severity = record.get("severity")
         status = record.get("status") or record.get("state")
         prefix = " / ".join(_cell(part) for part in (severity, status) if part)
-        summary = str(label or record.get("id") or "")
+        summary = _cell(label or record.get("id") or "")
         if not summary:
             scalar_items = [
                 (key, item)
@@ -1549,7 +1549,7 @@ def _nested_summary(value: dict[str, Any] | list[Any]) -> str:
                 )
                 or "record"
             )
-        lines.append(f"- {prefix + ': ' if prefix else ''}{_cell(summary)}")
+        lines.append(f"- {prefix + ': ' if prefix else ''}{summary}")
     if len(value) > len(records[:_MAX_NESTED_PREVIEW]):
         lines.append(f"… {len(value) - len(records[:_MAX_NESTED_PREVIEW])} more; use --json")
     return "\n".join(lines)

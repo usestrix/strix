@@ -259,6 +259,8 @@ def test_bulk_retest_request_and_response(
 def test_bulk_retest_human_response_shows_batch_ids(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
+    scan_id = "9b8deaf2-e32c-4f4c-bbca-7fb7ab949105"
+    batch_id = "71925763-d10c-4b8c-b0ad-c75c45ab8855"
     monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
         http,
@@ -270,15 +272,15 @@ def test_bulk_retest_human_response_shows_batch_ids(
                 "total": 2,
                 "skipped_running": 0,
                 "skipped_ineligible": 0,
-                "batches": [{"scan_id": "scan-1", "batch_id": "batch-1", "accepted": 2}],
+                "batches": [{"scan_id": scan_id, "batch_id": batch_id, "accepted": 2}],
             },
         ),
     )
 
     assert cloud.run_cloud(["vulns", "retest-bulk", "--vulnerability-ids", "finding-1"]) == 0
     output = capsys.readouterr().out
-    assert "scan-1" in output
-    assert "batch-1" in output
+    assert scan_id in output
+    assert batch_id in output
 
 
 @pytest.mark.parametrize(
