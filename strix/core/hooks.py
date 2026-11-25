@@ -257,7 +257,11 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         """
         coordinator = coordinator_from_context(context.context)
         epoch = coordinator.resume_epoch if coordinator is not None else 0
-        if coordinator is not None and coordinator.budget_paused:
+        if (
+            coordinator is not None
+            and coordinator.budget_paused
+            and not coordinator.is_provider_probe(str(context.context.get("agent_id")))
+        ):
             raise BudgetPausedError(
                 "scan paused; waiting for the operator to resume", resume_epoch=epoch
             )

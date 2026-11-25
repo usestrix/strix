@@ -392,6 +392,7 @@ async def run_strix_scan(
                 f"Cannot resume scan {scan_id}: missing SDK session database at {agents_db}",
             )
         await coordinator.restore(snap)
+        await coordinator.clear_restored_provider_pause()
         report_state = get_global_report_state()
         if report_state is not None:
             budget_stopped, reserve_stopped = recomputed_budget_flags(

@@ -11,7 +11,7 @@ import pytest
 from openai import APIStatusError, RateLimitError
 
 from strix.core import execution
-from strix.core.agents import AgentCoordinator
+from strix.core.agents import AgentCoordinator, BudgetPolicy
 from strix.core.execution import run_agent_loop
 from strix.core.hooks import BudgetPausedError, ReportUsageHooks
 from strix.core.sessions import open_agent_session
@@ -215,14 +215,20 @@ async def _until(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
     await asyncio.wait_for(poll(), timeout)
 
 
-@pytest.mark.parametrize("probe_interval", [None, 0.05])
+@pytest.mark.parametrize(
+    ("probe_interval", "budget_policy"),
+    [(None, "stop"), (0.05, "stop"), (0.05, "pause")],
+)
 async def test_scan_pauses_on_quota_and_finishes_after_it_is_restored(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, probe_interval: float | None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    probe_interval: float | None,
+    budget_policy: BudgetPolicy,
 ) -> None:
     state: dict[str, Any] = {"broke": True, "attempts": []}
     coordinator = AgentCoordinator()
     coordinator.provider_probe_interval = probe_interval
-    hooks = ReportUsageHooks(model="test-model", max_budget_usd=None, budget_policy="stop")
+    hooks = ReportUsageHooks(model="test-model", max_budget_usd=None, budget_policy=budget_policy)
 
     class _Runner:
         @staticmethod
@@ -274,3 +280,20 @@ async def test_scan_pauses_on_quota_and_finishes_after_it_is_restored(
     await asyncio.wait_for(asyncio.gather(*tasks), 5)
     assert coordinator.statuses == {"root": "completed", "child": "completed"}
     assert coordinator.pause_reason is None
+
+
+async def test_restarting_a_quota_paused_scan_puts_parked_agents_back_to_work() -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "root", None)
+    await coordinator.register("child", "child", "root")
+    await coordinator.pause_for_provider("child", "provider_quota", "out of credits")
+
+    restored = AgentCoordinator()
+    await restored.restore(await coordinator.snapshot())
+    assert await restored.clear_restored_provider_pause()
+
+    assert restored.statuses == {"root": "running", "child": "running"}
+    assert not restored.operator_paused
+    assert not restored.budget_paused
+    assert restored.pause_reason is None
+    assert not await restored.clear_restored_provider_pause()

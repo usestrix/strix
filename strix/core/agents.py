@@ -195,6 +195,22 @@ class AgentCoordinator:
             logger.info("LLM provider accepts calls again; resuming the scan")
             await self.resume_budget()
 
+    async def clear_restored_provider_pause(self) -> bool:
+        """Starting a restored scan is the resume: parked agents go back to their calls."""
+        async with self._lock:
+            if self._pause_reason is None:
+                return False
+            self._budget_paused = False
+            self._operator_paused = False
+            self._pause_reason = None
+            self._pause_detail = None
+            self._probe_agent = None
+            for aid, status in self.statuses.items():
+                if status == "budget_paused":
+                    self.statuses[aid] = "running"
+        await self._maybe_snapshot()
+        return True
+
     async def pause_budget(self) -> None:
         """Operator pause: every agent parks before its next LLM call.
 
