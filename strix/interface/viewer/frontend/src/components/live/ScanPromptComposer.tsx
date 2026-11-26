@@ -132,6 +132,8 @@ export function ScanPromptComposer({
       track("agent_steered");
     } else if (res.error === "not_delivered") {
       setFeedback("Could not reach that agent (it may have finished).");
+    } else if (res.error === "delivery_unknown") {
+      setFeedback("Delivery timed out while in flight; check the transcript before resending.");
     } else {
       setFeedback("Could not send that message. Try again.");
     }
