@@ -176,6 +176,30 @@ def test_cli_runs_dir_rejects_empty_value(
     assert "--runs-dir must not be empty" in capsys.readouterr().err
 
 
+def test_cli_rejects_env_and_config_runs_dir_that_is_a_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    file_path = tmp_path / "not-a-dir"
+    file_path.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["strix", "-t", "https://example.com", "-n"])
+
+    monkeypatch.setenv(RUNS_DIR_ENV, str(file_path))
+    with pytest.raises(SystemExit) as exc:
+        cli_main.parse_arguments()
+    assert exc.value.code == 2
+    assert "runs directory is not a directory" in capsys.readouterr().err
+
+    monkeypatch.delenv(RUNS_DIR_ENV)
+    config_path = tmp_path / "cli-config.json"
+    config_path.write_text(json.dumps({"env": {RUNS_DIR_ENV: str(file_path)}}), encoding="utf-8")
+    loader.apply_config_override(config_path)
+    with pytest.raises(SystemExit) as exc:
+        cli_main.parse_arguments()
+    assert exc.value.code == 2
+    assert "runs directory is not a directory" in capsys.readouterr().err
+
+
 def test_cli_runs_dir_rejects_existing_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

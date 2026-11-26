@@ -16,6 +16,7 @@ from strix.core.paths import (
     run_dir_for,
     runs_dir_display,
     runtime_state_dir,
+    validate_effective_runs_dir,
     validate_runs_dir_arg,
 )
 from strix.interface.scan_setup import attach_workspace_mount, build_targets_info
@@ -372,6 +373,11 @@ Strix Cloud:
             os.environ[RUNS_DIR_ENV] = validate_runs_dir_arg(args.runs_dir)
         except ValueError as exc:
             parser.error(str(exc))
+
+    try:
+        validate_effective_runs_dir()
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if args.mcp_config:
         mcp_config_path = Path(args.mcp_config).expanduser()

@@ -18,6 +18,7 @@ from strix.core.paths import (
     run_record_path,
     runs_base_dir,
     runs_dir_display,
+    validate_effective_runs_dir,
     validate_runs_dir_arg,
 )
 from strix.interface.viewer.server import authorized_url, bundle_is_built, serve
@@ -80,6 +81,11 @@ def run_view(argv: list[str]) -> None:
             os.environ[RUNS_DIR_ENV] = validate_runs_dir_arg(args.runs_dir)
         except ValueError as exc:
             parser.error(str(exc))
+
+    try:
+        validate_effective_runs_dir()
+    except ValueError as exc:
+        parser.error(str(exc))
 
     console = Console()
 

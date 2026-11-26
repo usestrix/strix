@@ -81,6 +81,20 @@ def validate_runs_dir_arg(raw: str) -> str:
     return normalized
 
 
+def validate_effective_runs_dir(*, runs_dir: str | Path | None = None) -> None:
+    """Reject a configured runs directory that exists but is not a directory.
+
+    Applies to every source (``--runs-dir``, ``STRIX_RUNS_DIR``, ``cli-config.json``)
+    so a bad value fails at startup instead of later, when the run is created.
+    """
+    base = runs_base_dir(runs_dir=runs_dir)
+    if base.exists() and not base.is_dir():
+        raise ValueError(
+            f"runs directory is not a directory: {base} "
+            f"(set via --runs-dir, {RUNS_DIR_ENV} or cli-config.json)"
+        )
+
+
 def latest_run_dir(*, cwd: Path | None = None, runs_dir: str | Path | None = None) -> Path | None:
     base = runs_base_dir(cwd=cwd, runs_dir=runs_dir)
     if not base.is_dir():
