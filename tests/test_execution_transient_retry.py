@@ -121,7 +121,10 @@ class _FakeStream:
         reply = SimpleNamespace(
             type="raw_response_event", data=SimpleNamespace(type="response.completed")
         )
-        self._events: list[Any] = [reply] * replies
+        next_turn = SimpleNamespace(
+            type="raw_response_event", data=SimpleNamespace(type="response.created")
+        )
+        self._events: list[Any] = [reply, next_turn] * (replies // 2) + [reply] * (replies % 2)
         self.run_loop_exception: BaseException | None = None
 
     async def stream_events(self) -> Any:
@@ -198,12 +201,24 @@ async def test_a_turn_that_got_its_reply_starts_a_new_retry_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     failures = execution._MAX_TRANSIENT_MODEL_RETRIES + 3
-    streams = [_FakeStream(exc=_midstream_api_error(), replies=1) for _ in range(failures)]
+    streams = [_FakeStream(exc=_midstream_api_error(), replies=2) for _ in range(failures)]
     streams.append(_FakeStream())
     result, attempts, _coordinator = await _run_once(monkeypatch, streams)
 
     assert result is streams[-1]
     assert attempts == failures + 1
+
+
+@pytest.mark.asyncio
+async def test_a_failure_right_after_the_reply_still_uses_the_same_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streams = [
+        _FakeStream(exc=_midstream_api_error(), replies=1)
+        for _ in range(execution._MAX_TRANSIENT_MODEL_RETRIES + 1)
+    ]
+    with pytest.raises(APIError):
+        await _run_once(monkeypatch, streams)
 
 
 @pytest.mark.asyncio

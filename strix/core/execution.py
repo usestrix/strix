@@ -216,11 +216,11 @@ def _transient_model_retry_delay(attempt: int, exc: BaseException | None = None)
     return min(max(delay, _retry_after_seconds(exc)), _TRANSIENT_MODEL_RETRY_MAX_DELAY_S)
 
 
-def _is_completed_model_response(event: Any) -> bool:
-    data = getattr(event, "data", None)
-    return (
-        getattr(event, "type", None) == "raw_response_event"
-        and getattr(data, "type", None) == "response.completed"
+def _is_model_response_event(event: Any, *, completed: bool = False) -> bool:
+    if getattr(event, "type", None) != "raw_response_event":
+        return False
+    return not completed or getattr(getattr(event, "data", None), "type", None) == (
+        "response.completed"
     )
 
 
@@ -807,6 +807,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
     while True:
         stream: Any = None
         pre_run_items: list[Any] = []
+        replied = False
         try:
             await coordinator.mark_running(agent_id)
             if session is not None:
@@ -835,10 +836,15 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             try:
                 try:
                     async for event in stream.stream_events():
-                        if model_retries and _is_completed_model_response(event):
-                            # The budget is per turn: a turn that got its reply starts a new one.
-                            model_retries = 0
-                            request_log.set_retry_attempt(0)
+                        # The budget is per turn. A turn is over once the next one streams:
+                        # a failure between its reply and that point replays the same turn.
+                        if replied and _is_model_response_event(event):
+                            replied = False
+                            if model_retries:
+                                model_retries = 0
+                                request_log.set_retry_attempt(0)
+                        if _is_model_response_event(event, completed=True):
+                            replied = True
                         if event_sink is not None:
                             try:
                                 event_sink(agent_id, event)
