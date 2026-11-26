@@ -13,6 +13,7 @@ from dataclasses import replace
 from functools import cache
 from typing import TYPE_CHECKING, Any, cast
 
+import httpx
 from agents import ItemHelpers, MessageOutputItem, RunConfig, Runner
 from agents.exceptions import AgentsException, MaxTurnsExceeded, UserError
 from agents.sandbox.errors import ExecTransportError
@@ -164,7 +165,7 @@ def _with_image_scrub(run_config: RunConfig, context: dict[str, Any]) -> RunConf
     return replace(run_config, call_model_input_filter=_scrub)
 
 
-_MAX_TRANSIENT_MODEL_RETRIES = 5
+_MAX_TRANSIENT_MODEL_RETRIES = 8
 _TRANSIENT_MODEL_RETRY_BASE_DELAY_S = 2.0
 _TRANSIENT_MODEL_RETRY_MAX_DELAY_S = 90.0
 
@@ -184,7 +185,13 @@ def _is_transient_model_error(exc: BaseException) -> bool:
     if codex.is_content_guardrail_error(exc):
         return False
     if isinstance(
-        exc, APITimeoutError | APIConnectionError | TimeoutError | ConnectionError | OSError
+        exc,
+        APITimeoutError
+        | APIConnectionError
+        | TimeoutError
+        | ConnectionError
+        | OSError
+        | httpx.TransportError,
     ):
         return True
     code = _model_error_status_code(exc)

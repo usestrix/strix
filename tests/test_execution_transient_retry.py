@@ -67,6 +67,14 @@ def test_dns_and_connection_errors_are_transient() -> None:
     assert execution._is_transient_model_error(OSError("nodename nor servname provided")) is True
     assert execution._is_transient_model_error(ConnectionError("reset")) is True
     assert execution._is_transient_model_error(TimeoutError("timed out")) is True
+    assert execution._is_transient_model_error(httpx.ReadError("connection closed")) is True
+    assert execution._is_transient_model_error(httpx.RemoteProtocolError("disconnected")) is True
+
+
+def test_turn_gets_nine_attempts_with_capped_backoff() -> None:
+    assert execution._MAX_TRANSIENT_MODEL_RETRIES == 8
+    delays = [execution._transient_model_retry_delay(n) for n in range(1, 9)]
+    assert delays == [2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 90.0, 90.0]
 
 
 def test_content_guardrail_is_not_retried() -> None:

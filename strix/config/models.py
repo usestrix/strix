@@ -24,10 +24,7 @@ from agents.models.interface import Model, ModelProvider
 from agents.models.multi_provider import MultiProvider
 from agents.models.openai_responses import OpenAIResponsesModel
 from agents.retry import (
-    ModelRetryBackoffSettings,
     ModelRetrySettings,
-    RetryPolicyContext,
-    retry_policies,
 )
 from openai.types.responses import (
     Response,
@@ -71,16 +68,6 @@ def request_timeout_extra_args(timeout_s: float | None) -> dict[str, float] | No
     if not timeout_s or timeout_s <= 0:
         return None
     return {"timeout": timeout_s}
-
-
-def _retry_statusless_provider_errors(context: RetryPolicyContext) -> bool:
-    """Retry statusless provider errors (e.g. mid-stream quota/billing), but not aborts."""
-    normalized = context.normalized
-    if normalized.is_abort:
-        return False
-    if codex.is_content_guardrail_error(context.error):
-        return False
-    return normalized.status_code is None
 
 
 class _CodexResponsesModel(OpenAIResponsesModel):
@@ -684,21 +671,9 @@ def _litellm_provider(model_name: str) -> str | None:
         return None
 
 
-DEFAULT_MODEL_RETRY = ModelRetrySettings(
-    max_retries=5,
-    backoff=ModelRetryBackoffSettings(
-        initial_delay=2.0,
-        max_delay=90.0,
-        multiplier=2.0,
-        jitter=False,
-    ),
-    policy=retry_policies.any(
-        retry_policies.provider_suggested(),
-        retry_policies.network_error(),
-        retry_policies.http_status((429, 500, 502, 503, 504)),
-        _retry_statusless_provider_errors,
-    ),
-)
+# The turn loop in strix.core.execution is the one retry layer. A second budget here
+# multiplies it: a provider that never answers was re-sent 36 times before the turn failed.
+DEFAULT_MODEL_RETRY = ModelRetrySettings(max_retries=0)
 
 
 def configure_sdk_model_defaults(settings: Settings) -> None:
