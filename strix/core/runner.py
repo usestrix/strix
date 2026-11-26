@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import contextlib
 import io
 import json
@@ -16,6 +17,12 @@ from typing import TYPE_CHECKING, Any
 from agents import RunConfig
 from agents.sandbox import SandboxRunConfig
 from openai import RateLimitError
+
+_GIB = 1024 ** 3
+# Session history + reports + sandbox layers for a deep scan can easily
+# consume a few GiB; below this the run risks ENOSPC mid-scan.
+MIN_FREE_DISK_BYTES = 2 * _GIB
+
 
 from strix.agents.factory import build_strix_agent, make_child_factory
 from strix.agents.prompt import render_scope_prompt, render_system_prompt
@@ -290,6 +297,21 @@ async def run_strix_scan(
 
     if scan_id is None:
         scan_id = f"scan-{uuid.uuid4().hex[:8]}"
+
+    # Pre-flight disk check: a scan writes sqlite session history, reports
+    # and sandbox layers next to run_dir. When the filesystem is nearly full
+    # the scan dies midway with sqlite disk-I/O errors after burning LLM
+    # budget. Warn loudly (and surface in the log) instead of failing later.
+    try:
+        free_bytes = shutil.disk_usage(run_dir.parent if run_dir.parent else run_dir).free
+    except OSError:
+        free_bytes = None
+    if free_bytes is not None and free_bytes < MIN_FREE_DISK_BYTES:
+        logger.warning(
+            "only %.2f GiB free on the scan output filesystem (recommended minimum %d GiB); """
+            "the scan may fail mid-run if session/report writes hit ENOSPC",
+            free_bytes / _GIB,
+        )
 
     run_dir = run_dir_for(scan_id)
     run_dir.mkdir(parents=True, exist_ok=True)

@@ -34,6 +34,7 @@ from strix.core.hooks import (
 )
 from strix.core.inputs import child_initial_input
 from strix.core.sessions import (
+    add_items_resilient,
     enforce_image_budget,
     open_agent_session,
     replace_session_items,
@@ -1032,7 +1033,7 @@ async def _append_tool_required_message(
     if session is None:
         return [item]
 
-    await session.add_items([cast("TResponseInputItem", item)])
+    await add_items_resilient(session, [cast("TResponseInputItem", item)])
     return []
 
 

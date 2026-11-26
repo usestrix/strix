@@ -86,6 +86,30 @@ def _elided_output(item_dict: dict[str, Any], text: str) -> dict[str, Any]:
     }
 
 
+async def add_items_resilient(session: Session, items: Any) -> bool:
+    """Persist items to the session store, degrading gracefully on disk errors.
+
+    A full disk (sqlite3.OperationalError: disk I/O error / ENOSPC)
+    used to escape as an unhandled exception and take the whole scan down,
+    losing turn history and the final report. Persistence is an
+    implementation detail of the run loop, so here it degrades to a logged
+    warning instead: the in-memory scan continues, the session file simply
+    stops growing until space returns.
+
+    Returns True when items were written, False when the write was skipped
+    because of a storage error.
+    """
+    try:
+        await session.add_items(items)
+        return True
+    except sqlite3.OperationalError as err:
+        logger.warning(
+            "session persistence skipped (storage error: %s); scan continues in memory",
+            err,
+        )
+        return False
+
+
 _session_write_locks: WeakKeyDictionary[Session, asyncio.Lock] = WeakKeyDictionary()
 
 
