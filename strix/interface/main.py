@@ -380,7 +380,7 @@ def _pick_run_to_resume(args: argparse.Namespace) -> None:
     from strix.report.runs import list_run_summaries
 
     try:
-        chosen = pick_run(list_run_summaries(), runs_dir=runs_dir_display().removeprefix("./"))
+        chosen = pick_run(list_run_summaries(), runs_dir=runs_dir_display())
     except PickerUnavailableError as exc:
         _print_cli_error(resume_run_list_message(f"{exc}."))
         sys.exit(2)
