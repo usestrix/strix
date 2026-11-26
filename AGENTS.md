@@ -62,7 +62,7 @@ Target-specific workflows built on the same engine:
 ## Contributing to this repo
 
 - Python 3.12+, managed with `uv`. Install dev deps: `make dev-install`.
-- Lint/format/type-check/security, all in one: `make check-all` (ruff, mypy, bandit).
+- Lint/format/type-check/security, all in one: `make check-all` (ruff format, ruff check, mypy, pyright, bandit). The CI lint job gates on everything except Pyright; Pyright currently fails on `main` with pre-existing diagnostics, so treat it as advisory and avoid adding new diagnostics — see CONTRIBUTING.md.
 - Tests: `uv run pytest`.
 - Run from source: `uv run strix --target <target>`.
 - Layout: `strix/agents` (agent graph + prompts), `strix/tools` (proxy, browser, terminal, scanners), `strix/runtime` (Docker sandbox), `strix/report` (findings, SARIF), `strix/skills` (internal knowledge packs the pentest agents load — different from the consumer skills in `skills/`), `strix/interface` (CLI/TUI), `containers/` (sandbox image).
