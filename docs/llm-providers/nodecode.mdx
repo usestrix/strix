@@ -1,0 +1,42 @@
+---
+title: "Nodecode"
+description: "Configure Strix with Nodecode's Cyber v1 model"
+---
+
+[Nodecode](https://nodecode.ai) serves Cyber v1, an abliterated build of DeepSeek V4.1 Flash for security work, through an OpenAI-compatible API.
+
+## Setup
+
+```bash
+export STRIX_LLM="openai/nodecode-cyber-v1"
+export LLM_API_KEY="your-nodecode-api-key"
+export LLM_API_BASE="https://api.nodecode.ai/v1"
+```
+
+LiteLLM has no price for this model, so set Nodecode's prices to have Strix report the cost of a scan and apply `--max-budget`:
+
+```bash
+export STRIX_LLM_INPUT_COST_PER_MTOK="0.33"
+export STRIX_LLM_CACHED_INPUT_COST_PER_MTOK="0.009"
+export STRIX_LLM_OUTPUT_COST_PER_MTOK="1.32"
+```
+
+## Available Models
+
+| Model | Configuration |
+|-------|---------------|
+| Cyber v1 | `openai/nodecode-cyber-v1` |
+
+## Get API Key
+
+1. Sign up at [nodecode.ai](https://nodecode.ai)
+2. Add a balance under [Top up](https://nodecode.ai/account/top-up)
+3. Open [API keys](https://nodecode.ai/account/keys), create a key and copy it (it is shown once)
+
+## Benefits
+
+- **Built for security work** - Abliterated, so it does not refuse exploit, payload or recon requests
+- **OpenAI-compatible** - Drop-in replacement using `LLM_API_BASE`, with tool/function calling
+- **Large context** - 1,048,576-token context window and up to 131,072 output tokens
+- **Cheap agent loops** - Cached input costs $0.009 per 1M tokens on requests under 262,144 input tokens
+- **Private** - Zero data retention, GDPR
