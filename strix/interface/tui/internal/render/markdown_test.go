@@ -114,3 +114,15 @@ func TestInlineFormatStillStylesRealEmphasis(t *testing.T) {
 		}
 	}
 }
+
+func TestParseFencedCodeLongerFence(t *testing.T) {
+	lang, code := ParseFencedCode("````markdown\nUse:\n```\nx\n```\n````")
+	if lang != "markdown" || code != "Use:\n```\nx\n```" {
+		t.Fatalf("got lang=%q code=%q", lang, code)
+	}
+	raw := "````python\nprint(1)\n```"
+	lang, code = ParseFencedCode(raw)
+	if lang != "" || code != raw {
+		t.Fatalf("mismatched closing fence must not be stripped: lang=%q code=%q", lang, code)
+	}
+}

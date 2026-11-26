@@ -28,7 +28,9 @@ _SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 
 _CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
-_FENCE_RE = re.compile(r"^```([^\n`]*)\r?\n(.*?)\r?\n?```$", re.DOTALL)
+# An opening fence of three or more backticks, closed by a run of the same length
+# (``safe_fence`` emits longer fences when the content holds its own ``` runs).
+_FENCE_RE = re.compile(r"^(`{3,})([^\n`]*)\r?\n(.*?)\r?\n?\1$", re.DOTALL)
 _BACKTICK_RUN = re.compile(r"`+")
 
 
@@ -77,9 +79,9 @@ def parse_fenced_code(raw: str) -> tuple[str | None, str]:
     match = _FENCE_RE.match(raw.strip())
     if not match:
         return None, raw
-    info = match.group(1).strip()
+    info = match.group(2).strip()
     language = info.split()[0] if info else None
-    return (language or None), match.group(2)
+    return (language or None), match.group(3)
 
 
 def resolve_lexer(language: str | None, code: str) -> Lexer:
@@ -333,12 +335,17 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
                 lines.append(f"  {fence}")
             if loc.get("fix_before") or loc.get("fix_after"):
                 lines.append("\n  **Suggested Fix:**")
-                lines.append("```diff")
+                diff_lines: list[str] = []
                 if loc.get("fix_before"):
-                    lines.extend(f"- {ln}" for ln in str(loc["fix_before"]).splitlines())
+                    diff_lines.extend(f"- {ln}" for ln in str(loc["fix_before"]).splitlines())
                 if loc.get("fix_after"):
-                    lines.extend(f"+ {ln}" for ln in str(loc["fix_after"]).splitlines())
-                lines.append("```")
+                    diff_lines.extend(f"+ {ln}" for ln in str(loc["fix_after"]).splitlines())
+                # fix_before/fix_after are LLM-authored and may quote the target, so
+                # fence them like the snippet above to keep ``` runs from breaking out
+                fence = safe_fence("\n".join(diff_lines))
+                lines.append(f"{fence}diff")
+                lines.extend(diff_lines)
+                lines.append(fence)
             lines.append("")
 
     if report.get("remediation_steps"):

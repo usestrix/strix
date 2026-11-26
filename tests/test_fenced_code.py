@@ -76,3 +76,19 @@ def test_safe_fence_widens_past_embedded_backticks() -> None:
     # can't terminate the block early.
     assert safe_fence("plain code") == "```"
     assert safe_fence("has ```\nfence inside") == "````"
+
+
+def test_parse_fenced_code_handles_longer_fence_with_inner_backticks() -> None:
+    language, code = parse_fenced_code("````markdown\nUse:\n```\nx\n```\n````")
+    assert language == "markdown"
+    assert code == "Use:\n```\nx\n```"
+
+
+def test_parse_fenced_code_requires_matching_closing_fence() -> None:
+    raw = "````python\nprint(1)\n```"
+    assert parse_fenced_code(raw) == (None, raw)
+
+
+def test_strip_code_fence_handles_longer_fence() -> None:
+    assert _strip_code_fence("````\na\n```\nb\n````") == "a\n```\nb"
+    assert _strip_code_fence("```py\r\nprint(1)\r\n```") == "print(1)"

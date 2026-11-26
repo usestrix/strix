@@ -58,13 +58,21 @@ func languageForPath(path string) string {
 // return the declared language (if any) and the inner code.
 func ParseFencedCode(raw string) (language, code string) {
 	trimmed := strings.TrimSpace(raw)
-	if !strings.HasPrefix(trimmed, "```") {
+	// The opening fence is three or more backticks; safe_fence emits a longer
+	// one when the code holds its own ``` runs, and only a run of the same
+	// length closes it.
+	fenceLen := len(trimmed) - len(strings.TrimLeft(trimmed, "`"))
+	if fenceLen < 3 {
 		return "", raw
 	}
+	fence := trimmed[:fenceLen]
 	lines := strings.Split(trimmed, "\n")
-	if len(lines) < 2 || strings.TrimSpace(lines[len(lines)-1]) != "```" {
+	if len(lines) < 2 || strings.TrimSpace(lines[len(lines)-1]) != fence {
 		return "", raw
 	}
-	language = strings.TrimSpace(strings.TrimPrefix(lines[0], "```"))
-	return language, strings.Join(lines[1:len(lines)-1], "\n")
+	info := strings.TrimSpace(strings.TrimPrefix(lines[0], fence))
+	if strings.Contains(info, "`") {
+		return "", raw
+	}
+	return info, strings.Join(lines[1:len(lines)-1], "\n")
 }
