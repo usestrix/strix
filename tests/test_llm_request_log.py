@@ -23,6 +23,7 @@ from litellm.exceptions import APIError as LiteLlmApiError
 from litellm.exceptions import AuthenticationError as LiteLlmAuthenticationError
 from litellm.exceptions import Timeout as LiteLlmTimeout
 from litellm.llms.anthropic.common_utils import AnthropicError
+from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
 from openai import APIStatusError, APITimeoutError, PermissionDeniedError
 from openai.types.responses import Response, ResponseCompletedEvent, ResponseCreatedEvent
 from openai.types.responses.response import IncompleteDetails
@@ -1185,6 +1186,13 @@ def test_observe_http_client_installs_the_hook_once() -> None:
 def test_install_observes_the_sdk_shared_http_client() -> None:
     request_log.install()
     assert request_log.record_http_reply in shared_http_client().event_hooks["response"]
+
+
+def test_install_observes_litellm_http_clients() -> None:
+    request_log.install()
+    request_log.install()
+    client = AsyncHTTPHandler().client
+    assert client.event_hooks["response"].count(request_log.record_http_reply) == 1
 
 
 @pytest.mark.asyncio
