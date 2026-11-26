@@ -1033,7 +1033,10 @@ async def _append_tool_required_message(
     if session is None:
         return [item]
 
-    await add_items_resilient(session, [cast("TResponseInputItem", item)])
+    if not await add_items_resilient(session, [cast("TResponseInputItem", item)]):
+        # Persistence failed (storage error); keep the recovery prompt in
+        # the returned input so the next attempt still sees the instruction.
+        return [item]
     return []
 
 

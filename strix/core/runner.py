@@ -298,23 +298,25 @@ async def run_strix_scan(
     if scan_id is None:
         scan_id = f"scan-{uuid.uuid4().hex[:8]}"
 
+    run_dir = run_dir_for(scan_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
     # Pre-flight disk check: a scan writes sqlite session history, reports
     # and sandbox layers next to run_dir. When the filesystem is nearly full
     # the scan dies midway with sqlite disk-I/O errors after burning LLM
     # budget. Warn loudly (and surface in the log) instead of failing later.
+    # run_dir now exists (created above), so disk_usage always has a probe.
     try:
-        free_bytes = shutil.disk_usage(run_dir.parent if run_dir.parent else run_dir).free
+        free_bytes = shutil.disk_usage(run_dir).free
     except OSError:
         free_bytes = None
     if free_bytes is not None and free_bytes < MIN_FREE_DISK_BYTES:
         logger.warning(
-            "only %.2f GiB free on the scan output filesystem (recommended minimum %d GiB); """
+            "only %.2f GiB free on the scan output filesystem (recommended minimum %.2f GiB); """
             "the scan may fail mid-run if session/report writes hit ENOSPC",
             free_bytes / _GIB,
+            MIN_FREE_DISK_BYTES / _GIB,
         )
-
-    run_dir = run_dir_for(scan_id)
-    run_dir.mkdir(parents=True, exist_ok=True)
     state_dir = runtime_state_dir(run_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
     teardown_logging = setup_scan_logging(run_dir)

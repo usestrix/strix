@@ -25,6 +25,27 @@ logger = logging.getLogger(__name__)
 
 
 class _PooledConnectionSession(SQLiteSession):
+    async def add_items(self, items: list[Any]) -> None:
+        """Store items, degrading to a warning when the disk is full.
+
+        The SDK persists every turn through SQLiteSession.add_items; on a
+        full filesystem that raises sqlite3.OperationalError which used to
+        escape through Runner.run_streamed and kill the whole scan.
+        Persistence is an implementation detail of the run loop, so here it
+        degrades to a logged warning instead and the in-memory scan
+        continues until space returns.
+        """
+        try:
+            await super().add_items(items)
+        except sqlite3.OperationalError as err:
+            if "disk" in str(err) or "full" in str(err) or "I/O" in str(err):
+                logger.warning(
+                    "session persistence skipped (storage error: %s); scan continues in memory",
+                    err,
+                )
+                return
+            raise
+
     @contextmanager
     def _locked_connection(self) -> Iterator[sqlite3.Connection]:
         with self._lock:
