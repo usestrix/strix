@@ -895,6 +895,7 @@ def install() -> None:
     if _log_line_sink not in _sinks:
         _sinks.insert(0, _log_line_sink)
     _observe_sdk_shared_http_client()
+    _observe_litellm_http_clients()
     if _litellm_logger is not None:
         return
     import litellm
@@ -915,6 +916,30 @@ def _observe_sdk_shared_http_client() -> None:
         observe_http_client(shared_http_client())
     except Exception:  # noqa: BLE001 - a missing hook degrades to inferred status/no id
         logger.warning("could not observe the SDK's shared HTTP client", exc_info=True)
+
+
+def _observe_litellm_http_clients() -> None:
+    """Observe every HTTP client LiteLLM creates.
+
+    LiteLLM hands back reply headers only with a finished response, so an
+    attempt abandoned mid-stream would otherwise lose its provider request id.
+    """
+    try:
+        from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
+
+        create_client: Any = AsyncHTTPHandler.create_client
+        if getattr(create_client, "_strix_observed", False):
+            return
+
+        def observed(self: Any, *args: Any, **kwargs: Any) -> AsyncClient:
+            client: AsyncClient = create_client(self, *args, **kwargs)
+            observe_http_client(client)
+            return client
+
+        observed._strix_observed = True  # type: ignore[attr-defined]
+        AsyncHTTPHandler.create_client = observed  # type: ignore[method-assign]
+    except Exception:  # noqa: BLE001 - a missing hook degrades to no id on abandoned attempts
+        logger.warning("could not observe LiteLLM's HTTP clients", exc_info=True)
 
 
 def _log_line_sink(event: LlmRequestEvent) -> None:
