@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 from typing import TYPE_CHECKING
 
 
@@ -28,21 +29,59 @@ _LOGIN_AS_GUEST_BODY = (
     '{"query":"mutation LoginAsGuest { loginAsGuest { token { accessToken } } }"}'
 )
 
+# The guest-login loop below doubles as Caido's readiness probe, so its budget
+# must outlast the slowest part of container bring-up. When the host UID differs
+# from the image's ``pentester`` UID, ``docker-entrypoint.sh`` recursively chowns
+# the (large, tool-laden) home directory *before* it launches ``caido-cli``, so
+# on a big image or slow storage the listener can take well over a minute to
+# appear. A fixed ~60s budget loses that race and the failure is cached for the
+# whole scan, silently disabling the proxy. Probe generously by default and let
+# it be tuned via the environment.
+_LOGIN_TIMEOUT_DEFAULT_S = 180.0
+_LOGIN_POLL_INTERVAL_S = 3.0
+_LOGIN_TIMEOUT_ENV = "STRIX_CAIDO_BOOTSTRAP_TIMEOUT"
+
+
+def _login_timeout_s() -> float:
+    """Guest-login / readiness budget in seconds (``STRIX_CAIDO_BOOTSTRAP_TIMEOUT``)."""
+    raw = os.environ.get(_LOGIN_TIMEOUT_ENV, "").strip()
+    if raw:
+        try:
+            value = float(raw)
+        except ValueError:
+            logger.warning(
+                "Invalid %s=%r; using %.0fs", _LOGIN_TIMEOUT_ENV, raw, _LOGIN_TIMEOUT_DEFAULT_S
+            )
+        else:
+            if value > 0:
+                return value
+    return _LOGIN_TIMEOUT_DEFAULT_S
+
 
 async def _login_as_guest(
     session: BaseSandboxSession,
     *,
     container_url: str,
-    attempts: int = 10,
+    timeout_s: float | None = None,
 ) -> str:
-    """``session.exec`` curl to fetch a guest token; retry until ready.
+    """``session.exec`` curl to fetch a guest token; poll until Caido is ready.
 
-    Caido's GraphQL listener may not be up the instant the container
-    starts. The retry loop also doubles as the Caido readiness probe —
-    no separate TCP healthcheck needed.
+    Caido's GraphQL listener may not be up the instant the container starts, and
+    when the host UID differs from the image UID ``docker-entrypoint.sh``
+    recursively chowns the home directory before launching ``caido-cli`` — so on
+    a large image the listener can take well over a minute to appear. Poll until
+    a guest token is obtained or ``timeout_s`` (default
+    :data:`_LOGIN_TIMEOUT_DEFAULT_S`, overridable via ``STRIX_CAIDO_BOOTSTRAP_TIMEOUT``)
+    elapses. This loop doubles as Caido's readiness probe — no separate TCP
+    healthcheck needed.
     """
+    budget = _login_timeout_s() if timeout_s is None else timeout_s
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + budget
+    attempt = 0
     last_err: str | None = None
-    for i in range(1, attempts + 1):
+    while True:
+        attempt += 1
         result = await session.exec(
             "curl",
             "-fsS",
@@ -72,10 +111,19 @@ async def _login_as_guest(
         else:
             stderr = result.stderr.decode("utf-8", errors="replace")[:200]
             last_err = f"curl exit {result.exit_code}: {stderr}"
-        logger.debug("loginAsGuest attempt %d/%d failed: %s", i, attempts, last_err)
-        await asyncio.sleep(min(2.0 * i, 8.0))
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            break
+        logger.debug(
+            "loginAsGuest attempt %d failed (%.0fs of %.0fs left): %s",
+            attempt,
+            remaining,
+            budget,
+            last_err,
+        )
+        await asyncio.sleep(min(_LOGIN_POLL_INTERVAL_S, remaining))
 
-    raise RuntimeError(f"loginAsGuest failed after {attempts} attempts: {last_err}")
+    raise RuntimeError(f"loginAsGuest failed after {attempt} attempts / {budget:.0f}s: {last_err}")
 
 
 async def bootstrap_caido(
