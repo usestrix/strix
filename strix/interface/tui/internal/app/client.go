@@ -186,7 +186,12 @@ func (c *Client) sendEnvelope(envelope protocol.Envelope, maximum int) error {
 }
 
 func pendingKey(command string, payload json.RawMessage) string {
-	if command == "collection.resync" {
+	switch command {
+	case "collection.resync", "setup.add_target":
+		// Distinct payloads are distinct in-flight requests: two resyncs for
+		// different collections, or two target additions for different
+		// targets, must not reject each other as duplicates. An identical
+		// payload still collides, so a repeated send stays pending-gated.
 		return command + ":" + string(payload)
 	}
 	return command
