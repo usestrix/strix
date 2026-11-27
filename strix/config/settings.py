@@ -60,6 +60,10 @@ class LlmSettings(BaseSettings):
         alias="LLM_EXTRA_BODY",
         repr=False,
     )
+    session_affinity_header: str | None = Field(
+        default=None,
+        alias="STRIX_SESSION_AFFINITY_HEADER",
+    )
     reasoning_effort: ReasoningEffort = Field(default="high", alias="STRIX_REASONING_EFFORT")
     input_cost_per_mtok: float | None = Field(
         default=None, ge=0, allow_inf_nan=False, alias="STRIX_LLM_INPUT_COST_PER_MTOK"

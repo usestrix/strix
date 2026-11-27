@@ -64,6 +64,15 @@ Configure Strix using environment variables or a config file.
   `reasoning_effort`.
 </ParamField>
 
+<ParamField path="STRIX_SESSION_AFFINITY_HEADER" type="string">
+  Send this header on every LLM request with a per-agent session id, so a
+  gateway can keep each agent on the provider key that last served it and its
+  prompt cache carries over between turns. E.g.
+  `STRIX_SESSION_AFFINITY_HEADER=x-bf-session-id` for Bifrost. Unset sends no
+  header. The id is the same one the OpenRouter route sends as `session_id`,
+  and it is stable per agent for the life of the process.
+</ParamField>
+
 <ParamField path="LLM_TIMEOUT" default="300" type="integer">
   Request timeout in seconds for LLM calls.
 </ParamField>
