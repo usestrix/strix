@@ -13,6 +13,8 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
+import shlex
 from typing import TYPE_CHECKING
 
 
@@ -113,3 +115,54 @@ async def bootstrap_caido(
         raise
     logger.info("Caido project selected: %s", project.id)
     return client
+
+
+_UPSTREAM_RE = re.compile(r"[A-Za-z0-9.-]+:\d{1,5}")
+
+_FALLBACK_SCRIPT = """
+port_open() {{ (exec 3<>/dev/tcp/127.0.0.1/{port}) 2>/dev/null; }}
+# The entrypoint exits if Caido dies before it has written the proxy settings.
+for _ in $(seq 120); do [ -e /etc/profile.d/proxy.sh ] && break; sleep 0.25; done
+sudo pkill -x caido-cli
+for _ in $(seq 40); do port_open || break; sleep 0.25; done
+{proxy}
+setsid nohup "$@" >/dev/null 2>&1 </dev/null &
+for _ in $(seq 80); do port_open && exit 0; sleep 0.25; done
+exit 1
+"""
+
+
+async def start_proxy_fallback(
+    session: BaseSandboxSession,
+    *,
+    port: int,
+    upstream: str | None = None,
+) -> bool:
+    """Replace a Caido that never got a project with a pass-through proxy.
+
+    Caido rejects every proxied request until a project is selected, so after a
+    failed bootstrap the sandbox would have no network. The pass-through listens
+    on Caido's port, so running shells keep their proxy settings. With
+    ``upstream`` (``host:port``) it only relays to that proxy and never dials a
+    destination itself.
+    """
+    if upstream is None:
+        # mitmdump tunnels ignored hosts, so TLS is not intercepted. ncat's own
+        # HTTP proxy rejects plain-HTTP methods other than GET, HEAD and POST, and
+        # listens on every interface, so it needs --allow.
+        proxy = (
+            "if command -v mitmdump >/dev/null; then"
+            f" set -- mitmdump -q --listen-host 127.0.0.1 -p {port} --ignore-hosts '.*';"
+            f" else set -- ncat -l 127.0.0.1 {port} -k --proxy-type http --allow 127.0.0.1; fi"
+        )
+    elif _UPSTREAM_RE.fullmatch(upstream):
+        host, _, upstream_port = upstream.rpartition(":")
+        relay = shlex.quote(f"ncat {host} {upstream_port}")
+        proxy = f"set -- ncat -l 127.0.0.1 {port} -k --sh-exec {relay}"
+    else:
+        raise ValueError(f"Invalid proxy upstream: {upstream!r}")
+
+    result = await session.exec(
+        "bash", "-c", _FALLBACK_SCRIPT.format(port=port, proxy=proxy), timeout=60
+    )
+    return bool(result.ok())

@@ -247,6 +247,7 @@ async def run_strix_scan(
     report_tool: Tool = create_vulnerability_report,
     coverage_tools: bool = True,
     proxy: bool = True,
+    proxy_upstream: str | None = None,
     subagent_turn_limits: Mapping[str, int] | None = None,
     select_tools: Callable[..., Sequence[Tool]] | None = None,
 ) -> RunResultBase | None:
@@ -427,6 +428,7 @@ async def run_strix_scan(
         extra_files=extra_files,
         status_sink=status_sink,
         proxy=proxy,
+        proxy_upstream=proxy_upstream,
     )
     report("Waiting for the first model response")
     logger.info("Sandbox ready for scan %s", scan_id)

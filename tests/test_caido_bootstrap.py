@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from strix.runtime.caido_bootstrap import bootstrap_caido
+from strix.runtime.caido_bootstrap import bootstrap_caido, start_proxy_fallback
 
 
 class _FakeExecResult:
@@ -79,3 +79,34 @@ async def test_cancellation_during_connect_closes_the_client(
 async def test_failed_connect_closes_the_client(monkeypatch: pytest.MonkeyPatch) -> None:
     client = await _bootstrap_expecting(monkeypatch, RuntimeError("no listener"))
     assert client.closed
+
+
+class _RecordingSession:
+    def __init__(self) -> None:
+        self.script = ""
+
+    async def exec(self, *args: Any, **_kwargs: Any) -> _FakeExecResult:
+        self.script = args[-1]
+        return _FakeExecResult("")
+
+
+async def test_fallback_goes_direct_without_an_upstream() -> None:
+    session = _RecordingSession()
+    assert await start_proxy_fallback(session, port=48080)  # type: ignore[arg-type]
+    assert "pkill -x caido-cli" in session.script
+    assert "mitmdump -q --listen-host 127.0.0.1 -p 48080 --ignore-hosts" in session.script
+    assert "ncat -l 127.0.0.1 48080 -k --proxy-type http --allow 127.0.0.1" in session.script
+
+
+async def test_fallback_only_relays_to_the_upstream() -> None:
+    session = _RecordingSession()
+    await start_proxy_fallback(session, port=48080, upstream="127.0.0.1:3128")  # type: ignore[arg-type]
+    assert "ncat -l 127.0.0.1 48080 -k --sh-exec 'ncat 127.0.0.1 3128'" in session.script
+    assert "mitmdump" not in session.script
+
+
+async def test_fallback_rejects_a_malformed_upstream() -> None:
+    session = _RecordingSession()
+    with pytest.raises(ValueError, match="upstream"):
+        await start_proxy_fallback(session, port=48080, upstream="x; rm -rf /")  # type: ignore[arg-type]
+    assert session.script == ""
