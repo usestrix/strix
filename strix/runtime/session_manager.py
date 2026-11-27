@@ -18,7 +18,11 @@ from agents.sandbox.entries import BaseEntry, LocalDir
 from agents.sandbox.manifest import Environment, Manifest
 
 from strix.config import load_settings
-from strix.runtime.backends import backend_supports_bind_mounts, get_backend
+from strix.runtime.backends import (
+    backend_supports_bind_mounts,
+    backend_supports_pty,
+    get_backend,
+)
 from strix.runtime.caido_bootstrap import bootstrap_caido, start_proxy_fallback
 from strix.runtime.caido_handle import CaidoBootstrapHandle
 from strix.runtime.deferred_session import DeferredSandboxClient, DeferredSandboxSession
@@ -421,6 +425,7 @@ async def create_or_reuse(
             bring_up,
             manifest=manifest,
             exposed_ports=exposed_ports,
+            supports_pty=backend_supports_pty(backend_name),
         )
 
         async def _caido_when_up() -> Any:
