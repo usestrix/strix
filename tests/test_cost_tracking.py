@@ -208,7 +208,7 @@ def test_cost_callback_recovers_streamed_openrouter_cost_by_response_id() -> Non
     ):
         litellm_cost_callback({"response_cost": None, "model": "moonshotai/kimi-k3"}, response)
 
-    report_state.record_observed_llm_cost.assert_called_once_with(0.42)
+    report_state.record_observed_llm_cost.assert_called_once_with(0.42, response_id="gen-abc")
     # The entry is consumed so a later response cannot double-count it.
     assert streamed_openrouter_costs.take(response) is None
 
@@ -228,7 +228,7 @@ def test_streamed_openrouter_cost_prefers_provider_report_over_estimate() -> Non
     ):
         litellm_cost_callback({"response_cost": None, "model": "moonshotai/kimi-k3"}, response)
 
-    report_state.record_observed_llm_cost.assert_called_once_with(0.9)
+    report_state.record_observed_llm_cost.assert_called_once_with(0.9, response_id="gen-xyz")
     estimate.assert_not_called()
 
 

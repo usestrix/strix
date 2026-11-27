@@ -217,6 +217,80 @@ def test_hydrated_estimate_continues_accumulating_new_estimates() -> None:
     assert ledger.total_cost == 0.59
 
 
+def _single_call(tokens: int) -> Usage:
+    return Usage(requests=1, input_tokens=tokens, output_tokens=0, total_tokens=tokens)
+
+
+def _estimates_per_thousand_tokens():
+    """Deterministic estimates: 400 tokens cost 0.4, 700 tokens cost 0.7."""
+    return patch(
+        "strix.report.usage._estimate_litellm_cost",
+        side_effect=lambda usage, _model: usage.input_tokens / 1000,
+    )
+
+
+def test_ledger_pairs_observed_and_estimate_by_response_id() -> None:
+    ledger = LLMUsageLedger()
+    with _estimates_per_thousand_tokens():
+        ledger.record(agent_id="a", usage=_single_call(400), model="m", response_id="charged")
+        ledger.record(agent_id="a", usage=_single_call(700), model="m", response_id="unpriced")
+    ledger.record_observed_cost(0.2, response_id="charged")
+
+    # The charge replaces its own response's estimate, and the response with no
+    # charge keeps its estimate.
+    assert ledger.total_cost == pytest.approx(0.9)
+
+    # Arrival order does not matter: a charge can land before the usage hook.
+    ledger.record_observed_cost(0.3, response_id="early")
+    with _estimates_per_thousand_tokens():
+        ledger.record(agent_id="a", usage=_single_call(600), model="m", response_id="early")
+    assert ledger.total_cost == pytest.approx(1.2)
+
+
+def test_ledger_keyed_charge_replaces_unkeyed_estimate_when_ids_cannot_pair() -> None:
+    # The provider callback named the response, the SDK hook had no id for it.
+    # They may be the same response, so the upstream contract applies: the
+    # charge replaces the estimate instead of adding to it.
+    ledger = LLMUsageLedger()
+    with _estimates_per_thousand_tokens():
+        ledger.record(agent_id="a", usage=_single_call(500), model="m")
+    ledger.record_observed_cost(0.17, response_id="gen-1")
+
+    assert ledger.total_cost == pytest.approx(0.17)
+
+
+def test_ledger_keeps_unkeyed_estimate_until_a_charge_is_left_unmatched() -> None:
+    ledger = LLMUsageLedger()
+    with _estimates_per_thousand_tokens():
+        ledger.record(agent_id="a", usage=_single_call(400), model="m", response_id="paired")
+        ledger.record(agent_id="a", usage=_single_call(500), model="m")
+    ledger.record_observed_cost(0.2, response_id="paired")
+
+    # Every charge is matched by id, so nothing replaces the id-less estimate.
+    assert ledger.total_cost == pytest.approx(0.7)
+
+    ledger.record_observed_cost(0.3)
+
+    assert ledger.total_cost == pytest.approx(0.5)
+
+
+def test_hydrated_cost_is_kept_once_when_a_charge_replaces_new_estimates() -> None:
+    ledger = LLMUsageLedger()
+    ledger.hydrate({"cost": 0.42})
+    with _estimates_per_thousand_tokens():
+        ledger.record(agent_id="a", usage=_single_call(1000), model="m")
+    ledger.record_observed_cost(0.17)
+
+    # 0.42 persisted + 0.17 charged, not + the 1.0 estimate.
+    assert ledger.total_cost == pytest.approx(0.59)
+
+    with _estimates_per_thousand_tokens():
+        ledger.record(agent_id="a", usage=_single_call(300), model="m", response_id="after-resume")
+    ledger.record_observed_cost(0.05, response_id="after-resume")
+
+    assert ledger.total_cost == pytest.approx(0.64)
+
+
 def test_zero_cost_disables_both_observed_and_estimated_costs() -> None:
     usage = Usage()
     usage.requests = 1
