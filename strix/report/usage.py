@@ -9,7 +9,7 @@ from agents.usage import Usage, deserialize_usage, serialize_usage
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from strix.config.loader import load_settings
-from strix.report.pricing import resolve_litellm_model
+from strix.report.pricing import price_litellm_usage, resolve_litellm_model
 
 
 logger = logging.getLogger(__name__)
@@ -303,8 +303,6 @@ def _estimate_litellm_entry_cost(entry: Any, model: str) -> float | None:
     if completion_details:
         usage_payload["completion_tokens_details"] = completion_details
 
-    from litellm import completion_cost
-
     candidates = [model]
     if "/" in model:
         candidates.append(model.rsplit("/", 1)[-1])
@@ -314,10 +312,7 @@ def _estimate_litellm_entry_cost(entry: Any, model: str) -> float | None:
         if not resolved:
             continue
         try:
-            cost = completion_cost(
-                completion_response={"model": resolved, "usage": usage_payload},
-                model=resolved,
-            )
+            cost = price_litellm_usage(resolved, usage_payload)
         except Exception:  # nosec B112  # noqa: BLE001, S112
             continue
         if cost > 0:

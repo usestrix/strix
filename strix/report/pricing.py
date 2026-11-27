@@ -6,6 +6,19 @@ from functools import lru_cache
 from typing import Any, cast
 
 
+def price_litellm_usage(model: str, usage: dict[str, Any]) -> float:
+    """Price a resolved model without invoking provider discovery or authentication."""
+    from litellm import completion_cost
+
+    return float(
+        completion_cost(
+            completion_response={"model": model, "usage": usage},
+            model=model,
+            custom_llm_provider=model.partition("/")[0],
+        )
+    )
+
+
 @lru_cache(maxsize=512)
 def resolve_litellm_model(model: str) -> str | None:
     """Return a provider-qualified model name that LiteLLM can price."""
