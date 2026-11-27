@@ -52,7 +52,6 @@ async def _run(
     coordinator: AgentCoordinator | None = None,
 ) -> Any:
     monkeypatch.setattr(execution, "_TRANSIENT_MODEL_RETRY_BASE_DELAY_S", 0.0)
-    monkeypatch.setattr(execution, "_TRANSIENT_MODEL_RETRY_MAX_DELAY_S", 0.0)
     calls = {"n": 0}
 
     def _fake_run_streamed(*_args: Any, **_kwargs: Any) -> _FakeStream:

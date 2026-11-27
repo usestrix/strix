@@ -101,6 +101,10 @@ class LlmSettings(BaseSettings):
         default=120, ge=0, alias="LLM_STREAM_FIRST_EVENT_TIMEOUT"
     )
     stream_total_timeout: int = Field(default=600, ge=0, alias="LLM_STREAM_TOTAL_TIMEOUT")
+    # Turn replays after a transient provider failure (a dropped stream, a 5xx
+    # after the SDK's own retries); the count resets once a response completes.
+    max_retries: int = Field(default=5, ge=0, alias="STRIX_LLM_MAX_RETRIES")
+    retry_max_delay: int = Field(default=90, ge=1, alias="STRIX_LLM_RETRY_MAX_DELAY")
     max_tool_calls_per_turn: int = Field(
         default=32,
         ge=0,

@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import inspect
 import logging
+import random
 import re
 import uuid
 from collections.abc import Callable
@@ -13,9 +14,11 @@ from dataclasses import replace
 from functools import cache
 from typing import TYPE_CHECKING, Any, cast
 
+import httpx
 from agents import ItemHelpers, MessageOutputItem, RunConfig, Runner
 from agents.exceptions import AgentsException, MaxTurnsExceeded, UserError
 from agents.sandbox.errors import ExecTransportError
+from agents.stream_events import RawResponsesStreamEvent
 from openai import (
     APIConnectionError,
     APIError,
@@ -23,6 +26,7 @@ from openai import (
 )
 
 from strix.config import codex
+from strix.config.loader import load_settings
 from strix.core.hooks import (
     SUBAGENT_TURN_LIMITS_KEY,
     TURN_LIMIT_KEY,
@@ -164,9 +168,30 @@ def _with_image_scrub(run_config: RunConfig, context: dict[str, Any]) -> RunConf
     return replace(run_config, call_model_input_filter=_scrub)
 
 
-_MAX_TRANSIENT_MODEL_RETRIES = 5
+# How many replays in a row (``STRIX_LLM_MAX_RETRIES``) and the longest wait
+# between them (``STRIX_LLM_RETRY_MAX_DELAY``) come from the LLM settings.
 _TRANSIENT_MODEL_RETRY_BASE_DELAY_S = 2.0
-_TRANSIENT_MODEL_RETRY_MAX_DELAY_S = 90.0
+
+# Transport failures the OpenAI SDK does not wrap in ``APIConnectionError``:
+# it only wraps errors raised while sending the request, so a provider that
+# answers 200 and then drops the connection mid-stream surfaces the raw httpx
+# error (``RemoteProtocolError: incomplete chunked read``, ``ReadError``, ...).
+_TRANSIENT_TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (
+    httpx.NetworkError,
+    httpx.RemoteProtocolError,
+    httpx.TimeoutException,
+)
+_MAX_CAUSE_DEPTH = 8
+
+
+def _cause_chain(exc: BaseException) -> list[BaseException]:
+    """``exc`` and the exceptions it was explicitly raised from, outermost first."""
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and len(chain) < _MAX_CAUSE_DEPTH and current not in chain:
+        chain.append(current)
+        current = current.__cause__
+    return chain
 
 
 def _model_error_status_code(exc: BaseException) -> int | None:
@@ -183,6 +208,8 @@ def _is_image_rejection(exc: BaseException) -> bool:
 def _is_transient_model_error(exc: BaseException) -> bool:
     if codex.is_content_guardrail_error(exc):
         return False
+    if any(isinstance(cause, _TRANSIENT_TRANSPORT_ERRORS) for cause in _cause_chain(exc)):
+        return True
     if isinstance(
         exc, APITimeoutError | APIConnectionError | TimeoutError | ConnectionError | OSError
     ):
@@ -193,9 +220,24 @@ def _is_transient_model_error(exc: BaseException) -> bool:
     return isinstance(exc, APIError)
 
 
-def _transient_model_retry_delay(attempt: int) -> float:
-    delay = _TRANSIENT_MODEL_RETRY_BASE_DELAY_S * float(2 ** (attempt - 1))
-    return min(delay, _TRANSIENT_MODEL_RETRY_MAX_DELAY_S)
+def _transient_model_retry_delay(attempt: int, max_delay: float) -> float:
+    """Exponential backoff capped at ``max_delay``, spread over its upper half.
+
+    One provider outage drops every open stream at once; without the spread the
+    agents it hit would all replay at the same instant against an endpoint that
+    is only just recovering.
+    """
+    delay = min(_TRANSIENT_MODEL_RETRY_BASE_DELAY_S * float(2 ** (attempt - 1)), max_delay)
+    # Timing jitter, not a secret.
+    return delay * random.uniform(0.5, 1.0)  # noqa: S311  # nosec B311
+
+
+def _is_completed_model_response(event: object) -> bool:
+    """Whether a run event carries a model response that streamed to completion."""
+    return (
+        isinstance(event, RawResponsesStreamEvent)
+        and getattr(event.data, "type", None) == "response.completed"
+    )
 
 
 async def _salvage_stream_to_session(
@@ -776,7 +818,12 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
 ) -> RunResultBase | None:
     image_strips = 0
     compactions = 0
+    # Consecutive replays: reset whenever a model response streams to completion,
+    # so isolated drops over a long run never add up to a crash.
     model_retries = 0
+    llm_settings = load_settings().llm
+    max_model_retries = llm_settings.max_retries
+    retry_max_delay = float(llm_settings.retry_max_delay)
     request_log.set_retry_attempt(0)
     while True:
         stream: Any = None
@@ -809,6 +856,8 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             try:
                 try:
                     async for event in stream.stream_events():
+                        if model_retries and _is_completed_model_response(event):
+                            model_retries = 0
                         if event_sink is not None:
                             try:
                                 event_sink(agent_id, event)
@@ -891,15 +940,15 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     )
                     input_data = []
                     continue
-            if model_retries < _MAX_TRANSIENT_MODEL_RETRIES and _is_transient_model_error(exc):
+            if model_retries < max_model_retries and _is_transient_model_error(exc):
                 model_retries += 1
-                delay = _transient_model_retry_delay(model_retries)
+                delay = _transient_model_retry_delay(model_retries, retry_max_delay)
                 logger.warning(
                     "transient model/provider error for %s; replaying turn "
                     "(attempt %d/%d, backoff %.1fs): %r",
                     agent_id,
                     model_retries,
-                    _MAX_TRANSIENT_MODEL_RETRIES,
+                    max_model_retries,
                     delay,
                     exc,
                 )

@@ -74,7 +74,18 @@ Configure Strix using environment variables or a config file.
 </ParamField>
 
 <ParamField path="STRIX_LLM_MAX_RETRIES" default="5" type="integer">
-  Maximum number of retries for LLM API calls on transient failures.
+  How many times in a row an agent replays its turn after a transient provider
+  failure (a connection dropped mid-stream, a timeout, or a 5xx that outlasted
+  the per-request retries) before it stops with an error. The count resets as
+  soon as a model response completes, so isolated drops over a long scan never
+  add up. Raise it for providers that drop connections often or have outages
+  lasting minutes.
+</ParamField>
+
+<ParamField path="STRIX_LLM_RETRY_MAX_DELAY" default="90" type="integer">
+  Longest wait in seconds between turn replays. The wait doubles from 2 seconds
+  up to this cap, randomized over its upper half so agents hit by the same
+  outage do not retry in lockstep.
 </ParamField>
 
 <ParamField path="STRIX_REASONING_EFFORT" default="high" type="string">
