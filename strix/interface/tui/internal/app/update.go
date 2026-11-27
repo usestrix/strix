@@ -374,7 +374,7 @@ func (m *Model) scrollFromMouse(target scrollbarTarget, y, chatHeight int) {
 	switch target {
 	case scrollbarTrace:
 		height := max(1, chatHeight-2)
-		offset := scrollbarOffset(y-1, height, m.viewport.TotalLineCount(), m.viewport.VisibleLineCount())
+		offset := scrollbarOffset(y-1, height, m.viewport.TotalLineCount(), m.viewport.VisibleLineCount(), m.viewport.YOffset)
 		m.focus = focusChat
 		m.input.Blur()
 		m.viewport.SetYOffset(offset)
@@ -384,7 +384,7 @@ func (m *Model) scrollFromMouse(target scrollbarTarget, y, chatHeight int) {
 		total := len(m.agentDisplayRows(m.agentListWidth()))
 		m.focus = focusAgents
 		m.input.Blur()
-		m.agentOffset = scrollbarOffset(y-m.panelTop(panelAgents)-sidebarBodyInset, height, total, height)
+		m.agentOffset = scrollbarOffset(y-m.panelTop(panelAgents)-sidebarBodyInset, height, total, height, m.agentOffset)
 		m.keepAgentSelectionInWindow()
 		m.refreshViewport()
 	case scrollbarFindings:
@@ -393,21 +393,31 @@ func (m *Model) scrollFromMouse(target scrollbarTarget, y, chatHeight int) {
 		m.focus = focusVulnerabilities
 		m.input.Blur()
 		// The offset is a row, so dragging moves the list continuously.
-		m.vulnOffset = scrollbarOffset(y-m.panelTop(panelFindings)-sidebarBodyInset, height, totalRows, height)
+		m.vulnOffset = scrollbarOffset(y-m.panelTop(panelFindings)-sidebarBodyInset, height, totalRows, height, m.vulnOffset)
 		m.keepVulnerabilitySelectionInWindow()
 	case scrollbarMcp:
 		height := m.mcpPageSize()
 		total := len(m.snapshot.Connections)
 		m.focus = focusMcp
 		m.input.Blur()
-		m.mcpOffset = scrollbarOffset(y-m.panelTop(panelMcp)-sidebarBodyInset, height, total, height)
+		m.mcpOffset = scrollbarOffset(y-m.panelTop(panelMcp)-sidebarBodyInset, height, total, height, m.mcpOffset)
 	}
 }
 
-func scrollbarOffset(row, height, total, visible int) int {
+func scrollbarOffset(row, height, total, visible, current int) int {
 	maxOffset := max(0, total-visible)
-	if height <= 1 || maxOffset == 0 {
+	if height < 1 || maxOffset == 0 {
 		return 0
+	}
+	if height == 1 {
+		switch {
+		case row < 0:
+			return 0
+		case row > 0:
+			return maxOffset
+		default:
+			return min(max(0, current), maxOffset)
+		}
 	}
 	return maxOffset * min(max(0, row), height-1) / (height - 1)
 }

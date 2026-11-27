@@ -209,6 +209,32 @@ func TestFocusCyclingSkipsShrunkPanels(t *testing.T) {
 	}
 }
 
+func TestOneRowMcpScrollbarKeepsOffsetAndDragsToBothEnds(t *testing.T) {
+	m := New(nil)
+	m.width, m.height, m.ready, m.showSplash = 120, 16, true, false
+	m.snapshot.Connections = []protocol.Connection{{Name: "first"}, {Name: "middle"}, {Name: "last"}}
+	m.mcpOffset = 1
+	rect := panelRectOf(t, m, panelMcp)
+	if rect.height != 5 {
+		t.Fatalf("want an MCP panel with one body row, got height %d", rect.height)
+	}
+	view := m.View()
+	_, y := renderedCell(t, view, "middle")
+	y -= max(0, strings.Count(view, "\n")+1-m.height)
+	next, _ := m.updateMouse(tea.MouseMsg{X: m.width - 3, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = next.(Model)
+	if m.draggingScrollbar != scrollbarMcp || m.mcpOffset != 1 {
+		t.Errorf("press on one-row track: captured=%v offset=%d, want MCP and 1", m.draggingScrollbar, m.mcpOffset)
+	}
+	for _, test := range []struct{ y, offset int }{{y + 1, 2}, {y - 1, 0}} {
+		next, _ = m.updateMouse(tea.MouseMsg{X: m.width - 3, Y: test.y, Action: tea.MouseActionMotion})
+		m = next.(Model)
+		if m.mcpOffset != test.offset {
+			t.Errorf("drag to Y=%d: offset=%d, want %d", test.y, m.mcpOffset, test.offset)
+		}
+	}
+}
+
 func TestScrollbarHitTestFollowsPanelState(t *testing.T) {
 	m := panelsModel(t)
 	showSidebar, _, chatWidth, chatHeight := m.layout()
