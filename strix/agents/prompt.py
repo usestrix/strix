@@ -7,6 +7,7 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from strix.i18n import get_language_directive
 from strix.skills import get_available_skills, load_skills, skill_search_dirs
 from strix.utils.resource_paths import get_strix_resource_path
 
@@ -137,6 +138,7 @@ def render_system_prompt(
             interactive=interactive,
             parallel_tool_calls=parallel_tool_calls,
             is_root=is_root,
+            language_directive=get_language_directive(),
             system_prompt_context=system_prompt_context or {},
             include_scope=include_scope,
             report_tool=report_tool,

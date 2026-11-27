@@ -250,6 +250,10 @@ class ViewerSettings(BaseSettings):
 class Settings(BaseSettings):
     model_config = _BASE_CONFIG
 
+    language: str = Field(
+        default="en",
+        validation_alias=AliasChoices("STRIX_LANGUAGE", "language"),
+    )
     llm: LlmSettings = Field(default_factory=LlmSettings)
     dedupe: DedupeSettings = Field(default_factory=DedupeSettings)
     action_approvals: ActionApprovalSettings = Field(default_factory=ActionApprovalSettings)
