@@ -7,6 +7,10 @@ description: OAuth 2.0 and OIDC flow security testing covering redirect manipula
 
 OAuth and OIDC failures often enable account takeover, token theft, and cross-client token confusion. Treat every redirect, client identifier, and token exchange as an authorization boundary — not a convenience layer.
 
+## Redirect Parser Differentials
+
+When validation and redirect construction can consume different URL representations, load `vulnerabilities/url_parser_differentials` before custom payload lists. Complete its bounded matrix and closure record, then follow accepted rows through browser delivery, code redemption, and synthetic victim authority. Atomic delimiter tests or obvious foreign-host rejections do not close this surface.
+
 ## Attack Surface
 
 **Flows**
@@ -134,7 +138,7 @@ Authorization servers must support PKCE, public clients must use it, and confide
 ## Testing Methodology
 
 1. **Map flows** — Identify all grant types, clients, and redirect URIs in use
-2. **Redirect matrix** — For each client, fuzz redirect_uri validation with encoding and parser tricks
+2. **Redirect matrix** — For each client, test redirect_uri validation with encoding and parser differentials
 3. **CSRF** — Initiate OAuth without `state`; swap sessions mid-flow
 4. **PKCE** — Replay codes with wrong/missing verifier; downgrade challenge method
 5. **Token exchange** — Swap codes/tokens between clients; test cross-audience acceptance
