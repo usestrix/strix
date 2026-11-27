@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import sqlite3
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -18,11 +19,13 @@ import pytest
 from strix.core import execution
 from strix.core.paths import runtime_state_dir
 from strix.interface.tui.backend.live_view import TuiLiveView as GoTuiLiveView
+from strix.interface.tui.history import _readonly_database_uri, load_session_history
 from strix.interface.tui.live_view import (
     _INTERNAL_TURN_PREFIXES,
     TuiLiveView,
     _is_internal_agent_turn,
 )
+from strix.interface.viewer.transcript import build_run_state
 
 
 if TYPE_CHECKING:
@@ -60,6 +63,100 @@ def _user_messages(view: TuiLiveView) -> list[str]:
         for event in view.events
         if event.get("type") == "chat" and event["data"].get("role") == "user"
     ]
+
+
+@pytest.mark.parametrize("relative", [False, True])
+@pytest.mark.parametrize(
+    "directory_name",
+    [
+        "plain",
+        "project space",
+        "project#1",
+        "project%23",
+        "project%25",
+        pytest.param("project?1", marks=pytest.mark.skipif(os.name == "nt", reason="POSIX name")),
+    ],
+)
+def test_history_reads_the_exact_database_path_without_creating_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, directory_name: str, relative: bool
+) -> None:
+    run_dir = tmp_path / directory_name / "run"
+    item = {"role": "assistant", "content": "Saved answer"}
+    _write_run(run_dir, [item])
+    before = set(tmp_path.rglob("*"))
+    monkeypatch.chdir(tmp_path)
+
+    history = load_session_history(run_dir.relative_to(tmp_path) if relative else run_dir, ["root"])
+
+    assert set(tmp_path.rglob("*")) == before
+    assert history == [("root", item, "2026-01-01T00:00:01+00:00")]
+
+
+def test_uri_characters_do_not_hide_viewer_or_tui_history(tmp_path: Path) -> None:
+    run_dir = tmp_path / "project#1" / "run"
+    _write_run(run_dir, [{"role": "assistant", "content": "Saved answer"}])
+
+    tui = GoTuiLiveView()
+    tui.hydrate_from_run_dir(run_dir)
+    viewer = build_run_state(run_dir)
+
+    for events in (tui.events, viewer["events"]):
+        assert [event["data"]["content"] for event in events] == ["Saved answer"]
+
+
+def test_history_reader_sees_committed_wal_updates(tmp_path: Path) -> None:
+    run_dir = tmp_path / "project#1" / "run"
+    first = {"role": "assistant", "content": "First answer"}
+    second = {"role": "assistant", "content": "Second answer"}
+    _write_run(run_dir, [first])
+    database = runtime_state_dir(run_dir) / "agents.db"
+    writer = sqlite3.connect(database)
+    try:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute(
+            "INSERT INTO agent_messages VALUES (?, ?, ?, ?)",
+            (2, "root", json.dumps(second), "2026-01-01T00:00:02+00:00"),
+        )
+        writer.commit()
+        before = set(tmp_path.rglob("*"))
+        contents_before = database.read_bytes()
+
+        history = load_session_history(run_dir, ["root"])
+
+        assert [item for _, item, _ in history] == [first, second]
+        assert set(tmp_path.rglob("*")) == before
+        assert database.read_bytes() == contents_before
+    finally:
+        writer.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows path spelling tested as a POSIX filename")
+@pytest.mark.parametrize("path", [r"C:\runs\scan#%23.db", r"\\server\share\scan#%23.db"])
+def test_sqlite_uri_preserves_windows_path_spelling_without_an_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    """Exercise SQLite's URI parser locally without requiring a Windows share."""
+    monkeypatch.chdir(tmp_path)
+    windows_path = PureWindowsPath(path)
+    native_name = str(windows_path)
+    writer = sqlite3.connect(native_name)
+    try:
+        writer.execute("CREATE TABLE messages (content TEXT)")
+        writer.execute("INSERT INTO messages VALUES ('Saved answer')")
+        writer.commit()
+    finally:
+        writer.close()
+    before = set(tmp_path.iterdir())
+
+    reader = sqlite3.connect(_readonly_database_uri(windows_path), uri=True)
+    try:
+        assert reader.execute("SELECT content FROM messages").fetchall() == [("Saved answer",)]
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            reader.execute("INSERT INTO messages VALUES ('unexpected')")
+    finally:
+        reader.close()
+    assert set(tmp_path.iterdir()) == before
 
 
 def test_resume_hides_system_guidance_injected_as_user_turns(tmp_path: Path) -> None:

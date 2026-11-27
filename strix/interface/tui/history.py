@@ -4,18 +4,25 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote_from_bytes
 
 from strix.core.paths import runtime_state_dir
 
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from pathlib import Path, PurePath
 
 
 logger = logging.getLogger(__name__)
+
+
+def _readonly_database_uri(path: PurePath) -> str:
+    # Escape the native path without turning UNC server names into URI authorities.
+    return f"file:{quote_from_bytes(os.fsencode(path), safe='')}?mode=ro"
 
 
 def load_session_history(run_dir: Path, agent_ids: Any) -> list[tuple[str, dict[str, Any], str]]:
@@ -31,7 +38,7 @@ def load_session_history(run_dir: Path, agent_ids: Any) -> list[tuple[str, dict[
     conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(
-            f"file:{agents_db}?mode=ro",
+            _readonly_database_uri(agents_db),
             uri=True,
             check_same_thread=False,
         )
