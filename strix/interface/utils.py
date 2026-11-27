@@ -5,15 +5,18 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
-from urllib.parse import parse_qs, urlparse
+from pathlib import Path, PurePosixPath
+from typing import Any, cast
+from urllib.parse import parse_qs, unquote_to_bytes, urlparse, urlsplit
 
 import requests
+import yaml
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -1500,6 +1503,313 @@ def rewrite_localhost_targets(targets_info: list[dict[str, Any]], host_gateway: 
 #: from wherever they happen to live on the host.
 API_SPEC_WORKSPACE_SUBDIR = "api-specs"
 
+_API_SPEC_EXTENSIONS = frozenset({".json", ".yaml", ".yml"})
+_API_SPEC_MAX_FILES = 100
+_API_SPEC_MAX_TOTAL_BYTES = 25 * 1024 * 1024
+_API_SPEC_MAX_REF_DEPTH = 25
+_API_SPEC_MAX_DOCUMENT_NODES = 100_000
+
+
+@dataclass(frozen=True)
+class _ApiSpecBundle:
+    main_name: str
+    files: dict[Path, bytes]
+
+
+def _safe_api_spec_label(path: Path) -> str:
+    label = re.sub(r"[^A-Za-z0-9._-]", "?", path.name)
+    return label[:80] or "referenced file"
+
+
+def _parse_api_spec_document(content: bytes, label: str) -> Any:
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"API spec file '{label}' must contain UTF-8 text.") from exc
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, RecursionError):
+        try:
+            return yaml.safe_load(text)
+        except (yaml.YAMLError, RecursionError) as exc:
+            raise ValueError(f"API spec file '{label}' is not valid JSON or YAML.") from exc
+
+
+def _iter_api_spec_refs(document: Any, label: str) -> Iterator[str]:
+    stack = [document]
+    seen_containers: set[int] = set()
+    nodes = 0
+    while stack:
+        node = stack.pop()
+        nodes += 1
+        if nodes > _API_SPEC_MAX_DOCUMENT_NODES:
+            raise ValueError(f"API spec file '{label}' is too complex to stage safely.")
+        if isinstance(node, dict):
+            mapping = cast("dict[str, Any]", node)
+            identity = id(mapping)
+            if identity in seen_containers:
+                continue
+            seen_containers.add(identity)
+            reference = mapping.get("$ref")
+            if isinstance(reference, str):
+                yield reference
+            stack.extend(mapping.values())
+        elif isinstance(node, list):
+            sequence = cast("list[Any]", node)  # type: ignore[redundant-cast]
+            identity = id(sequence)
+            if identity in seen_containers:
+                continue
+            seen_containers.add(identity)
+            stack.extend(sequence)
+
+
+def _path_has_symlink(root: Path, path: Path) -> bool:
+    current = root
+    if current.is_symlink():
+        return True
+    for part in path.relative_to(root).parts:
+        current /= part
+        if current.is_symlink():
+            return True
+    return False
+
+
+def _read_api_spec_file(path: Path, root: Path, remaining_bytes: int) -> bytes:
+    label = _safe_api_spec_label(path)
+    if _path_has_symlink(root, path):
+        raise ValueError(f"API spec file '{label}' is a symbolic link and cannot be staged.")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError(f"Cannot safely read referenced API spec file '{label}'.") from exc
+    try:
+        file_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise ValueError(f"Referenced API spec file '{label}' is not a regular file.")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            content = stream.read(remaining_bytes + 1)
+    finally:
+        os.close(descriptor)
+    if len(content) > remaining_bytes:
+        raise ValueError(
+            f"API spec dependencies exceed the {_API_SPEC_MAX_TOTAL_BYTES}-byte staging limit."
+        )
+    return content
+
+
+def _resolve_local_api_spec_ref(reference: str, referrer: Path, root: Path) -> Path | None:
+    try:
+        parsed = urlsplit(reference)
+    except ValueError as exc:
+        raise ValueError(
+            f"API spec file '{_safe_api_spec_label(referrer)}' has an invalid reference URI."
+        ) from exc
+    if parsed.scheme or parsed.netloc:
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            return None
+        raise ValueError(
+            f"API spec file '{_safe_api_spec_label(referrer)}' uses an unsupported reference URI."
+        )
+    if not parsed.path:
+        return None
+    if parsed.query:
+        raise ValueError(
+            f"API spec file '{_safe_api_spec_label(referrer)}' uses an unsupported local reference."
+        )
+    try:
+        decoded = unquote_to_bytes(parsed.path).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"API spec file '{_safe_api_spec_label(referrer)}' has an invalid local reference."
+        ) from exc
+    if not decoded or "\x00" in decoded or "\\" in decoded:
+        raise ValueError(
+            f"API spec file '{_safe_api_spec_label(referrer)}' has an invalid local reference."
+        )
+    relative = PurePosixPath(decoded)
+    if relative.is_absolute():
+        raise ValueError(
+            f"A local reference from '{_safe_api_spec_label(referrer)}' points outside the "
+            "API spec directory. Bundle the specification under one directory."
+        )
+    if relative.suffix.lower() not in _API_SPEC_EXTENSIONS:
+        raise ValueError(
+            f"Local API spec dependency '{_safe_api_spec_label(Path(relative.name))}' must be "
+            "a JSON or YAML file."
+        )
+
+    candidate = referrer.parent.joinpath(*relative.parts).absolute()
+    if not candidate.is_relative_to(root):
+        raise ValueError(
+            f"A local reference from '{_safe_api_spec_label(referrer)}' points outside the "
+            "API spec directory. Bundle the specification under one directory."
+        )
+    if _path_has_symlink(root, candidate):
+        raise ValueError(
+            f"API spec file '{_safe_api_spec_label(candidate)}' is a symbolic link and "
+            "cannot be staged."
+        )
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(
+            f"Referenced API spec file '{_safe_api_spec_label(candidate)}' does not exist "
+            "or cannot be read."
+        ) from exc
+    if not resolved.is_relative_to(root.resolve()):
+        raise ValueError(
+            f"A local reference from '{_safe_api_spec_label(referrer)}' points outside the "
+            "API spec directory. Bundle the specification under one directory."
+        )
+    return resolved
+
+
+def _collect_api_spec_bundle(
+    source: Path,
+    *,
+    follow_refs: bool,
+    available_files: int,
+    available_bytes: int,
+) -> _ApiSpecBundle:
+    source = source.absolute()
+    if source.is_symlink():
+        raise ValueError(
+            f"API spec file '{_safe_api_spec_label(source)}' is a symbolic link and "
+            "cannot be staged."
+        )
+    try:
+        root = source.parent.resolve(strict=True)
+        source = source.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(
+            f"Cannot safely read API spec file '{_safe_api_spec_label(source)}'."
+        ) from exc
+    if source.suffix.lower() not in _API_SPEC_EXTENSIONS:
+        raise ValueError("API specifications and their dependencies must be JSON or YAML files.")
+
+    queued: list[tuple[Path, int]] = [(source, 0)]
+    visited: set[Path] = set()
+    files: dict[Path, bytes] = {}
+    total_bytes = 0
+    while queued:
+        path, depth = queued.pop()
+        if path in visited:
+            continue
+        if depth > _API_SPEC_MAX_REF_DEPTH:
+            raise ValueError(
+                f"API spec reference depth exceeds the {_API_SPEC_MAX_REF_DEPTH}-level limit."
+            )
+        if len(visited) >= available_files:
+            raise ValueError(
+                f"API spec dependencies exceed the {_API_SPEC_MAX_FILES}-file staging limit."
+            )
+        content = _read_api_spec_file(path, root, available_bytes - total_bytes)
+        total_bytes += len(content)
+        visited.add(path)
+        relative_path = path.relative_to(root)
+        files[relative_path] = content
+        if not follow_refs:
+            continue
+        label = _safe_api_spec_label(relative_path)
+        document = _parse_api_spec_document(content, label)
+        for reference in _iter_api_spec_refs(document, label):
+            dependency = _resolve_local_api_spec_ref(reference, path, root)
+            if dependency is not None and dependency not in visited:
+                queued.append((dependency, depth + 1))
+    return _ApiSpecBundle(main_name=source.name, files=files)
+
+
+def _unique_api_spec_name(name: str, used: set[str]) -> str:
+    stem, suffix = Path(name).stem, Path(name).suffix
+    candidate = name
+    count = 1
+    while candidate.casefold() in used:
+        count += 1
+        candidate = f"{stem}-{count}{suffix}"
+    used.add(candidate.casefold())
+    return candidate
+
+
+def _collect_api_spec_bundles(specs: list[dict[str, Any]]) -> list[_ApiSpecBundle]:
+    bundles: list[_ApiSpecBundle] = []
+    remaining_files = _API_SPEC_MAX_FILES
+    remaining_bytes = _API_SPEC_MAX_TOTAL_BYTES
+    for target in specs:
+        bundle = _collect_api_spec_bundle(
+            Path(str(target["details"]["target_spec"])),
+            follow_refs=target["details"].get("spec_format") in {"openapi", "swagger"},
+            available_files=remaining_files,
+            available_bytes=remaining_bytes,
+        )
+        bundles.append(bundle)
+        remaining_files -= len(bundle.files)
+        remaining_bytes -= sum(len(content) for content in bundle.files.values())
+    return bundles
+
+
+def _layout_api_spec_bundles(
+    bundles: list[_ApiSpecBundle],
+) -> list[tuple[Path, dict[Path, bytes]]]:
+    used_names: set[str] = set()
+    allocated_names = [_unique_api_spec_name(bundle.main_name, used_names) for bundle in bundles]
+    used_root_entries = {
+        name.casefold()
+        for name, bundle in zip(allocated_names, bundles, strict=True)
+        if len(bundle.files) == 1
+    }
+    layouts: list[tuple[Path, dict[Path, bytes]]] = []
+    for name, bundle in zip(allocated_names, bundles, strict=True):
+        if len(bundles) == 1 or len(bundle.files) == 1:
+            main_path = Path(name)
+            files = (
+                {main_path: next(iter(bundle.files.values()))}
+                if len(bundle.files) == 1
+                else dict(bundle.files)
+            )
+        else:
+            namespace = _unique_api_spec_name(Path(name).stem, used_root_entries)
+            main_path = Path(namespace) / bundle.main_name
+            files = {
+                Path(namespace) / relative: content for relative, content in bundle.files.items()
+            }
+        layouts.append((main_path, files))
+    return layouts
+
+
+def _publish_api_spec_layouts(layouts: list[tuple[Path, dict[Path, bytes]]], run_name: str) -> Path:
+    temporary_root = Path(tempfile.gettempdir())
+    try:
+        temporary_root.mkdir(parents=True, exist_ok=True)
+        temporary_root = temporary_root.resolve(strict=True)
+        staging_parent = temporary_root / "strix_api_specs"
+        if staging_parent.is_symlink():
+            raise ValueError("API specification staging directory cannot be a symbolic link.")
+        staging_parent.mkdir(parents=True, exist_ok=True)
+        if staging_parent.resolve(strict=True) != staging_parent:
+            raise ValueError("API specification staging directory is not safe to use.")
+    except OSError as exc:
+        raise ValueError("Cannot create a safe API specification staging directory.") from exc
+
+    staging = staging_parent / run_name
+    temporary = Path(tempfile.mkdtemp(prefix=f".{run_name}-", dir=staging_parent))
+    try:
+        for _main_path, files in layouts:
+            for relative, content in files.items():
+                destination = temporary / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(content)
+        if staging.is_symlink() or staging.is_file():
+            staging.unlink()
+        elif staging.exists():
+            shutil.rmtree(staging)
+        temporary.rename(staging)
+    except Exception:
+        if temporary.exists():
+            shutil.rmtree(temporary)
+        raise
+    return staging
+
 
 def write_fetched_collection(collection: dict[str, Any], collection_uid: str) -> str:
     """Write a collection fetched from the Postman API to a local file.
@@ -1515,33 +1825,29 @@ def write_fetched_collection(collection: dict[str, Any], collection_uid: str) ->
 
 
 def stage_api_specs(targets_info: list[dict[str, Any]], run_name: str) -> list[dict[str, Any]]:
-    """Copy every ``api_spec`` target into one directory for the sandbox.
+    """Stage API specs and their bounded local ``$ref`` closure for the sandbox.
 
-    A spec is a single file the agent reads, not a tree it works in, so it is
-    copied to a per-run staging directory that is exposed at
-    ``/workspace/api-specs`` instead of mounting its host location. Each target's
-    ``workspace_path`` records where the agent will find it.
+    Only explicit relative JSON/YAML references below each spec directory are
+    followed. Remote references remain unchanged, and nothing is published until
+    every local dependency has been validated and copied.
     """
     specs = [t for t in targets_info if t.get("type") == "api_spec"]
     if not specs:
         return []
-
-    staging = Path(tempfile.gettempdir()) / "strix_api_specs" / run_name
-    staging.mkdir(parents=True, exist_ok=True)
-
-    used: set[str] = set()
     for target in specs:
-        details = target["details"]
-        source = Path(str(details["target_spec"]))
-        name = source.name
-        stem, suffix = source.stem, source.suffix
-        count = 1
-        while name in used:
-            count += 1
-            name = f"{stem}-{count}{suffix}"
-        used.add(name)
-        shutil.copy2(source, staging / name)
-        details["workspace_path"] = f"/workspace/{API_SPEC_WORKSPACE_SUBDIR}/{name}"
+        target["details"].pop("workspace_path", None)
+
+    safe_run_name = sanitize_name(run_name)
+    if safe_run_name != run_name or safe_run_name in {".", ".."}:
+        raise ValueError("Invalid run name for API specification staging.")
+
+    layouts = _layout_api_spec_bundles(_collect_api_spec_bundles(specs))
+    staging = _publish_api_spec_layouts(layouts, safe_run_name)
+
+    for target, (main_path, _files) in zip(specs, layouts, strict=True):
+        target["details"]["workspace_path"] = (
+            f"/workspace/{API_SPEC_WORKSPACE_SUBDIR}/{main_path.as_posix()}"
+        )
 
     return [
         {
