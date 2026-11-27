@@ -72,7 +72,7 @@ User.where(Arel.sql("id = #{params[:id]}"))
 Black-box:
 ```
 GET /users?sort=email;select+1--
-GET /users?sort=CASE+WHEN+(SELECT+1)=1+THEN+email+ELSE+id+END
+GET /users?sort=CASE+WHEN+(SELECT+1)=1+THEN+id+ELSE+-id+END
 GET /users?sort=email+ASC;%20SELECT%20pg_sleep(3)--
 ```
 Oracle: SQL error text, timing, or ORDER BY CASE flipping row order. White-box: the `rg` above plus Brakeman `SQL Injection`.
