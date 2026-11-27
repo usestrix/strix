@@ -125,7 +125,8 @@ port_open() {{ (exec 3<>/dev/tcp/127.0.0.1/{port}) 2>/dev/null; }}
 for _ in $(seq 120); do [ -e /etc/profile.d/proxy.sh ] && break; sleep 0.25; done
 sudo pkill -x caido-cli
 for _ in $(seq 40); do port_open || break; sleep 0.25; done
-setsid nohup {proxy} >/dev/null 2>&1 </dev/null &
+{proxy}
+setsid nohup "$@" >/dev/null 2>&1 </dev/null &
 for _ in $(seq 80); do port_open && exit 0; sleep 0.25; done
 exit 1
 """
@@ -146,12 +147,17 @@ async def start_proxy_fallback(
     destination itself.
     """
     if upstream is None:
-        # Ignored hosts are tunnelled, so TLS is not intercepted.
-        proxy = f"mitmdump -q --listen-host 127.0.0.1 -p {port} --ignore-hosts '.*'"
+        # mitmdump tunnels ignored hosts, so TLS is not intercepted. ncat's own
+        # HTTP proxy rejects plain-HTTP methods other than GET, HEAD and POST.
+        proxy = (
+            "if command -v mitmdump >/dev/null; then"
+            f" set -- mitmdump -q --listen-host 127.0.0.1 -p {port} --ignore-hosts '.*';"
+            f" else set -- ncat -l 127.0.0.1 {port} -k --proxy-type http; fi"
+        )
     elif _UPSTREAM_RE.fullmatch(upstream):
         host, _, upstream_port = upstream.rpartition(":")
         relay = shlex.quote(f"ncat {host} {upstream_port}")
-        proxy = f"ncat -l 127.0.0.1 {port} -k --sh-exec {relay}"
+        proxy = f"set -- ncat -l 127.0.0.1 {port} -k --sh-exec {relay}"
     else:
         raise ValueError(f"Invalid proxy upstream: {upstream!r}")
 
