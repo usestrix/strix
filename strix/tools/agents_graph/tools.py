@@ -16,7 +16,7 @@ from strix.core.agents import ACTIVE_STATUSES, Status, coordinator_from_context
 from strix.core.execution import notify_parent_on_terminal
 from strix.core.hooks import LLM_TURN_KEY
 from strix.report.state import get_global_report_state
-from strix.skills import validate_requested_skills
+from strix.skills import resolve_requested_skills, validate_requested_skills
 
 
 logger = logging.getLogger(__name__)
@@ -564,7 +564,7 @@ async def create_agent(
             default=str,
         )
 
-    skill_list = list(skills or [])
+    skill_list = resolve_requested_skills(list(skills or []))
     skill_error = validate_requested_skills(skill_list)
     if skill_error:
         return json.dumps(
@@ -809,13 +809,12 @@ async def stop_agent(
     if current_status not in ACTIVE_STATUSES:
         return json.dumps(
             {
-                "success": False,
-                "error": (
-                    f"Agent {target_agent_id} is already '{current_status}'; "
-                    "stop_agent only acts on running/waiting/paused agents — use "
-                    "view_agent_graph to find still-active descendants and "
-                    "stop them individually, or send_message_to_agent if you "
-                    "want to wake this one with new instructions"
+                "success": True,
+                "stopped": [],
+                "message": (
+                    f"Agent {target_agent_id} is already '{current_status}'; nothing to stop. "
+                    "Use view_agent_graph to find still-active descendants and stop them "
+                    "individually"
                 ),
                 "target_agent_id": target_agent_id,
                 "current_status": current_status,

@@ -53,6 +53,27 @@ _REQ_FIELD_MAP: dict[SortBy, tuple[str, str]] = {
 }
 
 
+# The SDK's GraphQL layer (gql) aborts every operation after 10 seconds by
+# default, with a ``TimeoutError`` that has no message. A filter over a large
+# history routinely needs longer than that, so allow more time.
+GRAPHQL_TIMEOUT_SECONDS = 60
+# For metadata-only reads, which answer in well under a second: a call that
+# takes longer got no answer at all and is retried.
+GRAPHQL_READ_TIMEOUT_SECONDS = 20
+
+
+def extend_graphql_timeout(client: Client, seconds: int = GRAPHQL_TIMEOUT_SECONDS) -> None:
+    """Raise the SDK's default GraphQL operation timeout on ``client``.
+
+    The SDK builds a new GraphQL client whenever the auth token changes
+    (``connect()`` included), which resets the timeout, so call this before
+    each operation rather than once at construction.
+    """
+    gql_client = getattr(getattr(client, "graphql", None), "_http_client", None)
+    if gql_client is not None and hasattr(gql_client, "execute_timeout"):
+        gql_client.execute_timeout = seconds
+
+
 def caido_url() -> str:
     return os.environ.get("STRIX_CAIDO_URL", _DEFAULT_CAIDO_URL).rstrip("/")
 
@@ -84,8 +105,13 @@ async def _new_client() -> Client:
     from caido_sdk_client import Client, TokenAuthOptions
 
     token = await asyncio.to_thread(_login_as_guest)
-    client = Client(caido_url(), auth=TokenAuthOptions(token=token))
+    client = Client(
+        caido_url(),
+        auth=TokenAuthOptions(token=token),
+        timeout_ms=GRAPHQL_TIMEOUT_SECONDS * 1000,
+    )
     await client.connect()
+    extend_graphql_timeout(client)
     return client
 
 
@@ -116,6 +142,7 @@ async def call_with_client[T](fn: Callable[[Client], Awaitable[T]]) -> T:
         if client is None:
             client = await _new_client()
             _CLIENT_CACHE["default"] = client
+        extend_graphql_timeout(client)
         return await fn(client)
 
 
@@ -147,6 +174,69 @@ async def list_requests_with_client(
     target, field = _REQ_FIELD_MAP[sort_by]
     builder = (builder.descending if sort_order == "desc" else builder.ascending)(target, field)
     return await builder.execute()
+
+
+_REQUEST_SUMMARIES_QUERY = """
+query RequestSummaries(
+  $first: Int
+  $after: String
+  $filter: HTTPQLInput
+  $order: RequestResponseOrderInput
+  $scopeId: ID
+) {
+  requests(first: $first, after: $after, filter: $filter, order: $order, scopeId: $scopeId) {
+    edges {
+      cursor
+      node {
+        id host port method path query isTls createdAt
+        response { id statusCode roundtripTime length createdAt }
+      }
+    }
+    pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
+  }
+}
+"""
+
+_ORDER_BY: dict[SortBy, str] = {
+    "timestamp": "CREATED_AT",
+    "host": "HOST",
+    "method": "METHOD",
+    "path": "PATH",
+    "source": "SOURCE",
+    "status_code": "RESP_STATUS_CODE",
+    "response_time": "RESP_ROUNDTRIP_TIME",
+    "response_size": "RESP_LENGTH",
+}
+
+
+async def list_request_summaries_with_client(
+    client: CaidoClient,
+    *,
+    httpql_filter: str | None = None,
+    first: int = 50,
+    after: str | None = None,
+    sort_by: SortBy = "timestamp",
+    sort_order: SortOrder = "desc",
+    scope_id: str | None = None,
+) -> dict[str, Any]:
+    """List requests without their raw bytes.
+
+    ``list_requests_with_client`` always downloads the raw request and response
+    of every row, which makes a page of large exchanges slow. Callers that only
+    show metadata use this instead. Returns the GraphQL ``requests`` connection.
+    """
+    raw = await client.graphql.query(
+        _REQUEST_SUMMARIES_QUERY,
+        variables={
+            "first": first,
+            "after": after or None,
+            "filter": {"code": httpql_filter} if httpql_filter else None,
+            "order": {"by": _ORDER_BY[sort_by], "ordering": sort_order.upper()},
+            "scopeId": scope_id or None,
+        },
+    )
+    connection: dict[str, Any] = raw.get("requests") or {}
+    return connection
 
 
 async def get_request_with_client(
