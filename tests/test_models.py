@@ -65,6 +65,35 @@ def test_other_routes_keep_strict_tool_schemas(model_name: str) -> None:
     assert supports_strict_tool_schemas(model_name)
 
 
+def test_custom_base_url_disables_strict_tool_schemas(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A gateway's strict support cannot be inferred from the model name."""
+    settings = _settings(monkeypatch, "gpt-5.4", "https://gateway.example/v1")
+    assert not supports_strict_tool_schemas("gpt-5.4", settings)
+
+
+@pytest.mark.parametrize("override", ["0", "false", "1", "true"])
+@pytest.mark.parametrize("model", ["gpt-5.4", "claude-sonnet-4-6"])
+def test_strict_tool_schemas_env_override(
+    monkeypatch: pytest.MonkeyPatch, override: str, model: str
+) -> None:
+    """An explicit override wins over the model name, Claude detection, and the base URL."""
+    monkeypatch.setenv("STRIX_STRICT_TOOL_SCHEMAS", override)
+    settings = _settings(monkeypatch, model, "https://gateway.example/v1")
+    expected = override in {"1", "true"}
+    assert supports_strict_tool_schemas(model, settings) is expected
+
+
+@pytest.mark.parametrize(
+    "url", ["https://api.openai.com/v1", "https://api.openai.com", "https://API.OPENAI.COM/v1/"]
+)
+def test_official_openai_base_url_keeps_strict_tool_schemas(
+    monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    """Pinning the official endpoint explicitly must not lose strict schemas."""
+    settings = _settings(monkeypatch, "gpt-5.4", url)
+    assert supports_strict_tool_schemas("gpt-5.4", settings) is True
+
+
 @pytest.mark.parametrize(
     ("model_name", "litellm"),
     [
