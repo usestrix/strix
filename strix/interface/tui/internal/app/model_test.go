@@ -821,6 +821,67 @@ func TestAgentTreeUsesDepthFirstOrderAndStableSelectionPosition(t *testing.T) {
 	}
 }
 
+func renderedCell(t *testing.T, view, label string) (int, int) {
+	t.Helper()
+	for y, line := range strings.Split(ansi.Strip(view), "\n") {
+		if i := strings.Index(line, label); i >= 0 {
+			return ansi.StringWidth(line[:i]), y
+		}
+	}
+	t.Fatalf("missing rendered label %q", label)
+	return 0, 0
+}
+
+func TestClickUsesRenderedRowsForMultilineAgentsAndFindings(t *testing.T) {
+	m := New(nil)
+	m.width, m.height, m.ready = 130, 50, true
+	m.showSplash = false
+	m.snapshot.Agents = []protocol.Agent{
+		{ID: "one", Name: "Worker One\ncontinued\nthird line"},
+		{ID: "two", Name: "Worker Two"},
+	}
+	m.snapshot.Vulnerabilities = []map[string]any{{"title": "ALPHA"}, {"title": "BRAVO"}}
+	m.resizeViewport()
+	view := m.View()
+	m.selectedAgent = 1
+	for _, test := range []struct {
+		label string
+		agent int
+	}{{"continued", 0}, {"Worker Two", 1}} {
+		x, y := renderedCell(t, view, test.label)
+		next, _ := m.updateMouse(tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+		m = next.(Model)
+		if m.selectedAgent != test.agent {
+			t.Fatalf("clicking %q selected agent %d, want %d", test.label, m.selectedAgent, test.agent)
+		}
+	}
+	x, y := renderedCell(t, view, "BRAVO")
+	next, _ := m.updateMouse(tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	if got := next.(Model); got.selectedVuln != 1 || got.modal != modalVulnerability {
+		t.Fatalf("clicking BRAVO opened modal %v for finding %d", got.modal, got.selectedVuln)
+	}
+}
+
+func TestClickUsesVisibleRowsInClippedFrame(t *testing.T) {
+	m := New(nil)
+	m.width, m.height, m.ready = 120, 14, true
+	m.showSplash = false
+	url := "https://example.test/" + strings.Repeat("segment/", 15)
+	m.snapshot.ViewerURL = &url
+	m.snapshot.ViewerStatus = "running"
+	m.snapshot.Agents = []protocol.Agent{{ID: "one", Name: "Clip Worker"}}
+	m.resizeViewport()
+	rows := strings.Split(m.View(), "\n")
+	if len(rows) <= m.height {
+		t.Fatal("test frame must exceed terminal height")
+	}
+	x, y := renderedCell(t, strings.Join(rows[len(rows)-m.height:], "\n"), "Clip Worker")
+	next, _ := m.updateMouse(tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	if got := next.(Model); got.focus != focusAgents {
+		t.Fatalf("clicking the visible agent focused %v", got.focus)
+	}
+}
+
 func TestAgentClickUsesRenderedWindowAfterResize(t *testing.T) {
 	model := New(nil)
 	model.width, model.height = 130, 20
@@ -837,8 +898,14 @@ func TestAgentClickUsesRenderedWindowAfterResize(t *testing.T) {
 
 	model.height = 60
 	model.ensureAgentVisible()
-	_, _, chatWidth, _ := model.layout()
-	updated, _ := model.updateMouse(tea.MouseMsg{X: chatWidth + 1, Y: model.viewerHeight() + 2, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	model.ready = true
+	model.showSplash = false
+	x, y := renderedCell(t, model.View(), "Agent 00")
+	updated, _ := model.updateMouse(tea.MouseMsg{X: x, Y: y - 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	if got := updated.(Model).selectedAgent; got != 15 {
+		t.Fatalf("clicking the spacer selected snapshot index %d", got)
+	}
+	updated, _ = model.updateMouse(tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 	result := updated.(Model)
 	if result.selectedAgent != 0 {
 		t.Fatalf("click selected snapshot index %d instead of first rendered agent", result.selectedAgent)
@@ -1062,6 +1129,7 @@ func TestMcpRosterScrollsByKeyWheelAndScrollbar(t *testing.T) {
 	model := New(nil)
 	model.width, model.height = 150, 35
 	model.ready = true
+	model.showSplash = false
 	conns := make([]protocol.Connection, 0, 12)
 	for i := 0; i < 12; i++ {
 		conns = append(conns, protocol.Connection{Name: fmt.Sprintf("conn-%02d", i), ToolCount: 2})
@@ -1110,6 +1178,9 @@ func TestMcpRosterScrollsByKeyWheelAndScrollbar(t *testing.T) {
 	model = updated.(Model)
 	if model.draggingScrollbar != scrollbarMcp || model.mcpOffset == 0 {
 		t.Fatalf("mcp scrollbar click failed: drag=%v offset=%d", model.draggingScrollbar, model.mcpOffset)
+	}
+	if !strings.Contains(ansi.Strip(model.View()), "conn-11") {
+		t.Fatal("scrolling to the bottom did not reveal the last connection")
 	}
 }
 

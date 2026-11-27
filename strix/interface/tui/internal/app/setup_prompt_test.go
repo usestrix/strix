@@ -294,6 +294,16 @@ func TestMountPromptButtonsAreClickable(t *testing.T) {
 			if index < 0 {
 				continue
 			}
+			if row != strings.Count(panel, "\n")-1 {
+				result, cmd := model.updateModalMouse(tea.MouseMsg{
+					X: left + ansi.StringWidth(plain[:index]) + 1, Y: top + row,
+					Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+				})
+				if result.(Model).modal != modalConfirmMount || cmd != nil {
+					t.Fatalf("clicking %s outside the button answered the prompt", testCase.label)
+				}
+				continue
+			}
 			updated, cmd := model.updateModalMouse(tea.MouseMsg{
 				X: left + ansi.StringWidth(plain[:index]) + 1, Y: top + row,
 				Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,

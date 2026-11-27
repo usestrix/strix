@@ -216,14 +216,17 @@ func TestScrollbarHitTestFollowsPanelState(t *testing.T) {
 	at := func(y int) scrollbarTarget {
 		return m.scrollbarAt(tea.MouseMsg{X: m.width - 3, Y: y}, showSidebar, chatWidth, chatHeight)
 	}
-	if at(agents.top+2) != scrollbarAgents {
+	if at(agents.top+3) != scrollbarAgents {
 		t.Fatalf("overflowing agent tree should expose its scrollbar")
+	}
+	if at(agents.top+2) != scrollbarNone {
+		t.Fatalf("the spacer row is not part of the scrollbar")
 	}
 	if at(agents.top+1) != scrollbarNone {
 		t.Fatalf("the header row is a control, not a scrollbar")
 	}
 	findings := panelRectOf(t, m, panelFindings)
-	if at(findings.top+2) != scrollbarNone {
+	if at(findings.top+3) != scrollbarNone {
 		t.Fatalf("a findings list that fits has no scrollbar to grab")
 	}
 

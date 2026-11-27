@@ -16,21 +16,9 @@ type agentTreeEntry struct {
 	approvalStatus bool
 }
 
-func (m Model) agentDisplayEntries() []agentTreeEntry {
-	var rows []agentTreeEntry
-	for _, entry := range agentTreeEntries(m.snapshot.Agents, m.collapsedAgents) {
-		rows = append(rows, entry)
-		agent := m.snapshot.Agents[entry.index]
-		pending := agent.ApprovalPending
-		for _, approval := range m.snapshot.PendingApprovals {
-			pending = pending || approval.AgentID == agent.ID
-		}
-		if pending {
-			entry.approvalStatus = true
-			rows = append(rows, entry)
-		}
-	}
-	return rows
+type agentDisplayRow struct {
+	agentTreeEntry
+	text string
 }
 
 // agentTreeEntries mirrors Textual Tree's depth-first ordering while retaining
@@ -168,18 +156,27 @@ func (m Model) selectedAgentCanStop() bool {
 }
 
 func (m Model) agentsView(width, height int) string {
-	// The tree's root ("Agents") is hidden (show_root = False), so no header row
-	// is drawn — only the agent nodes.
+	return renderAgentRows(m.agentDisplayRows(width), m.agentOffset, height)
+}
+
+func renderAgentRows(rows []agentDisplayRow, offset, height int) string {
+	start := windowStart(offset, len(rows), height)
+	end := min(len(rows), start+height)
 	var lines []string
+	for _, row := range rows[start:end] {
+		lines = append(lines, row.text)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) agentListWidth() int {
+	return max(1, m.sidebarInnerWidth()-1)
+}
+
+func (m Model) agentDisplayRows(width int) []agentDisplayRow {
+	var rows []agentDisplayRow
 	statusIcons := map[string]string{"running": "⚪", "waiting": "⏸", "budget_paused": "⏸", "completed": "🟢", "failed": "🔴", "crashed": "🔴", "stopped": "■"}
-	entries := m.agentDisplayEntries()
-	start := windowStart(m.agentOffset, len(entries), height)
-	end := min(len(entries), start+height)
-	for _, entry := range entries[start:end] {
-		if entry.approvalStatus {
-			lines = append(lines, render.Dim().Render(truncate(entry.prefix+"  waiting for approval", width)))
-			continue
-		}
+	for _, entry := range agentTreeEntries(m.snapshot.Agents, m.collapsedAgents) {
 		agent := m.snapshot.Agents[entry.index]
 		icon := statusIcons[agent.Status]
 		if icon == "" {
@@ -205,12 +202,25 @@ func (m Model) agentsView(width, height int) string {
 		if entry.index == m.selectedAgent {
 			labelStyle = labelStyle.Foreground(treeCursorFg).Background(treeCursorBg).Bold(true)
 		}
-		room := max(1, width-lipgloss.Width(entry.prefix))
-		lines = append(lines,
-			lipgloss.NewStyle().Foreground(treeGuide).Render(entry.prefix)+
-				labelStyle.Render(truncate(label, room)))
+		for i, line := range strings.Split(label, "\n") {
+			prefix := entry.prefix
+			if i > 0 {
+				prefix = strings.Repeat(" ", lipgloss.Width(prefix))
+			}
+			room := max(1, width-lipgloss.Width(prefix))
+			text := lipgloss.NewStyle().Foreground(treeGuide).Render(prefix) + labelStyle.Render(truncate(line, room))
+			rows = append(rows, agentDisplayRow{entry, text})
+		}
+		pending := agent.ApprovalPending
+		for _, approval := range m.snapshot.PendingApprovals {
+			pending = pending || approval.AgentID == agent.ID
+		}
+		if pending {
+			entry.approvalStatus = true
+			rows = append(rows, agentDisplayRow{entry, render.Dim().Render(truncate(entry.prefix+"  waiting for approval", width))})
+		}
 	}
-	return strings.Join(lines, "\n")
+	return rows
 }
 
 // agentVulnCount counts vulnerabilities attributed to an agent, matching the
@@ -226,34 +236,49 @@ func (m Model) agentVulnCount(agentID string) int {
 }
 
 func (m *Model) ensureAgentVisible() {
-	entries := m.agentDisplayEntries()
+	entries := m.agentDisplayRows(m.agentListWidth())
 	if len(entries) == 0 {
 		m.agentOffset = 0
 		return
 	}
 	rows := m.agentPageSize()
-	row := selectedAgentRow(entries, m.selectedAgent)
+	row, last := selectedAgentDisplayBounds(entries, m.selectedAgent)
 	if row < m.agentOffset {
 		m.agentOffset = row
 	} else if row >= m.agentOffset+rows {
 		m.agentOffset = row - rows + 1
+	} else if last >= m.agentOffset+rows {
+		m.agentOffset = min(row, last-rows+1)
 	}
 	m.agentOffset = min(m.agentOffset, max(0, len(entries)-rows))
 }
 
 func (m Model) agentPageSize() int {
 	_, _, _, agentHeight := m.sidebarHeights()
-	return max(1, agentHeight-4)
+	return max(1, sidebarBodyRows(agentHeight))
+}
+
+func selectedAgentDisplayBounds(entries []agentDisplayRow, selected int) (first, last int) {
+	for i, row := range entries {
+		if row.index == selected {
+			last = i
+			for last+1 < len(entries) && entries[last+1].index == selected {
+				last++
+			}
+			return i, last
+		}
+	}
+	return 0, 0
 }
 
 func (m *Model) keepAgentSelectionInWindow() {
-	entries := m.agentDisplayEntries()
+	entries := m.agentDisplayRows(m.agentListWidth())
 	if len(entries) == 0 {
 		return
 	}
 	rows := m.agentPageSize()
-	row := selectedAgentRow(entries, m.selectedAgent)
-	if row < m.agentOffset {
+	row, last := selectedAgentDisplayBounds(entries, m.selectedAgent)
+	if last < m.agentOffset {
 		m.selectedAgent = entries[m.agentOffset].index
 	} else if row >= m.agentOffset+rows {
 		m.selectedAgent = entries[min(len(entries)-1, m.agentOffset+rows-1)].index
