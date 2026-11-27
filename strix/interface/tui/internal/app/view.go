@@ -182,27 +182,51 @@ func wrapBlock(value string, width int) string {
 }
 
 func restoreWrappedSGR(rows []string) {
-	p := ansi.GetParser()
-	defer ansi.PutParser(p)
-	var active string
+	const maxSGRBytes, maxSGRParams = 128, 32
+	var active strings.Builder
 	for i, row := range rows {
-		rows[i] = active + row
+		prefix := active.String()
+		var clean strings.Builder
+		start := 0
 		var state byte
-		for len(row) > 0 {
-			seq, _, n, next := ansi.DecodeSequence(row, state, p)
+		for pos := 0; pos < len(row); {
+			seq, _, n, next := ansi.DecodeSequence(row[pos:], state, nil)
+			if n == 0 {
+				break
+			}
 			state = next
-			row = row[n:]
-			if !ansi.HasCsiPrefix(seq) || p.Command() != 'm' {
+			end := pos + n
+			pos = end
+			if !ansi.HasCsiPrefix(seq) || !strings.HasSuffix(seq, "m") {
 				continue
 			}
-			switch seq {
-			case ansi.ResetStyle, "\x1b[0m", "\x9bm", "\x9b0m":
-				active = ""
+			params := seq[1 : len(seq)-1]
+			if seq[0] == '\x1b' {
+				params = params[1:]
+			}
+			if len(params) > maxSGRBytes || strings.Count(params, ";")+strings.Count(params, ":") >= maxSGRParams {
+				clean.WriteString(row[start : end-n])
+				start = end
+				continue
+			}
+			if strings.IndexFunc(params, func(r rune) bool {
+				return (r < '0' || r > '9') && r != ';' && r != ':'
+			}) >= 0 {
+				continue
+			}
+			switch params {
+			case "", "0":
+				active.Reset()
 			default:
 				// Replay SGRs in order so selective resets and extended colors retain their meaning.
-				active += seq
+				active.WriteString(seq)
 			}
 		}
+		if start > 0 {
+			clean.WriteString(row[start:])
+			row = clean.String()
+		}
+		rows[i] = prefix + row
 	}
 }
 

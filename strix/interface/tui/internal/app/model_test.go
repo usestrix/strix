@@ -500,6 +500,15 @@ func TestModalKeepsBackgroundVisible(t *testing.T) {
 	}
 }
 
+func TestWrapSkipsOversizedSGRWhenRestoringStyles(t *testing.T) {
+	oversized := "\x1b[" + strings.Repeat("1;", 64) + "1m"
+	wrapped := wrapBlock(oversized+"first second third", 7)
+	rows := strings.Split(wrapped, "\n")
+	if len(rows) != 3 || rows[0] != "first" || rows[1] != "second" || rows[2] != "third" {
+		t.Fatalf("oversized style was not skipped: %q", rows)
+	}
+}
+
 func TestWrappedTraceRowsRestoreStyleBeforeTextAndResetBeforePadding(t *testing.T) {
 	const (
 		dimItalic = "\x1b[2;3m"
