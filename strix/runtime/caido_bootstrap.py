@@ -148,11 +148,12 @@ async def start_proxy_fallback(
     """
     if upstream is None:
         # mitmdump tunnels ignored hosts, so TLS is not intercepted. ncat's own
-        # HTTP proxy rejects plain-HTTP methods other than GET, HEAD and POST.
+        # HTTP proxy rejects plain-HTTP methods other than GET, HEAD and POST, and
+        # listens on every interface, so it needs --allow.
         proxy = (
             "if command -v mitmdump >/dev/null; then"
             f" set -- mitmdump -q --listen-host 127.0.0.1 -p {port} --ignore-hosts '.*';"
-            f" else set -- ncat -l 127.0.0.1 {port} -k --proxy-type http; fi"
+            f" else set -- ncat -l 127.0.0.1 {port} -k --proxy-type http --allow 127.0.0.1; fi"
         )
     elif _UPSTREAM_RE.fullmatch(upstream):
         host, _, upstream_port = upstream.rpartition(":")
