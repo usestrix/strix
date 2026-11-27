@@ -654,6 +654,9 @@ def emit(  # noqa: PLR0911, PLR0912, PLR0915
                 view=view,
             )
             return
+    if view == "GET /vulnerabilities/batch" and _is_record(data):
+        _print_detail(console, data)
+        return
     if view == "GET /vulnerabilities":
         vulnerability_rows = _finding_location_rows(data)
         if vulnerability_rows is not None:

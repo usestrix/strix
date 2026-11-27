@@ -281,7 +281,25 @@ SPEC: dict[str, dict[str, Cmd]] = {
                 P("sort_order", help="Sort order: asc or desc."),
             ),
         ),
-        "get": Cmd("GET", "/vulnerabilities/{vulnerabilityId}", "Get one vulnerability."),
+        "get": Cmd(
+            "GET",
+            "/vulnerabilities/{vulnerabilityId}",
+            "Get one vulnerability. Dependency findings also need the dependencies:read scope. "
+            "Container image findings also need the containers:read scope.",
+        ),
+        "get-batch": Cmd(
+            "GET",
+            "/vulnerabilities/batch",
+            "Get the same full details as vulns get for up to 100 findings. "
+            "The response keeps the order of ids. "
+            "IDs that do not exist or that the token cannot see are in not_found. "
+            "Duplicate IDs are returned once. Requires vulnerabilities:read. "
+            "Dependency findings also need the dependencies:read scope. "
+            "Container image findings also need the containers:read scope.",
+            query=(
+                P("ids", "list", required=True, help="Finding IDs to read. Supply 1 to 100 IDs."),
+            ),
+        ),
         "history": Cmd(
             "GET",
             "/vulnerabilities/{vulnerabilityId}/history",
