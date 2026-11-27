@@ -11,7 +11,17 @@ strix view my-run-name                        # a specific run under ./strix_run
 strix view --host 0.0.0.0 --port 8080 --no-open
 ```
 
-The UI ships prebuilt with Strix, so there is no extra install and no JavaScript build step. The dashboard reads the run files straight off disk. Nothing leaves your machine, and you do not need a cloud account.
+The UI ships prebuilt with Strix, so there is no extra install and no JavaScript build step. You can view the selected run from disk without a cloud account.
+
+## Network Requests
+
+The viewer uses the Strix relay for the following actions.
+
+- **Verify your email to unlock history.** The relay receives your work email address and the verification code you enter.
+- **Submit feedback.** The relay receives your email address and message.
+- **Email a report.** The relay receives the encrypted PDF, filename, run name, target, and verification token. The viewer returns the PDF password to the authorized browser.
+
+With usage telemetry enabled, starting the viewer can send an event, including when using `--no-open`. Usage telemetry is enabled by default. Set [`STRIX_TELEMETRY=0`](/advanced/configuration) to disable it.
 
 ## Options
 
