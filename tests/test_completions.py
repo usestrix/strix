@@ -16,6 +16,25 @@ def test_cloud_group_and_alias_candidates() -> None:
 
 
 def test_cloud_verb_candidates_include_multiword_prefixes() -> None:
+    assert "skills" in completion_candidates(["cloud", "knowledge", ""])
+    assert completion_candidates(["cloud", "knowledge", "skills", ""]) == [
+        "create",
+        "delete",
+        "get",
+        "list",
+        "update",
+    ]
+    assert "--scope" in completion_candidates(["cloud", "knowledge", "skills", "create", "--"])
+    assert "--name" not in completion_candidates(
+        [
+            "cloud",
+            "knowledge",
+            "skills",
+            "update",
+            "review",
+            "--",
+        ]
+    )
     assert "test-users" in completion_candidates(["cloud", "domains", ""])
     assert completion_candidates(["cloud", "domains", "test-users", "in"]) == [
         "inbox",
