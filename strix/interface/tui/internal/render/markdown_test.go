@@ -17,6 +17,36 @@ func TestHighlightCodeColorsKnownLanguage(t *testing.T) {
 	}
 }
 
+func TestMarkdownEscapesInAssistantAndToolProse(t *testing.T) {
+	input := "Match \\*.go and \\*.py; **a\\** b**; `\\*.sh`."
+	want := "Match *.go and *.py; a** b; \\*.sh."
+	for name, output := range map[string]string{
+		"assistant": Chat(map[string]any{"role": "assistant", "content": input}),
+		"tool":      Tool(tool("send_message_to_agent", map[string]any{"message": input}, nil, "completed")),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if plain := ansi.Strip(output); !strings.HasSuffix(plain, want) {
+				t.Fatalf("escaped Markdown: got %q, want suffix %q", plain, want)
+			}
+		})
+	}
+}
+
+func TestMarkdownEmphasisPreservesLiteralInlineCode(t *testing.T) {
+	for _, test := range []struct{ input, want string }{
+		{"**run `grep \\.go`**", "run grep \\.go"},
+		{"*run `grep \\.go *` on \\*.txt*", "run grep \\.go * on *.txt"},
+		{"~~run `grep \\.go ~~` and stop~~", "run grep \\.go ~~ and stop"},
+		{"**run `grep \\.go **` and stop**", "run grep \\.go ** and stop"},
+	} {
+		t.Run(test.input, func(t *testing.T) {
+			if got := ansi.Strip(inlineFormat(test.input)); got != test.want {
+				t.Fatalf("got %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestMarkdownCodeFenceIsHighlighted(t *testing.T) {
 	out := renderAssistantMarkdown("intro\n```python\nimport os\n```\ndone")
 	plain := ansi.Strip(out)

@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 // ---------------------------------------------------------------------------
@@ -36,6 +38,22 @@ func renderAssistantMarkdown(content string) string {
 		return ""
 	}
 	return applyMarkdownStyles(cleaned)
+}
+
+func renderToolMarkdown(content string, attrs ...ansi.Attr) string {
+	body := renderAssistantMarkdown(content)
+	if body == "" {
+		return ""
+	}
+	if lipgloss.ColorProfile() == termenv.Ascii {
+		return "  " + strings.ReplaceAll(body, "\n", "\n  ")
+	}
+	style := ansi.SGR(attrs...)
+	return "  " + style + strings.NewReplacer(
+		"\x1b[0m", "\x1b[0m"+style,
+		ansi.ResetStyle, ansi.ResetStyle+style,
+		"\n", ansi.ResetStyle+"\n  "+style,
+	).Replace(body) + ansi.ResetStyle
 }
 
 func collapseBlankLines(content string) string {
@@ -271,70 +289,127 @@ func canCloseEmphasis(line string, end, width int) bool {
 	return after >= len(line) || !isWordByte(line[after])
 }
 
-// findEmphasisEnd locates the closing marker for an emphasis span opened at
-// i, honoring the flanking rules; returns -1 when the span should be treated
-// as literal text.
-func findEmphasisEnd(line string, i int, marker string) int {
-	from := i + len(marker)
-	for {
-		end := strings.Index(line[from:], marker)
-		if end == -1 {
-			return -1
-		}
-		end += from
-		if end == i+len(marker) {
-			return -1
-		}
-		if canCloseEmphasis(line, end, len(marker)) {
-			return end
-		}
-		from = end + 1
+func markdownEscapeAt(line string, i int) bool {
+	if line[i] != '\\' || i+1 == len(line) {
+		return false
 	}
+	next := line[i+1]
+	return next >= '!' && next <= '~' && !isWordByte(next) || next == '_'
 }
 
-// inlineFormat ports _process_inline_formatting.
+type inlinePart struct {
+	text string
+	at   int
+	kind byte
+}
+
+func scanInline(line string) []inlinePart {
+	var parts []inlinePart
+	start := 0
+	for i := 0; i < len(line); {
+		end := i + 1
+		var part inlinePart
+		switch {
+		case markdownEscapeAt(line, i):
+			end++
+			part = inlinePart{text: line[i+1 : end]}
+		case line[i] == '`':
+			close := strings.IndexByte(line[i+1:], '`')
+			if close < 0 {
+				i++
+				continue
+			}
+			end = i + close + 2
+			part = inlinePart{text: line[i+1 : end-1], kind: '`'}
+		case line[i] == '*' || line[i] == '_' || line[i] == '~':
+			part = inlinePart{text: line[i:end], kind: line[i]}
+		default:
+			i++
+			continue
+		}
+		if start < i {
+			parts = append(parts, inlinePart{text: line[start:i]})
+		}
+		part.at = i
+		parts = append(parts, part)
+		i, start = end, end
+	}
+	if start < len(line) {
+		parts = append(parts, inlinePart{text: line[start:]})
+	}
+	return parts
+}
+
+func hasInlinePair(parts []inlinePart, i int) bool {
+	return i+1 < len(parts) && parts[i+1].kind == parts[i].kind && parts[i+1].at == parts[i].at+1
+}
+
+func findEmphasisEnd(line string, parts []inlinePart, i, width int) int {
+	marker := parts[i].kind
+	for j := i + width; j < len(parts); j++ {
+		part := parts[j]
+		if part.kind != marker || (width == 2 && !hasInlinePair(parts, j)) {
+			continue
+		}
+		if j == i+width {
+			return -1
+		}
+		if canCloseEmphasis(line, part.at, width) {
+			if width == 1 && part.at+1 < len(line) && line[part.at+1] == marker {
+				return -1
+			}
+			return j
+		}
+	}
+	return -1
+}
+
+func renderInlineEmphasis(out *strings.Builder, parts []inlinePart, prose, code lipgloss.Style) {
+	var text strings.Builder
+	for _, part := range parts {
+		if part.kind == '`' {
+			out.WriteString(prose.Render(text.String()))
+			text.Reset()
+			out.WriteString(code.Render(part.text))
+		} else {
+			text.WriteString(part.text)
+		}
+	}
+	out.WriteString(prose.Render(text.String()))
+}
+
 func inlineFormat(line string) string {
+	parts := scanInline(line)
+	code := lipgloss.NewStyle().Bold(true).Foreground(Green).Background(CodeBg)
 	var out strings.Builder
-	i, n := 0, len(line)
-	for i < n {
-		if i+1 < n && (line[i:i+2] == "**" || line[i:i+2] == "__") {
-			marker := line[i : i+2]
-			if canOpenEmphasis(line, i, 2) {
-				if end := findEmphasisEnd(line, i, marker); end != -1 {
-					out.WriteString(Bold(Field).Render(line[i+2 : end]))
-					i = end + 2
-					continue
-				}
+	for i := 0; i < len(parts); {
+		part := parts[i]
+		width := 0
+		var style lipgloss.Style
+		switch part.kind {
+		case '`':
+			out.WriteString(code.Render(part.text))
+			i++
+			continue
+		case '*', '_':
+			if hasInlinePair(parts, i) {
+				width, style = 2, Bold(Field)
+			} else if part.at+1 < len(line) && line[part.at+1] != part.kind {
+				width, style = 1, lipgloss.NewStyle().Italic(true).Foreground(Mint)
+			}
+		case '~':
+			if hasInlinePair(parts, i) {
+				width, style = 2, lipgloss.NewStyle().Strikethrough(true).Foreground(Strike)
 			}
 		}
-		if i+1 < n && line[i:i+2] == "~~" {
-			if canOpenEmphasis(line, i, 2) {
-				if end := findEmphasisEnd(line, i, "~~"); end != -1 {
-					out.WriteString(lipgloss.NewStyle().Strikethrough(true).Foreground(Strike).Render(line[i+2 : end]))
-					i = end + 2
-					continue
-				}
-			}
-		}
-		if line[i] == '`' {
-			if end := strings.Index(line[i+1:], "`"); end != -1 {
-				end += i + 1
-				out.WriteString(lipgloss.NewStyle().Bold(true).Foreground(Green).Background(CodeBg).Render(line[i+1 : end]))
-				i = end + 1
+		if width > 0 && canOpenEmphasis(line, part.at, width) {
+			if end := findEmphasisEnd(line, parts, i, width); end >= 0 {
+				renderInlineEmphasis(&out, parts[i+width:end], style, code)
+				i = end + width
 				continue
 			}
 		}
-		if line[i] == '*' || line[i] == '_' {
-			marker := string(line[i])
-			if i+1 < n && line[i+1] != line[i] && canOpenEmphasis(line, i, 1) {
-				if end := findEmphasisEnd(line, i, marker); end != -1 && (end+1 >= n || line[end+1] != line[i]) {
-					out.WriteString(lipgloss.NewStyle().Italic(true).Foreground(Mint).Render(line[i+1 : end]))
-					i = end + 1
-					continue
-				}
-			}
-		}
-		out.WriteByte(line[i])
+		out.WriteString(part.text)
 		i++
 	}
 	return out.String()
