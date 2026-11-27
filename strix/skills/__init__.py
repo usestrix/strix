@@ -1,9 +1,10 @@
 import logging
+import os
 import re
 from collections import Counter
 from collections.abc import Iterator, Mapping
 from pathlib import Path
-from typing import TypeGuard
+from typing import Any, TypeGuard
 
 import yaml
 from jinja2 import Environment, StrictUndefined
@@ -27,7 +28,12 @@ _SKILL_TEMPLATES = Environment(
 _INTERNAL_SKILL_CATEGORIES: frozenset[str] = frozenset({"scan_modes", "coordination", "analysis"})
 _ROOT_SKILL_CATEGORY = "root"
 
+# ``os.pathsep``-separated list of extra skill roots, read on every lookup so the
+# CLI can set it before the first prompt renders.
+SKILLS_DIR_ENV = "STRIX_SKILLS_DIR"
+
 _EXTRA_SKILL_DIRS: list[Path] = []
+_PRIORITY_SKILL_DIRS: set[Path] = set()
 _SKILL_METADATA_CACHE: dict[tuple[Path, int, int], dict[str, str]] = {}
 
 
@@ -35,7 +41,7 @@ def _is_frontmatter_mapping(value: object) -> TypeGuard[dict[object, object]]:
     return isinstance(value, dict)
 
 
-def register_skill_dir(path: str | Path) -> None:
+def register_skill_dir(path: str | Path, *, priority: bool = False) -> None:
     """Add a directory searched for skills ahead of the built-in set.
 
     The directory uses the same layout as the packaged skills
@@ -44,8 +50,14 @@ def register_skill_dir(path: str | Path) -> None:
     callers can both add new skills and override existing ones without
     editing the package. The most recently registered directory has the
     highest precedence.
+
+    With ``priority`` set, the skills in the directory are listed to agents as
+    the operator's own, ahead of the built-in set, the same as the skills from
+    ``STRIX_SKILLS_DIR``.
     """
     resolved = Path(path)
+    if priority:
+        _PRIORITY_SKILL_DIRS.add(resolved)
     if resolved not in _EXTRA_SKILL_DIRS:
         _EXTRA_SKILL_DIRS.append(resolved)
         logger.info("Registered extra skill dir: %s", resolved)
@@ -56,9 +68,27 @@ def registered_skill_dirs() -> tuple[Path, ...]:
     return tuple(reversed(_EXTRA_SKILL_DIRS))
 
 
+def env_skill_dirs() -> tuple[Path, ...]:
+    """Skill roots named by ``STRIX_SKILLS_DIR``, in the order given."""
+    raw = os.environ.get(SKILLS_DIR_ENV, "")
+    dirs: list[Path] = []
+    for entry in raw.split(os.pathsep):
+        if not entry.strip():
+            continue
+        path = Path(entry.strip()).expanduser()
+        if path not in dirs:
+            dirs.append(path)
+    return tuple(dirs)
+
+
 def skill_search_dirs() -> tuple[Path, ...]:
-    """All existing skill roots, highest precedence first (built-in last)."""
+    """All existing skill roots, highest precedence first (built-in last).
+
+    Order: directories from :func:`register_skill_dir`, then the entries of
+    ``STRIX_SKILLS_DIR``, then the packaged skills.
+    """
     roots = [d for d in registered_skill_dirs() if d.is_dir()]
+    roots.extend(d for d in env_skill_dirs() if d.is_dir() and d not in roots)
     builtin = get_strix_resource_path("skills")
     if builtin.is_dir():
         roots.append(builtin)
@@ -205,8 +235,14 @@ def _read_skill_metadata(file_path: Path) -> dict[str, str]:
     return metadata
 
 
-def get_available_skills() -> dict[str, list[dict[str, str]]]:
-    grouped: dict[str, list[dict[str, str]]] = {}
+def _is_priority_skill_file(file_path: Path) -> bool:
+    """Whether the skill comes from the operator: ``STRIX_SKILLS_DIR`` or a priority dir."""
+    roots = {*env_skill_dirs(), *_PRIORITY_SKILL_DIRS}
+    return any(file_path.is_relative_to(root) for root in roots)
+
+
+def get_available_skills() -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
     for category, name in _iter_user_skill_files():
         file_path = _qualified_skill_file_for_name(f"{category}/{name}")
         if file_path is None:
@@ -218,17 +254,24 @@ def get_available_skills() -> dict[str, list[dict[str, str]]]:
             continue
         metadata = _read_skill_metadata(file_path)
         description = " ".join(metadata.get("description", "").split())
-        grouped.setdefault(category, []).append({"name": name, "description": description})
+        grouped.setdefault(category, []).append(
+            {
+                "name": name,
+                "description": description,
+                "priority": _is_priority_skill_file(file_path),
+            }
+        )
     return grouped
 
 
-def validate_requested_skills(skill_list: list[str], max_skills: int = 5) -> str | None:
+def validate_requested_skills(skill_list: list[str], max_skills: int | None = 5) -> str | None:
     """Validate a list of user-passed skill names.
 
     Returns ``None`` on success, or a model-readable error message
     describing what was wrong (count exceeded, unknown names).
+    ``max_skills=None`` skips the count check.
     """
-    if len(skill_list) > max_skills:
+    if max_skills is not None and len(skill_list) > max_skills:
         return (
             f"Cannot specify more than {max_skills} skills per agent; "
             f"got {len(skill_list)}. Aim for 1-3 related skills per specialist."

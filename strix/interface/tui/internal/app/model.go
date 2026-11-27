@@ -63,6 +63,7 @@ const (
 	modalQuit
 	modalStop
 	modalConfirmMount
+	modalApproval
 	modalVulnerability
 )
 
@@ -117,6 +118,9 @@ type Model struct {
 	vulnOffset             int
 	mcpOffset              int
 	modalChoice            int
+	approvalID             string
+	approvalSending        bool
+	approvalNow            time.Time
 	reportFocus            string
 	ready                  bool
 	quitting               bool
@@ -324,6 +328,12 @@ func send(client *Client, command string, payload any) tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	switch msg := msg.(type) {
+	case approvalTickMsg:
+		if m.modal == modalApproval {
+			m.approvalNow = time.Time(msg)
+			return m, approvalTick()
+		}
+		return m, nil
 	case splashTickMsg:
 		m.splashFrame++
 		if m.showSplash && time.Since(m.splashStarted) >= 4500*time.Millisecond {

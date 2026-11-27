@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import shutil
@@ -186,6 +187,111 @@ def test_placeholder_substitution_percent_encodes_path_segments(
     code = cloud.run_cloud(["knowledge", "repos", "entries", "usestrix/.github", "--json"])
     assert code == 0
     assert seen["path"] == "/knowledge/repos/usestrix%2F.github/entries"
+
+
+def test_bulk_retest_help_and_parameters() -> None:
+    cmd = SPEC["vulns"]["retest-bulk"]
+    assert [(p.name, p.kind, p.required) for p in cmd.body] == [
+        ("vulnerability_ids", "list", True),
+    ]
+    help_text = " ".join(runner._build_parser("vulns", "retest-bulk", cmd).format_help().split())
+    assert "--vulnerability-ids" in help_text
+    assert "Requires scans:write" in help_text
+    assert "groups findings by source scan" in help_text
+    assert "only the selected findings" in help_text
+    assert "without a source scan" in help_text
+    assert "outside the token scope" in help_text
+    assert "ignored or unused" in help_text
+    assert "already running or starting" in help_text
+    assert "Use vulns retest for container image findings" in help_text
+    assert "strix cloud scans retests SCAN_ID" in help_text
+    parser = runner._build_parser("vulns", "retest-bulk", cmd)
+    assert not any("--wait" in action.option_strings for action in parser._actions)
+
+
+@pytest.mark.parametrize("accepted", [0, 2])
+def test_bulk_retest_request_and_response(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: Any,
+    accepted: int,
+) -> None:
+    payload = {
+        "accepted": accepted,
+        "total": 2,
+        "skipped_running": 2 - accepted,
+        "skipped_ineligible": 1,
+        "batches": [
+            {"scan_id": "scan-1", "batch_id": "batch-1", "accepted": 1},
+            {"scan_id": "scan-2", "batch_id": "batch-2", "accepted": 1},
+        ]
+        if accepted
+        else [],
+    }
+    seen: dict[str, Any] = {}
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> FakeResponse:
+        seen.update(method=method, path=path, body=kwargs.get("body"))
+        return FakeResponse(status_code=202 if accepted else 200, payload=payload)
+
+    monkeypatch.setattr(http, "request", fake_request)
+    assert (
+        cloud.run_cloud(
+            [
+                "vulns",
+                "retest-bulk",
+                "--vulnerability-ids",
+                "finding-1",
+                "finding-2",
+                "finding-3",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert seen == {
+        "method": "POST",
+        "path": "/vulnerabilities/retest",
+        "body": {"vulnerability_ids": ["finding-1", "finding-2", "finding-3"]},
+    }
+    assert json.loads(capsys.readouterr().out) == payload
+
+
+def test_bulk_retest_human_response_shows_batch_ids(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    scan_id = "9b8deaf2-e32c-4f4c-bbca-7fb7ab949105"
+    batch_id = "71925763-d10c-4b8c-b0ad-c75c45ab8855"
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(
+        http,
+        "request",
+        lambda *_a, **_k: FakeResponse(
+            status_code=202,
+            payload={
+                "accepted": 2,
+                "total": 2,
+                "skipped_running": 0,
+                "skipped_ineligible": 0,
+                "batches": [{"scan_id": scan_id, "batch_id": batch_id, "accepted": 2}],
+            },
+        ),
+    )
+
+    assert cloud.run_cloud(["vulns", "retest-bulk", "--vulnerability-ids", "finding-1"]) == 0
+    output = capsys.readouterr().out
+    assert scan_id in output
+    assert batch_id in output
+
+
+@pytest.mark.parametrize(
+    "flags", [[], ["--vulnerability-ids"], ["--vulnerability-ids", "one", "--wait"]]
+)
+def test_bulk_retest_usage_errors(monkeypatch: pytest.MonkeyPatch, flags: list[str]) -> None:
+    def unexpected_request(*_args: Any, **_kwargs: Any) -> FakeResponse:
+        pytest.fail("Invalid arguments must not send a request.")
+
+    monkeypatch.setattr(http, "request", unexpected_request)
+    assert cloud.run_cloud(["vulns", "retest-bulk", *flags, "--json"]) == 2
 
 
 def test_query_and_body_collection(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1256,9 +1362,14 @@ def test_scan_start_parameter_contract_and_help() -> None:
     assert params["headers"].kind == "json"
     assert "array" in params["headers"].help.lower()
     assert params["concerns"].kind == "str"
-    assert all(tier in params["scan_tier"].help for tier in ("lite", "standard", "ultra"))
-    assert "pro" not in params["scan_tier"].help
-    assert "max" not in params["scan_tier"].help
+    for group, verb in (("scans", "start"), ("schedules", "update")):
+        cmd = SPEC[group][verb]
+        tier = next(param for param in cmd.body if param.name == "scan_tier")
+        assert tier.help == argparse.SUPPRESS
+        help_text = runner._build_parser(group, verb, cmd).format_help()
+        assert "--scan-tier" not in help_text
+        assert "lite" not in help_text
+        assert "standard" not in help_text
     assert "self-hosted" in params["model_config_id"].help.lower()
     assert "self-hosted" in params["max_budget_usd"].help.lower()
 
@@ -1327,7 +1438,7 @@ def test_scan_start_collects_header_array_and_string_concerns(
                 "--concerns",
                 "authorization boundaries",
                 "--scan-tier",
-                "standard",
+                "ultra",
                 "--json",
             ]
         )
@@ -1336,7 +1447,7 @@ def test_scan_start_collects_header_array_and_string_concerns(
     assert seen["body"] == {
         "headers": [{"name": "X-Test", "value": "one"}],
         "concerns": "authorization boundaries",
-        "scan_tier": "standard",
+        "scan_tier": "ultra",
     }
 
 

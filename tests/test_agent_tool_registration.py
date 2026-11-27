@@ -191,7 +191,46 @@ def test_disabling_strict_leaves_shared_tools_untouched() -> None:
         ("finish_pr_review", '{"success": false, "error": "agents_still_active"}', False),
         ("finish_scan", '{"success": true, "scan_completed": true}', True),
         ("think", '{"success": true, "review_completed": true}', False),
+        ("think", '{"success": true, "agent_completed": true}', False),
+        ("validator_finish", '{"success": true, "agent_completed": true}', True),
     ],
 )
 def test_lifecycle_tool_completed(tool_name: str, output: str, completed: bool) -> None:
     assert factory._lifecycle_tool_completed(tool_name, output) is completed
+
+
+def test_select_tools_picks_each_agents_tools() -> None:
+    calls: list[tuple[bool, list[str]]] = []
+
+    def select(*, is_root: bool, skills: list[str], tools: list[Any]) -> list[Any]:
+        calls.append((is_root, skills))
+        return [t for t in tools if t.name in {"think", "agent_finish"}]
+
+    child = factory.make_child_factory(select_tools=select)(name="v", skills=["xss"])
+    root = factory.build_strix_agent(is_root=True, select_tools=select)
+
+    assert [t.name for t in child.tools] == ["think", "agent_finish"]
+    assert [t.name for t in root.tools] == ["think"]
+    assert calls == [(False, ["xss"]), (True, [])]
+
+
+def test_proxy_tools_can_be_turned_off() -> None:
+    proxy = {
+        "list_requests",
+        "view_request",
+        "repeat_request",
+        "list_sitemap",
+        "view_sitemap_entry",
+        "scope_rules",
+    }
+    for is_root in (True, False):
+        on = factory.build_strix_agent(is_root=is_root)
+        off = factory.build_strix_agent(is_root=is_root, proxy_tools=False)
+        assert proxy <= {t.name for t in on.tools}
+        assert not proxy & {t.name for t in off.tools}
+        assert isinstance(on.instructions, str)
+        assert isinstance(off.instructions, str)
+        sections = ("PROXY & INTERCEPTION", "CAIDO PROXY ERROR PAGES", "- HTTP EVIDENCE")
+        assert all(section in on.instructions for section in sections)
+        assert not any(section in off.instructions for section in sections)
+        assert "PROGRAMMING:" in off.instructions

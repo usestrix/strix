@@ -346,6 +346,7 @@ def child_initial_input(
     parent_id: str,
     task: str,
     parent_history: list[Any],
+    finish_tool: str = "agent_finish",
 ) -> list[dict[str, Any]]:
     """Build the initial input for a child agent as a single user message.
 
@@ -370,7 +371,7 @@ def child_initial_input(
         )
     parts.append(
         f"You are agent {name} ({child_id}); your parent is {parent_id}. "
-        "Maintain your own identity. Call agent_finish when your task "
+        f"Maintain your own identity. Call {finish_tool} when your task "
         "is complete.",
     )
     parts.append(task)

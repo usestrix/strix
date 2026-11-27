@@ -7,7 +7,7 @@ import inspect
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from agents.agent import ToolsToFinalOutputResult
 from agents.sandbox import SandboxAgent
@@ -20,6 +20,7 @@ from pydantic import ValidationError
 from strix.agents.prompt import render_system_prompt
 from strix.config import load_settings
 from strix.config.tool_call_arguments import describe_malformed_arguments
+from strix.core.action_approvals import check_action, separate_tool_timeout
 from strix.tools.agents_graph.tools import (
     agent_finish,
     create_agent,
@@ -63,6 +64,7 @@ from strix.tools.reporting.tool import (
     list_reports,
     update_vulnerability_report,
 )
+from strix.tools.test_objects.tools import register_test_object, with_registration_reminder
 from strix.tools.thinking.tool import think
 from strix.tools.threat_model.tools import (
     amend_threat_model,
@@ -354,10 +356,30 @@ def _bound_custom_tool(tool: CustomTool) -> CustomTool:
     return tool
 
 
+def _wrap_apply_patch(tool: CustomTool | FunctionTool) -> None:
+    invoke_tool = (
+        separate_tool_timeout(tool) if isinstance(tool, FunctionTool) else tool.on_invoke_tool
+    )
+
+    async def invoke(ctx: Any, raw_input: str) -> Any:
+        blocked = await check_action(
+            ctx,
+            "apply_patch",
+            {"input": raw_input},
+        )
+        if blocked is not None:
+            return blocked
+        return await invoke_tool(ctx, raw_input)
+
+    tool.on_invoke_tool = invoke
+
+
 def _configure_filesystem_tools(
     toolset: Any, *, chat_completions: bool, strict_schemas: bool = True
 ) -> None:
     for name, tool in vars(toolset).items():
+        if isinstance(tool, CustomTool | FunctionTool) and tool.name == "apply_patch":
+            _wrap_apply_patch(tool)
         if chat_completions:
             if isinstance(tool, CustomTool):
                 setattr(toolset, name, _custom_tool_as_function_tool(tool))
@@ -481,7 +503,7 @@ def _annotate_running_non_tty(parsed: dict[str, Any], result: Any) -> Any:
 
 
 def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
-    invoke_tool = tool.on_invoke_tool
+    invoke_tool = separate_tool_timeout(tool)
     tool.description = f"{tool.description.rstrip()} {_EXEC_COMMAND_DESCRIPTION_NOTE}"
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
@@ -494,6 +516,9 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
                 parsed["shell"] = "bash"
             _apply_shell_output_cap(parsed)
             raw_input = json.dumps(parsed)
+            blocked = await check_action(ctx, "exec_command", cast("dict[str, Any]", parsed))
+            if blocked is not None:
+                return blocked
         try:
             result = await invoke_tool(ctx, raw_input)
         except ValidationError as exc:
@@ -505,6 +530,7 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
                 "(or omitted to use the turn's cwd). "
                 f"Got: {rel!r}."
             )
+        result = with_registration_reminder(result)
         if isinstance(parsed, dict):
             return _annotate_running_non_tty(parsed, result)
         return result
@@ -514,7 +540,7 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
 
 
 def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
-    invoke_tool = tool.on_invoke_tool
+    invoke_tool = separate_tool_timeout(tool)
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
         try:
@@ -526,8 +552,12 @@ def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
                 parsed["chars"] = _decode_chars_escape(parsed["chars"])
             _apply_shell_output_cap(parsed)
             raw_input = json.dumps(parsed)
+            if cast("dict[str, Any]", parsed).get("chars"):
+                blocked = await check_action(ctx, "write_stdin", cast("dict[str, Any]", parsed))
+                if blocked is not None:
+                    return blocked
         try:
-            return await invoke_tool(ctx, raw_input)
+            return with_registration_reminder(await invoke_tool(ctx, raw_input))
         except ValidationError as exc:
             return _format_validation_error(tool.name, exc)
 
@@ -564,16 +594,22 @@ def _make_shell_configurator(*, chat_completions: bool, strict_schemas: bool) ->
 _PARKING_TOOLS: frozenset[str] = frozenset({"wait_for_user", "wait_for_agents"})
 
 
-def _lifecycle_tool_completed(tool_name: str, output: Any) -> bool:
-    if tool_name == "agent_finish":
-        completion_key = "agent_completed"
-    elif tool_name == "finish_scan":
-        completion_key = "scan_completed"
-    elif tool_name == "finish_pr_review":  # registered by strix-pro
-        completion_key = "review_completed"
-    else:
-        return False
+# Tools that end their agent's run, and the key each sets in its result to do so.
+_LIFECYCLE_TOOLS: dict[str, str] = {
+    "agent_finish": "agent_completed",
+    "finish_scan": "scan_completed",
+    # Registered by strix-pro.
+    "finish_pr_review": "review_completed",
+    "investigator_finish": "agent_completed",
+    "validator_finish": "agent_completed",
+    "reporter_finish": "agent_completed",
+}
 
+
+def _lifecycle_tool_completed(tool_name: str, output: Any) -> bool:
+    completion_key = _LIFECYCLE_TOOLS.get(tool_name)
+    if completion_key is None:
+        return False
     if not isinstance(output, str):
         return False
     try:
@@ -630,6 +666,14 @@ def _without_coverage_step(tool: FunctionTool) -> FunctionTool:
     return dataclasses.replace(tool, description=description)
 
 
+_PROXY_TOOLS: tuple[Tool, ...] = (
+    list_requests,
+    view_request,
+    repeat_request,
+    list_sitemap,
+    view_sitemap_entry,
+    scope_rules,
+)
 _BASE_TOOLS: tuple[Tool, ...] = (
     think,
     load_skill,
@@ -644,6 +688,7 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     get_note,
     update_note,
     delete_note,
+    register_test_object,
     record_coverage,
     update_coverage,
     list_coverage,
@@ -738,6 +783,8 @@ def build_strix_agent(
     finish_tool: Tool = finish_scan,
     report_tool: Tool = create_vulnerability_report,
     coverage_tools: bool = True,
+    proxy_tools: bool = True,
+    select_tools: Callable[..., Sequence[Tool]] | None = None,
 ) -> SandboxAgent[Any]:
     """Build a SandboxAgent for either root or child use.
 
@@ -755,6 +802,10 @@ def build_strix_agent(
             ``create_vulnerability_report``.
         coverage_tools: Give the agent the coverage ledger tools and the
             prompt rules for them.
+        proxy_tools: Give the agent the Caido proxy tools and the prompt
+            rules for them.
+        select_tools: Called with ``is_root``, the agent's ``skills`` and its
+            default ``tools``; returns the tools to build it with instead.
     """
     if instructions_override is not None:
         instructions = instructions_override
@@ -771,6 +822,7 @@ def build_strix_agent(
             supports_images=supports_images,
             report_tool=report_tool.name,
             coverage_tools=coverage_tools,
+            proxy_tools=proxy_tools,
         )
 
     agent_tools = [*_EXTRA_TOOLS, *(extra_tools or [])]
@@ -782,10 +834,14 @@ def build_strix_agent(
         base_tools = [t for t in base_tools if t not in _COVERAGE_TOOLS]
         if finish_tool is finish_scan:
             finish_tool = _without_coverage_step(finish_scan)
+    if not proxy_tools:
+        base_tools = [t for t in base_tools if t not in _PROXY_TOOLS]
     if is_root:
         tools: list[Tool] = [*base_tools, *agent_tools, finish_tool]
     else:
         tools = [*base_tools, *agent_tools, agent_finish]
+    if select_tools is not None:
+        tools = list(select_tools(is_root=is_root, skills=list(skills or []), tools=tools))
     _ensure_unique_tool_names(tools)
     tools = [
         _with_bounded_result(_with_strictness(_with_coerced_arguments(tool), strict_tool_schemas))
@@ -841,6 +897,8 @@ def make_child_factory(
     supports_images: bool = True,
     report_tool: Tool = create_vulnerability_report,
     coverage_tools: bool = True,
+    proxy_tools: bool = True,
+    select_tools: Callable[..., Sequence[Tool]] | None = None,
 ) -> Any:
     """Return the runner-owned builder used by ``spawn_child_agent``.
 
@@ -865,6 +923,8 @@ def make_child_factory(
             supports_images=supports_images,
             report_tool=report_tool,
             coverage_tools=coverage_tools,
+            proxy_tools=proxy_tools,
+            select_tools=select_tools,
         )
 
     return _factory

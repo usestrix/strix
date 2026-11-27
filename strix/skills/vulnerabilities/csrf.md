@@ -80,6 +80,7 @@ Cross-site request forgery abuses ambient authority (cookies, HTTP auth) across 
 
 ### OAuth/OIDC Flows
 
+- For connect/link flows, load `protocols/oauth`. After a forged link, exercise every downstream identity consumer before scoring impact
 - Abuse authorize/logout endpoints reachable via GET or form POST without origin checks
 - Exploit relaxed SameSite on top-level navigations
 - Open redirects or loose redirect_uri validation can chain with CSRF to force unintended authorizations
@@ -152,6 +153,7 @@ Cross-site request forgery abuses ambient authority (cookies, HTTP auth) across 
 - CSRF + IDOR: force actions on other users' resources once references are known
 - CSRF + Clickjacking: guide user interactions to bypass UI confirmations
 - CSRF + OAuth mix-up: bind victim sessions to unintended clients
+- Trace each forged value into later consumers (recovery, invitations, payments, authorization, exports). Try undisclosed action routes with GET/POST and form/JSON. A GET 404 does not rule out the action. Prove the highest reachable impact. A successful write is not the chain boundary
 
 ## Testing Methodology
 
@@ -161,7 +163,8 @@ Cross-site request forgery abuses ambient authority (cookies, HTTP auth) across 
 4. **Check defenses** - Anti-CSRF tokens and Origin/Referer enforcement
 5. **Attempt preflightless delivery** - Form POST, text/plain, multipart/form-data
 6. **Test navigation** - Top-level GET navigation
-7. **Cross-browser validation** - Behavior differs by SameSite and navigation context
+7. **Trace downstream use** - Exercise every security-relevant consumer of forged state across plausible methods
+8. **Cross-browser validation** - Behavior differs by SameSite and navigation context
 
 ## Validation
 

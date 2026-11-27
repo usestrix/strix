@@ -24,6 +24,10 @@ def test_cloud_verb_candidates_include_multiword_prefixes() -> None:
 
 
 def test_cloud_leaf_flag_candidates_come_from_command_spec() -> None:
+    assert "retest-bulk" in completion_candidates(["cloud", "vulns", "retest-"])
+    retest_flags = completion_candidates(["cloud", "vulns", "retest-bulk", "--"])
+    assert "--vulnerability-ids" in retest_flags
+    assert "--wait" not in retest_flags
     candidates = completion_candidates(["cloud", "scans", "start", "--"])
     assert "--domain-ids" in candidates
     assert "--json" in candidates

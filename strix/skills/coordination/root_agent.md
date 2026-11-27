@@ -36,6 +36,8 @@ Every scan needs one shared answer to "who is the attacker here, and what are th
 
 Either way you write it with the least information anyone on this scan will ever have, so expect it to be wrong somewhere. Subagents correct it with `amend_threat_model`, which appends an attributed addendum instead of overwriting — expect many of these on a black-box run, as authenticating, pivoting between roles, and reaching internal surfaces is exactly what turns inference into fact. Read the amendments back before you write the final report: an agent telling you a boundary you called trusted is attacker-reachable is a finding about your model, not a note. Only call `save_threat_model` again to fold accumulated amendments into the body; it replaces the document and clears them.
 
+**Review the model right before `finish_scan`, every time.** This is the last thing you do before finishing, after every subagent has stopped, and it is not optional. Call `get_threat_model` for each target and read the body and its amendments against what the scan established. The saved body is what people read after the scan, and amendments left outside it are not shown to them. If any amendment exists, or the body is wrong, incomplete, or still calls something inferred that the scan confirmed or disproved, rewrite the affected sections and diagrams and call `save_threat_model` with the full corrected document. If the body already matches what the scan found, leave it as it is. Then call `finish_scan`.
+
 {% if coverage_tools %}
 ## Reconcile Coverage Before Finishing
 
@@ -89,7 +91,8 @@ Before creating agents:
 Complex findings warrant specialized subagents:
 - Discovery agent finds potential vulnerability
 - Validation agent confirms exploitability
-- Reporting agent documents with reproduction steps AND supplies the fix inline (the report tool carries the patch via `code_locations`/`fix_pr_body`) — do not add a separate fix agent that re-derives the same patch
+- Reporting agent files the validated finding with reproduction steps and no patch
+- With source and an accepted report ID, delegate the patch as a scoped task. Only an independently approved diff may be attached to that report; otherwise leave the remediation in prose.
 
 **Resource Efficiency**
 

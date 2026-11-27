@@ -5,12 +5,52 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import Mock
 
 import pytest
+from agents.sandbox.capabilities import Shell
+from agents.sandbox.capabilities.tools.shell_tool import ExecCommandTool, WriteStdinTool
 from agents.tool import CustomTool, FunctionTool
 
 from strix.agents import factory
 from strix.config import load_settings
+from strix.config.settings import ActionApprovalSettings
+
+
+@pytest.mark.parametrize("is_root", [False, True])
+@pytest.mark.parametrize("pty", [False, True])
+@pytest.mark.parametrize("chat_completions", [False, True])
+@pytest.mark.parametrize("strict_schemas", [False, True])
+def test_real_agent_shell_tools_with_approvals_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    is_root: bool,
+    pty: bool,
+    chat_completions: bool,
+    strict_schemas: bool,
+) -> None:
+    monkeypatch.setenv("STRIX_ACTION_APPROVALS", "true")
+    settings = load_settings().model_copy(update={"action_approvals": ActionApprovalSettings()})
+    assert settings.action_approvals.enabled
+    monkeypatch.setattr(factory, "load_settings", lambda: settings)
+    agent = factory.build_strix_agent(
+        is_root=is_root,
+        chat_completions_tools=chat_completions,
+        strict_tool_schemas=strict_schemas,
+    )
+    session = Mock()
+    session.supports_pty.return_value = pty
+    shell = next(capability for capability in agent.capabilities if isinstance(capability, Shell))
+    shell.bind(session)
+    tools = shell.tools()
+
+    assert isinstance(tools[0], ExecCommandTool)
+    assert tools[0].session is session
+    assert [tool.name for tool in tools] == (
+        ["exec_command", "write_stdin"] if pty else ["exec_command"]
+    )
+    if pty:
+        assert isinstance(tools[1], WriteStdinTool)
+        assert tools[1].session is session
 
 
 def _capturing_exec_tool(captured: dict[str, str]) -> FunctionTool:

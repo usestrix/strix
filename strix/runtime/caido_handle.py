@@ -32,6 +32,7 @@ class CaidoBootstrapHandle:
 
     def __init__(self, task: asyncio.Task[Client]) -> None:
         self._task = task
+        task.add_done_callback(_log_failure)
 
     async def get(self) -> Client:
         """Wait for the bootstrap and return the client.
@@ -58,3 +59,10 @@ class CaidoBootstrapHandle:
         if client is not None:
             with contextlib.suppress(Exception):
                 await client.aclose()
+
+
+def _log_failure(task: asyncio.Task[Client]) -> None:
+    # Nothing else reports a failure when no proxy tool ever calls get(), and
+    # Caido rejects all proxied sandbox traffic until the bootstrap succeeds.
+    if not task.cancelled() and (exc := task.exception()) is not None:
+        logger.error("Caido bootstrap failed", exc_info=exc)

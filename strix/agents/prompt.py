@@ -89,6 +89,7 @@ def render_system_prompt(
     supports_images: bool = True,
     report_tool: str = "create_vulnerability_report",
     coverage_tools: bool = True,
+    proxy_tools: bool = True,
 ) -> str:
     """Render the system prompt. Returns empty string on template failure.
 
@@ -141,6 +142,7 @@ def render_system_prompt(
             include_scope=include_scope,
             report_tool=report_tool,
             coverage_tools=coverage_tools,
+            proxy_tools=proxy_tools,
             **skill_content,
         )
     except Exception:

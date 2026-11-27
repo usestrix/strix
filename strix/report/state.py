@@ -784,6 +784,7 @@ class ReportState:
                 "local_sources": config.get("local_sources", []),
                 "scope_mode": config.get("scope_mode", "auto"),
                 "diff_base": config.get("diff_base"),
+                "skills": list(config.get("skills") or []),
             }
         )
 

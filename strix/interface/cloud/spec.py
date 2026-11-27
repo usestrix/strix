@@ -7,6 +7,7 @@ CLI surface stays aligned with the OpenAPI specification.
 
 from __future__ import annotations
 
+from argparse import SUPPRESS
 from dataclasses import dataclass
 
 
@@ -74,13 +75,7 @@ _SCAN_START_BODY = (
     P("org_knowledge_enabled", "bool", help="Use the organization knowledge base."),
     P("notify_on_completion", "bool", help="Send an email when the scan completes."),
     P("notification_emails", "list", help="Extra notification email addresses."),
-    P(
-        "scan_tier",
-        help=(
-            "Scan tier: lite, standard, or ultra (default). "
-            "Not used for Enterprise or self-hosted scans."
-        ),
-    ),
+    P("scan_tier", help=SUPPRESS),
     P("model_config_id", help="Self-hosted only: model configuration ID to run with."),
     P("max_budget_usd", "float", help="Self-hosted only: budget limit for the scan in USD."),
 )
@@ -315,6 +310,27 @@ SPEC: dict[str, dict[str, Cmd]] = {
             body=(P("upload_ids", "list", help="Upload IDs with updated code."),),
             wait_path="/scans/{id}",
         ),
+        "retest-bulk": Cmd(
+            "POST",
+            "/vulnerabilities/retest",
+            "Retest selected findings across scans. Requires scans:write. "
+            "Strix groups findings by source scan and starts a retest batch for each scan. "
+            "Each batch includes only the selected findings. "
+            "Strix skips findings without a source scan, container image findings, "
+            "findings outside the token scope, and ignored or unused findings. "
+            "Strix also skips findings with a retest already running or starting. "
+            "Use vulns retest for container image findings. "
+            "Read each batch with strix cloud scans retests SCAN_ID. "
+            "This command does not support --wait.",
+            body=(
+                P(
+                    "vulnerability_ids",
+                    "list",
+                    required=True,
+                    help="Finding IDs to retest. Supply at least one non-empty ID.",
+                ),
+            ),
+        ),
         "fix-pr": Cmd(
             "POST",
             "/vulnerabilities/{vulnerabilityId}/create-fix-pr",
@@ -546,7 +562,7 @@ SPEC: dict[str, dict[str, Cmd]] = {
                         "Use --data to set null and clear it."
                     ),
                 ),
-                P("scan_tier", help="Scan tier: lite, standard, or ultra."),
+                P("scan_tier", help=SUPPRESS),
             ),
         ),
         "delete": Cmd("DELETE", "/schedules/{scheduleId}", "Delete a schedule."),

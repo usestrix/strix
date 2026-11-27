@@ -37,6 +37,20 @@ strix (--target <target> | --target-list <path>) [options]
   Path to a file containing detailed instructions.
 </ParamField>
 
+<ParamField path="--skills" type="string">
+  Comma-separated skills to load into the root agent before the scan starts, for
+  example `idor,mass_assignment,custom/my_method`. Use the bare name or
+  `<category>/<name>`. Unknown names stop the run and list the available skills.
+  See [Skills](/advanced/skills#load-skills-yourself).
+</ParamField>
+
+<ParamField path="--skills-dir" type="string">
+  Directory with extra skills, in the same `<category>/<name>.md` layout as the
+  built-in set. Repeat the option for more directories. A skill with the same
+  path as a built-in skill replaces it. Strix also reads `STRIX_SKILLS_DIR`. See
+  [Add your own skills](/advanced/skills#add-your-own-skills).
+</ParamField>
+
 <ParamField path="--workspace-file" type="string">
   Path to a file on your machine to place into the sandbox workspace before the
   scan starts. Repeat the option for more files. Write `PATH:DEST` to choose the

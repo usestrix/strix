@@ -96,6 +96,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         "local_sources": getattr(args, "local_sources", None) or [],
         "workspace_files": getattr(args, "workspace_files", None) or [],
         "scope_mode": getattr(args, "scope_mode", "auto"),
+        "skills": list(getattr(args, "skills", None) or []),
         "diff_base": getattr(args, "diff_base", None),
         "resume_instruction": getattr(args, "user_explicit_instruction", None) or "",
     }

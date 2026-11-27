@@ -9,15 +9,19 @@ import socket
 import struct
 import sys
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
-from strix.config.settings import DEFAULT_MAX_TURNS
+from strix.config.settings import DEFAULT_MAX_TURNS, ActionApprovalSettings
+from strix.core.action_approvals import ActionApprovalGuard
 from strix.interface.tui import runtime as go_tui
 from strix.interface.tui import sidecar
+from strix.interface.tui.backend import server as server_module
+from strix.interface.tui.backend.protocol import PROTOCOL_CAPABILITIES
 from strix.interface.tui.runtime import GoTuiRuntime
 from strix.report.state import ReportState
 
@@ -37,6 +41,43 @@ def args() -> argparse.Namespace:
         user_explicit_instruction=None,
         run_name="test-run",
     )
+
+
+@pytest.mark.parametrize(
+    "event_type,decision,expected",
+    [
+        ("requested", "pending", "Waiting for approval: test (deletes data)"),
+        ("resolved", "approved", "Approved by you"),
+        ("resolved", "denied", "Denied by you"),
+        ("resolved", "timed_out", "Blocked: no answer within 5 minutes"),
+        ("blocked", "blocked", "Blocked automatically (deletes data)"),
+        ("checked", "allowed", None),
+    ],
+)
+def test_approval_events_record_transcript_and_notify(
+    event_type: str, decision: str, expected: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = GoTuiRuntime(args())
+    runtime.coordinator.action_approvals = ActionApprovalGuard(ActionApprovalSettings())
+    notifications: list[bool] = []
+    monkeypatch.setattr(runtime.controller, "notify_changed", lambda: notifications.append(True))
+    runtime.capture_approval(
+        {
+            "type": event_type,
+            "decision": decision,
+            "agent_id": "acting",
+            "summary": "test",
+            "risky": True,
+            "category": "deletes_data",
+            "decided_by": "terminal",
+        }
+    )
+    assert notifications == [True]
+    if expected is None:
+        assert not runtime.live_view.events
+    else:
+        assert runtime.live_view.events[0]["agent_id"] == "acting"
+        assert runtime.live_view.events[0]["data"]["content"] == expected
 
 
 def test_binary_command_prefers_packaged_sidecar(
@@ -175,6 +216,76 @@ with socket.create_connection((host, int(port))) as connection:
     assert await sidecar.wait_process(process) == 0
 
 
+_CONNECT_AFTER_DELAY = """
+import os
+import socket
+import sys
+import time
+
+time.sleep(float(sys.argv[1]))
+host, port = os.environ["STRIX_TUI_ADDR"].rsplit(":", 1)
+with socket.create_connection((host, int(port))) as connection:
+    connection.sendall(os.environ["STRIX_TUI_TOKEN"].encode("ascii"))
+"""
+
+
+@pytest.mark.asyncio
+async def test_windows_transport_waits_for_a_child_that_is_still_compiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sidecar, "_WINDOWS_AUTH_TIMEOUT", 0.1)
+
+    process, connection = await sidecar._launch_windows_tui_process(
+        [sys.executable, "-c", _CONNECT_AFTER_DELAY, "1"], os.environ.copy(), None, 30.0
+    )
+    connection.close()
+
+    assert await sidecar.wait_process(process) == 0
+
+
+@pytest.mark.asyncio
+async def test_windows_transport_keeps_the_short_limit_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sidecar, "_WINDOWS_AUTH_TIMEOUT", 0.1)
+
+    with pytest.raises(TimeoutError, match="Timed out waiting for the TUI to connect"):
+        await sidecar._launch_windows_tui_process(
+            [sys.executable, "-c", _CONNECT_AFTER_DELAY, "30"], os.environ.copy(), None
+        )
+
+
+@pytest.mark.asyncio
+async def test_windows_transport_fails_fast_when_the_child_exits_before_connecting() -> None:
+    launch = sidecar._launch_windows_tui_process(
+        [sys.executable, "-c", "raise SystemExit(3)"], os.environ.copy(), None, 120.0
+    )
+
+    with pytest.raises(ConnectionError, match="status 3"):
+        await asyncio.wait_for(launch, timeout=30)
+
+
+def test_cancelled_windows_launch_does_not_hold_up_shutdown() -> None:
+    async def cancel_launch() -> None:
+        launch = asyncio.create_task(
+            sidecar._launch_windows_tui_process(
+                [sys.executable, "-c", _CONNECT_AFTER_DELAY, "120"],
+                os.environ.copy(),
+                None,
+                120.0,
+            )
+        )
+        await asyncio.sleep(0.5)
+        launch.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await launch
+
+    started = time.monotonic()
+    asyncio.run(cancel_launch())
+
+    assert time.monotonic() - started < 30
+
+
 async def _receive_exactly(connection: socket.socket, size: int) -> bytes:
     result = b""
     while len(result) < size:
@@ -209,7 +320,10 @@ async def test_runtime_prepares_state_before_launch_and_scans_only_after_ready(
     scan_started = asyncio.Event()
 
     async def launch(
-        _command: list[str], _env: dict[str, str], _cwd: str | None
+        _command: list[str],
+        _env: dict[str, str],
+        _cwd: str | None,
+        _connect_timeout: float | None,
     ) -> tuple[SimpleNamespace, socket.socket]:
         return SimpleNamespace(returncode=None), backend
 
@@ -253,6 +367,7 @@ async def test_runtime_prepares_state_before_launch_and_scans_only_after_ready(
                         "collection-deltas",
                         "structured-command-errors",
                         "agents-collection",
+                        "action-approvals",
                     ]
                 },
             },
@@ -263,6 +378,106 @@ async def test_runtime_prepares_state_before_launch_and_scans_only_after_ready(
         child.close()
         if not run_task.done():
             run_task.cancel()
+
+
+def _stub_launch(
+    monkeypatch: pytest.MonkeyPatch,
+    runtime: GoTuiRuntime,
+    command: list[str],
+    backend: socket.socket,
+) -> list[float | None]:
+    connect_timeouts: list[float | None] = []
+
+    async def launch(
+        _command: list[str],
+        _env: dict[str, str],
+        _cwd: str | None,
+        connect_timeout: float | None,
+    ) -> tuple[SimpleNamespace, socket.socket]:
+        connect_timeouts.append(connect_timeout)
+        return SimpleNamespace(returncode=0), backend
+
+    async def wait_process(_process: object) -> int:
+        return 0
+
+    monkeypatch.setattr(runtime, "binary_command", lambda: command)
+    monkeypatch.setattr(runtime, "init_run_state", lambda: None)
+    monkeypatch.setattr(runtime, "start_scan", lambda: None)
+    monkeypatch.setattr(go_tui, "launch_tui_process", launch)
+    monkeypatch.setattr(go_tui, "wait_process", wait_process)
+    monkeypatch.setattr(go_tui, "persist_current", lambda: None)
+    monkeypatch.setattr(server_module, "_HANDSHAKE_TIMEOUT", 0.05)
+    return connect_timeouts
+
+
+async def _reply_ready_after(child: socket.socket, delay: float) -> None:
+    await _receive_message(child)
+    await asyncio.sleep(delay)
+    await _send_message(
+        child,
+        {"version": 3, "type": "ready", "payload": {"capabilities": list(PROTOCOL_CAPABILITIES)}},
+    )
+
+
+@pytest.mark.asyncio
+async def test_go_run_child_may_compile_past_the_packaged_handshake_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_args = args()
+    runtime_args.needs_setup = False
+    runtime = GoTuiRuntime(runtime_args)
+    backend, child = socket.socketpair()
+    child.setblocking(False)  # noqa: FBT003
+    connect_timeouts = _stub_launch(monkeypatch, runtime, ["go", "run", "./cmd/strix-tui"], backend)
+
+    run_task = asyncio.create_task(runtime.run())
+    try:
+        await asyncio.wait_for(_reply_ready_after(child, 0.2), timeout=2)
+        await asyncio.wait_for(run_task, timeout=2)
+        assert runtime.server.activated is True
+        assert connect_timeouts == [go_tui._GO_RUN_HANDSHAKE_TIMEOUT]
+    finally:
+        child.close()
+        if not run_task.done():
+            run_task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_packaged_child_slower_than_handshake_timeout_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_args = args()
+    runtime_args.needs_setup = False
+    runtime = GoTuiRuntime(runtime_args)
+    backend, child = socket.socketpair()
+    child.setblocking(False)  # noqa: FBT003
+    connect_timeouts = _stub_launch(monkeypatch, runtime, ["test-sidecar"], backend)
+
+    try:
+        with pytest.raises(go_tui.GoTuiPreActivationError, match="Timed out"):
+            await asyncio.wait_for(runtime.run(), timeout=2)
+        assert connect_timeouts == [None]
+    finally:
+        child.close()
+
+
+@pytest.mark.asyncio
+async def test_silent_go_run_child_still_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_args = args()
+    runtime_args.needs_setup = False
+    runtime = GoTuiRuntime(runtime_args)
+    backend, child = socket.socketpair()
+    child.setblocking(False)  # noqa: FBT003
+    _stub_launch(monkeypatch, runtime, ["go", "run", "./cmd/strix-tui"], backend)
+    monkeypatch.setattr(go_tui, "_GO_RUN_HANDSHAKE_TIMEOUT", 0.05)
+
+    try:
+        with pytest.raises(go_tui.GoTuiPreActivationError, match="Timed out"):
+            await asyncio.wait_for(runtime.run(), timeout=2)
+    finally:
+        child.close()
 
 
 @pytest.mark.asyncio
