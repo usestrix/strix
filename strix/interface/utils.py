@@ -675,7 +675,7 @@ def _extract_branch_name(ref: str | None) -> str | None:
     value = ref.strip()
     if not value:
         return None
-    return value.split("/")[-1]
+    return value.removeprefix("refs/remotes/origin/")
 
 
 def _extract_github_base_sha(env: dict[str, str]) -> str | None:
