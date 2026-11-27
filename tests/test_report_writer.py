@@ -265,3 +265,35 @@ def test_render_vulnerability_md_surfaces_calibration_metadata() -> None:
     assert "## Confidence Rationale" in md
     assert "## What Would Change This Severity" in md
     assert "## Fix Verification" in md
+
+
+def test_render_vulnerability_md_suggested_fix_uses_safe_fence() -> None:
+    # fix_before/fix_after are LLM-authored; fence them like snippets (#1762)
+    md = render_vulnerability_md(
+        _sample_report(
+            code_locations=[
+                {
+                    "file": "app.py",
+                    "fix_before": "q = f'```{x}'",
+                    "fix_after": "q = sanitize(x)",
+                },
+            ],
+        ),
+    )
+    assert "````diff\n- q = f'```{x}'\n+ q = sanitize(x)\n````" in md
+
+
+def test_render_vulnerability_md_suggested_fix_plain_fence_unchanged() -> None:
+    md = render_vulnerability_md(
+        _sample_report(code_locations=[{"file": "a.py", "fix_before": "a", "fix_after": "b"}]),
+    )
+    assert "```diff\n- a\n+ b\n```" in md
+
+
+def test_render_vulnerability_md_unwraps_long_fenced_poc() -> None:
+    # A PoC stored in a 4-backtick fence (because it holds a ``` run) must be
+    # unwrapped instead of being nested, fence lines and all, in another fence.
+    stored = "````bash\ncat <<'EOF'\n```\nEOF\n````"
+    md = render_vulnerability_md(_sample_report(poc_script_code=stored))
+    assert "````bash\ncat <<'EOF'\n```\nEOF\n````" in md
+    assert "````bash\n````bash" not in md

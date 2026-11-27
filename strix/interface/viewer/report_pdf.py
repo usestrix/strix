@@ -470,6 +470,15 @@ def _strip_leading_heading(md: str) -> str:
     return md
 
 
+_FENCE_OPEN_RE = re.compile(r"^(`{3,})[^`]*$")
+_FENCE_CLOSE_RE = re.compile(r"^(`{3,})$")
+
+
+def _closes_fence(line: str, fence_len: int) -> bool:
+    closing = _FENCE_CLOSE_RE.match(line.strip())
+    return closing is not None and len(closing.group(1)) >= fence_len
+
+
 def _markdown_flowables(  # noqa: PLR0915 - cohesive block parser, splitting hurts clarity
     md: str, styles: dict[str, ParagraphStyle]
 ) -> list[Flowable]:
@@ -492,12 +501,17 @@ def _markdown_flowables(  # noqa: PLR0915 - cohesive block parser, splitting hur
     i = 0
     while i < len(lines):
         stripped = lines[i].strip()
-        if stripped.startswith("```"):
+        opening = _FENCE_OPEN_RE.match(stripped)
+        if opening:
             flush_para()
             flush_bullets()
+            # Per CommonMark only a run of at least as many backticks (and nothing
+            # else) closes the block, so content fenced with ``safe_fence`` that
+            # holds its own ``` lines stays inside the code block.
+            fence_len = len(opening.group(1))
             i += 1
             code: list[str] = []
-            while i < len(lines) and not lines[i].strip().startswith("```"):
+            while i < len(lines) and not _closes_fence(lines[i], fence_len):
                 code.append(lines[i])
                 i += 1
             i += 1  # closing fence
@@ -536,7 +550,7 @@ def _markdown_flowables(  # noqa: PLR0915 - cohesive block parser, splitting hur
     return flow
 
 
-_FENCE_RE = re.compile(r"^```([^\n`]*)\n(.*?)\n?```$", re.DOTALL)
+_FENCE_RE = re.compile(r"^(`{3,})([^\n`]*)\n(.*?)\n?\1$", re.DOTALL)
 
 
 def _strip_code_fence(value: Any) -> Any:
@@ -544,8 +558,8 @@ def _strip_code_fence(value: Any) -> Any:
     ``` ```lang ``` marker lines literally in the PDF."""
     if not isinstance(value, str):
         return value
-    match = _FENCE_RE.match(value.strip())
-    return match.group(2) if match else value
+    match = _FENCE_RE.match(value.replace("\r\n", "\n").strip())
+    return match.group(3) if match else value
 
 
 def _field_block(

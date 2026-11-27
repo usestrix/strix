@@ -14,9 +14,12 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.platypus import Paragraph
 
 from strix.interface.viewer.report_pdf import (
+    _closes_fence,
     _duration,
     _inline_md,
+    _markdown_flowables,
     _normalize_severity,
+    _styles,
     build_encrypted_report,
     encrypt_pdf,
     generate_password,
@@ -242,3 +245,24 @@ def test_normalize_severity_restricts_badge_markup(value: object, expected: str)
 
 def test_duration_rejects_mixed_timezone_awareness() -> None:
     assert _duration("2026-01-01T00:00:00", "2026-01-01T01:00:00Z") == "n/a"
+
+
+def test_markdown_code_block_keeps_inner_shorter_fence() -> None:
+    # A 4-backtick block (as emitted by safe_fence) containing ``` lines must
+    # stay one code block; the inner ``` must not close it and turn the rest
+    # into live markdown.
+    md = "Intro\n\n````\n```\n## not a heading\n```\n````\n\nAfter"
+    styles = _styles()
+    flow = _markdown_flowables(md, styles)
+    code_blocks = [f for f in flow if isinstance(f, Paragraph) and f.style is styles["code"]]
+    assert len(code_blocks) == 1
+    assert "## not a heading" in code_blocks[0].text
+    headings = [f for f in flow if isinstance(f, Paragraph) and f.style is styles["md_heading"]]
+    assert headings == []
+
+
+def test_closes_fence_requires_at_least_opening_length() -> None:
+    assert _closes_fence("```", 3)
+    assert _closes_fence("  `````  ", 4)
+    assert not _closes_fence("```", 4)
+    assert not _closes_fence("```python", 3)
