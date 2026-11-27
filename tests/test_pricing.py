@@ -49,17 +49,39 @@ def test_resolves_common_bare_model_names() -> None:
     resolve_litellm_model.cache_clear()
     assert resolve_litellm_model("deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
     assert resolve_litellm_model("openai/deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
-    # LiteLLM prices grok-4.5 identically under xai/, perplexity/xai/ and
-    # openrouter/x-ai/, so the resolver may return any of them; the contract
-    # is a provider-qualified name LiteLLM can price.
-    grok = resolve_litellm_model("grok-4.5")
-    assert grok is not None
-    assert grok.endswith("/grok-4.5")
-    assert grok in litellm.model_cost
     # MiniMax-M3 is sold by several LiteLLM providers at different prices, so
     # the resolver must not guess from its bare name. A provider-qualified
     # model remains deterministic.
     assert resolve_litellm_model("minimax/MiniMax-M3") == "minimax/MiniMax-M3"
+
+
+def test_resolves_a_bare_model_that_several_providers_sell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A synthetic price map, so the test does not depend on what LiteLLM lists
+    # today: LiteLLM drops and re-keys models between releases, and a real
+    # bare model name can stop resolving without any change on our side.
+    price = {"input_cost_per_token": 3e-06, "output_cost_per_token": 1.5e-05}
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {
+            "xai/native-model-9": {**price, "litellm_provider": "xai"},
+            "perplexity/xai/native-model-9": {**price, "litellm_provider": "perplexity"},
+            "openrouter/x-ai/native-model-9": {**price, "litellm_provider": "openrouter"},
+        },
+    )
+    resolve_litellm_model.cache_clear()
+
+    try:
+        # Every provider prices it identically, so the resolver may return any of
+        # them; the contract is a provider-qualified name LiteLLM can price.
+        resolved = resolve_litellm_model("native-model-9")
+        assert resolved is not None
+        assert resolved.endswith("/native-model-9")
+        assert resolved in litellm.model_cost
+    finally:
+        resolve_litellm_model.cache_clear()
 
 
 def test_resolver_returns_none_for_unresolvable_model() -> None:
