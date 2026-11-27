@@ -100,56 +100,37 @@ class TurnCallIdRewriter:
     """Rewrite a single turn's tool-call ids that are blank or collide with the history.
 
     A turn's items surface several times (streamed item events, then the
-    completed response), so the same original id must always map to the same
-    replacement within the turn.
+    completed response), so each distinct item must keep its assigned id
+    across sightings, even when other items carry the same original id.
     """
 
     def __init__(self, model_input: str | list[Any]) -> None:
         self._used = set() if isinstance(model_input, str) else collect_call_ids(model_input)
-        self._remap: dict[str, str] = {}
-        self._blank_remap: dict[str, str] = {}
-        self._settled: set[str] = set()
-
-    def _rewrite_blank(
-        self, item: ResponseFunctionToolCall, position: int | None
-    ) -> ResponseFunctionToolCall:
-        """Give a call with no id one that stays the same on every sighting.
-
-        A real item id tells parallel calls apart. Chat Completions routes give
-        every item the same placeholder id, so there the call's position in
-        the turn's output tells them apart instead.
-        """
-        if item.id and item.id != FAKE_RESPONSES_ID:
-            key = item.id
-        else:
-            key = f"{FAKE_RESPONSES_ID}#{position}"
-        replacement = self._blank_remap.get(key)
-        if replacement is None:
-            replacement = new_call_id()
-            self._blank_remap[key] = replacement
-            self._used.add(replacement)
-            self._settled.add(replacement)
-        return item.model_copy(update={"call_id": replacement})
+        self._remap: dict[tuple[str, str | int | None], str] = {}
 
     def rewrite_item(self, item: Any, position: int | None = None) -> Any:
         """Rewrite one item; ``position`` is its index in the turn's output."""
         if not isinstance(item, ResponseFunctionToolCall):
             return item
         original = item.call_id
-        if not original:
-            return self._rewrite_blank(item, position)
-        if original in self._settled:
-            return item
-        replacement = self._remap.get(original)
+        # Responses supplies a real item id; Chat Completions uses one shared
+        # placeholder, so its output position distinguishes parallel calls.
+        key: tuple[str, str | int | None]
+        if item.id and item.id != FAKE_RESPONSES_ID:
+            key = ("item", item.id)
+        elif position is not None:
+            key = ("position", position)
+        else:
+            key = ("call", original)
+        replacement = self._remap.get(key)
         if replacement is None:
-            if original not in self._used:
-                self._used.add(original)
-                self._settled.add(original)
-                return item
-            replacement = new_call_id()
-            self._remap[original] = replacement
+            replacement = new_call_id() if not original or original in self._used else original
+            self._remap[key] = replacement
             self._used.add(replacement)
-            self._settled.add(replacement)
+            if key[0] == "call":
+                self._remap[("call", replacement)] = replacement
+        if replacement == original:
+            return item
         return item.model_copy(update={"call_id": replacement})
 
     def rewrite_items(self, items: list[Any]) -> list[Any]:
