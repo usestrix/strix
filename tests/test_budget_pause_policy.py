@@ -212,6 +212,7 @@ class _Scan:
             name=f"recon-{child_id}",
             parent_id="root",
             task="probe things",
+            skills=[],
             initial_input=[],
             hooks=self.hooks,
         )
