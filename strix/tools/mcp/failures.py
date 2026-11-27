@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -50,7 +51,8 @@ def _retry_after(value: str | None) -> float | None:
     if not value:
         return None
     try:
-        return max(0.0, float(value))
+        seconds = float(value)
+        return max(0.0, seconds) if math.isfinite(seconds) else None
     except ValueError:
         pass
     try:

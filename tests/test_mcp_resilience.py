@@ -111,6 +111,40 @@ async def test_retry_after_parses_seconds_and_http_date() -> None:
     assert 0 <= retry_after <= 20
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("Infinity", None),
+        ("+inf", None),
+        ("-inf", None),
+        ("NaN", None),
+        ("1e309", None),
+        ("-1e309", None),
+        pytest.param("9" * 309, None, id="decimal-overflow"),
+        ("0", 0.0),
+        ("12", 12.0),
+        ("1.5", 1.5),
+        ("-3", 0.0),
+        ("invalid", None),
+        (None, None),
+        ("Wed, 21 Oct 2015 07:28:00 GMT", 0.0),
+    ],
+)
+@pytest.mark.parametrize("status", [429, 503])
+@pytest.mark.asyncio
+async def test_retry_after_ignores_non_finite_values_in_both_failure_paths(
+    value: str | None, expected: float | None, status: int
+) -> None:
+    error = _http_error(status, retry_after=value)
+    assert classify(error).retry_after == expected
+
+    recorder = HttpStatusRecorder()
+    await recorder(error.response)
+    recorded = recorder.take()
+    assert recorded is not None
+    assert recorded.retry_after == expected
+
+
 @pytest.mark.asyncio
 async def test_successful_response_clears_previous_auth_failure() -> None:
     recorder = HttpStatusRecorder()
@@ -197,6 +231,49 @@ async def test_rate_limit_retries_and_succeeds(
     assert result == {"type": "text", "text": "routed:read"}
     assert session.is_dead is False
     await session.aclose()
+
+
+@pytest.mark.parametrize("recorded_cancellation", [False, True])
+@pytest.mark.asyncio
+async def test_non_finite_retry_after_uses_finite_backoff_and_recovers(
+    monkeypatch: pytest.MonkeyPatch, recorded_cancellation: bool
+) -> None:
+    delays: list[float] = []
+    original_sleep = asyncio.sleep
+
+    async def capture_sleep(delay: float) -> None:
+        delays.append(delay)
+        await original_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", capture_sleep)
+    error = _http_error(429, retry_after="1e309")
+    recorder = HttpStatusRecorder()
+    await recorder(error.response)
+    builds = iter(
+        [
+            mcp_client.BuiltMcpServer(
+                _sequence_server(
+                    "non-finite",
+                    asyncio.CancelledError() if recorded_cancellation else error,
+                ),
+                recorder,
+            ),
+            _built_server(_sequence_server("non-finite")),
+        ]
+    )
+    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: next(builds))
+    session = mcp_session.SupervisedMcpSession(_config("non-finite"))
+    try:
+        assert await session.start()
+        result = await session.dispatch("read", {}, label="non_finite_read")
+        assert result == {"type": "text", "text": "routed:read"}
+        assert len(delays) == 2
+        assert 0.5 <= delays[0] <= 0.55
+        assert delays[1] == mcp_session._SETTLE_DELAY
+        assert not session.is_dead
+        assert not session.is_unavailable
+    finally:
+        await session.aclose()
 
 
 @pytest.mark.asyncio
