@@ -222,6 +222,18 @@ async def search_mcp_tools(
     }
 
 
+def _tool_annotations(tool: Any) -> dict[str, Any]:
+    """Return the behaviour hints a server declared for ``tool`` (readOnlyHint, ...).
+
+    Servers that declare none yield an empty dict so the key can be omitted.
+    """
+    annotations = getattr(tool, "annotations", None)
+    if annotations is None:
+        return {}
+    dumped = annotations.model_dump(exclude_none=True, by_alias=True)
+    return dict(dumped) if isinstance(dumped, dict) else {}
+
+
 @function_tool(timeout=60)
 async def get_mcp_tool_schema(
     ctx: RunContextWrapper,
@@ -250,12 +262,16 @@ async def get_mcp_tool_schema(
             f"Unknown tool {tool!r} on MCP connection {connection!r}. "
             "Call search_mcp_tools to find an available tool."
         )
-    return {
+    schema: dict[str, Any] = {
         "connection": connection,
         "name": match.name,
         "description": (match.description or "").strip() or None,
         "input_schema": match.inputSchema or {"type": "object"},
     }
+    annotations = _tool_annotations(match)
+    if annotations:
+        schema["annotations"] = annotations
+    return schema
 
 
 @guard_function_tool
