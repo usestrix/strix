@@ -48,7 +48,18 @@ def resolve_litellm_model(model: str) -> str | None:
                 if isinstance(model_cost.get(key), dict)
             }
             if len(matches) == 1 or len(prices) == 1:
-                return matches[0]
+                # Every route prices the model the same, so picking one is free; pick
+                # the first-party listing over an aggregator's re-listing. Aggregators
+                # (OpenRouter, DeepInfra, ...) re-key a model under a namespaced path
+                # such as "openrouter/x-ai/grok-4.5", which sorts ahead of the native
+                # "xai/grok-4.5", so the alphabetically first key would be misleading.
+                native = [
+                    key
+                    for key in matches
+                    if isinstance(model_cost.get(key), dict)
+                    and key == f"{model_cost[key].get('litellm_provider')}/{name}"
+                ]
+                return native[0] if len(native) == 1 else matches[0]
         return None  # noqa: TRY300
     except Exception:  # noqa: BLE001
         return None
