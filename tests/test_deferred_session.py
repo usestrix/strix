@@ -106,9 +106,11 @@ class _Backend:
         self.fail = fail
         self.client = _Client()
         self.session = _Session()
+        self.kwargs: dict[str, Any] = {}
 
-    async def __call__(self, **_kwargs: Any) -> tuple[Any, Any]:
+    async def __call__(self, **kwargs: Any) -> tuple[Any, Any]:
         self.calls += 1
+        self.kwargs = kwargs
         await self.gate.wait()
         if self.fail:
             raise RuntimeError("bring-up exploded")
@@ -312,5 +314,45 @@ async def test_sdk_session_prep_does_not_wait_for_the_bring_up(backend: _Backend
         backend.gate.set()
         await asyncio.wait_for(session.resolve(), timeout=1)
         assert not session.pending
+    finally:
+        await session_manager.cleanup(scan_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("defer", [True, False])
+async def test_proxy_off_skips_caido(
+    backend: _Backend, monkeypatch: pytest.MonkeyPatch, defer: bool
+) -> None:
+    async def _fail(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("Caido must not be bootstrapped")
+
+    monkeypatch.setattr(session_manager, "bootstrap_caido", _fail)
+    scan_id = f"proxy-off-{defer}"
+    backend.gate.set()
+    try:
+        bundle = await session_manager.create_or_reuse(
+            scan_id, image="img", local_sources=[], defer=defer, proxy=False
+        )
+        await _settle()
+        assert bundle["caido_client"] is None
+        env = backend.kwargs["manifest"].environment.value
+        assert env["STRIX_DISABLE_PROXY"] == "1"
+        assert not {"http_proxy", "https_proxy", "ALL_PROXY"} & set(env)
+        assert backend.kwargs["exposed_ports"] == ()
+    finally:
+        await session_manager.cleanup(scan_id)
+
+
+@pytest.mark.asyncio
+async def test_proxy_on_routes_the_sandbox_through_caido(backend: _Backend) -> None:
+    scan_id = "proxy-on"
+    backend.gate.set()
+    try:
+        bundle = await session_manager.create_or_reuse(scan_id, image="img", local_sources=[])
+        assert bundle["caido_client"] is not None
+        env = backend.kwargs["manifest"].environment.value
+        assert env["http_proxy"] == env["https_proxy"] == "http://127.0.0.1:48080"
+        assert "STRIX_DISABLE_PROXY" not in env
+        assert backend.kwargs["exposed_ports"] == (48080,)
     finally:
         await session_manager.cleanup(scan_id)

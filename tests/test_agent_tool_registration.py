@@ -212,3 +212,25 @@ def test_select_tools_picks_each_agents_tools() -> None:
     assert [t.name for t in child.tools] == ["think", "agent_finish"]
     assert [t.name for t in root.tools] == ["think"]
     assert calls == [(False, ["xss"]), (True, [])]
+
+
+def test_proxy_tools_can_be_turned_off() -> None:
+    proxy = {
+        "list_requests",
+        "view_request",
+        "repeat_request",
+        "list_sitemap",
+        "view_sitemap_entry",
+        "scope_rules",
+    }
+    for is_root in (True, False):
+        on = factory.build_strix_agent(is_root=is_root)
+        off = factory.build_strix_agent(is_root=is_root, proxy_tools=False)
+        assert proxy <= {t.name for t in on.tools}
+        assert not proxy & {t.name for t in off.tools}
+        assert isinstance(on.instructions, str)
+        assert isinstance(off.instructions, str)
+        sections = ("PROXY & INTERCEPTION", "CAIDO PROXY ERROR PAGES", "- HTTP EVIDENCE")
+        assert all(section in on.instructions for section in sections)
+        assert not any(section in off.instructions for section in sections)
+        assert "PROGRAMMING:" in off.instructions
