@@ -16,7 +16,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.config import codex, load_settings, persist_current
-from strix.core.paths import RUNS_DIR_NAME, run_dir_for
+from strix.core.paths import run_dir_for, runs_dir_display
 from strix.interface.cli_args import (
     FAIL_ON_SEVERITIES,
     ResumeError,
@@ -380,7 +380,7 @@ def _pick_run_to_resume(args: argparse.Namespace) -> None:
     from strix.report.runs import list_run_summaries
 
     try:
-        chosen = pick_run(list_run_summaries(), runs_dir=RUNS_DIR_NAME)
+        chosen = pick_run(list_run_summaries(), runs_dir=runs_dir_display())
     except PickerUnavailableError as exc:
         _print_cli_error(resume_run_list_message(f"{exc}."))
         sys.exit(2)

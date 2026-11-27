@@ -86,7 +86,7 @@ def _console(width: int = 110, height: int = 30) -> tuple[Console, io.StringIO]:
 
 def _picker(runs: list[RunSummary] = RUNS) -> ResumePicker:
     console, _ = _console()
-    return ResumePicker(runs, console=console, runs_dir="strix_runs", now=NOW)
+    return ResumePicker(runs, console=console, runs_dir="./strix_runs", now=NOW)
 
 
 def _plain(picker: ResumePicker) -> str:
@@ -121,6 +121,14 @@ def test_filter_matches_name_target_and_status() -> None:
         "example-com_223e",
     ]
     assert filter_runs(RUNS, "") == RUNS
+
+
+def test_render_shows_an_absolute_runs_dir_without_a_relative_prefix() -> None:
+    console, _ = _console()
+    picker = ResumePicker(RUNS, console=console, runs_dir="/var/scans/runs", now=NOW)
+    text = _plain(picker)
+    assert "4 runs in /var/scans/runs" in text
+    assert "./" + "/var/scans/runs" not in text
 
 
 def test_render_lists_every_run_with_its_metadata() -> None:
@@ -192,7 +200,7 @@ def test_long_lists_scroll_to_keep_the_cursor_visible() -> None:
         for index in range(40)
     ]
     console, _ = _console(height=12)
-    picker = ResumePicker(runs, console=console, runs_dir="strix_runs", now=NOW)
+    picker = ResumePicker(runs, console=console, runs_dir="./strix_runs", now=NOW)
     text = _plain(picker)
     assert "run_00" in text
     assert "more above" not in text
@@ -207,7 +215,7 @@ def test_long_lists_scroll_to_keep_the_cursor_visible() -> None:
 
 def test_run_redraws_in_place_and_restores_the_cursor() -> None:
     console, buffer = _console()
-    picker = ResumePicker(RUNS, console=console, runs_dir="strix_runs", now=NOW)
+    picker = ResumePicker(RUNS, console=console, runs_dir="./strix_runs", now=NOW)
     keys = iter([KEY_DOWN, KEY_ENTER])
     picker.run(lambda: next(keys))
     output = buffer.getvalue()
@@ -219,13 +227,13 @@ def test_run_redraws_in_place_and_restores_the_cursor() -> None:
 
 def test_ctrl_c_cancels_like_escape() -> None:
     console, _ = _console()
-    picker = ResumePicker(RUNS, console=console, runs_dir="strix_runs", now=NOW)
+    picker = ResumePicker(RUNS, console=console, runs_dir="./strix_runs", now=NOW)
     assert picker.handle(KEY_INTERRUPT) == (True, None)
 
 
 def test_sigint_while_waiting_for_a_key_cancels_and_restores_the_cursor() -> None:
     console, buffer = _console()
-    picker = ResumePicker(RUNS, console=console, runs_dir="strix_runs", now=NOW)
+    picker = ResumePicker(RUNS, console=console, runs_dir="./strix_runs", now=NOW)
 
     def interrupted() -> str:
         raise KeyboardInterrupt
@@ -236,7 +244,7 @@ def test_sigint_while_waiting_for_a_key_cancels_and_restores_the_cursor() -> Non
 
 def test_sigint_while_drawing_cancels_and_restores_the_cursor() -> None:
     console, buffer = _console()
-    picker = ResumePicker(RUNS, console=console, runs_dir="strix_runs", now=NOW)
+    picker = ResumePicker(RUNS, console=console, runs_dir="./strix_runs", now=NOW)
     draw = picker.draw
 
     def interrupted_draw() -> None:
@@ -251,12 +259,12 @@ def test_sigint_while_drawing_cancels_and_restores_the_cursor() -> None:
 def test_pick_run_needs_a_terminal() -> None:
     console, _ = _console()
     with pytest.raises(PickerUnavailableError):
-        pick_run(RUNS, runs_dir="strix_runs", console=console, stdin=io.StringIO())
+        pick_run(RUNS, runs_dir="./strix_runs", console=console, stdin=io.StringIO())
 
 
 def test_narrow_terminals_never_wrap_a_row() -> None:
     console, _ = _console(width=48)
-    picker = ResumePicker(RUNS, console=console, runs_dir="strix_runs", now=NOW)
+    picker = ResumePicker(RUNS, console=console, runs_dir="./strix_runs", now=NOW)
     for line in picker.render():
         assert len(line.plain) <= 47, line.plain
 
@@ -288,7 +296,7 @@ def test_tall_terminals_still_show_a_short_window() -> None:
         _run(f"run_{index:02d}", f"https://host{index}.example", minutes_ago=index)
         for index in range(40)
     ]
-    picker = ResumePicker(runs, console=console, runs_dir="strix_runs", now=NOW)
+    picker = ResumePicker(runs, console=console, runs_dir="./strix_runs", now=NOW)
     plain = [line.plain for line in picker.render()]
     assert sum(1 for line in plain if "run_" in line) == 8
     assert any("more below" in line for line in plain)

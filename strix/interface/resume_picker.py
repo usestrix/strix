@@ -247,7 +247,7 @@ class ResumePicker:
 
         title = Text()
         title.append(" Resume a run", style="bold")
-        title.append(f"   {len(self.runs)} runs in ./{self.runs_dir}", style="dim")
+        title.append(f"   {len(self.runs)} runs in {self.runs_dir}", style="dim")
         if self.filter:
             title.append("   search: ", style="dim")
             title.append(self.filter)

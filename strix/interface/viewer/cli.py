@@ -4,17 +4,22 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import time
 from typing import TYPE_CHECKING
 
 from rich.console import Console
 
 from strix.core.paths import (
+    RUNS_DIR_ENV,
     RUNS_DIR_NAME,
     latest_run_dir,
     run_dir_for,
     run_record_path,
     runs_base_dir,
+    runs_dir_display,
+    validate_effective_runs_dir,
+    validate_runs_dir_arg,
 )
 from strix.interface.viewer.server import authorized_url, bundle_is_built, serve
 from strix.interface.viewer.transcript import read_run_summary
@@ -37,7 +42,21 @@ def run_view(argv: list[str]) -> None:
         "run",
         nargs="?",
         default=None,
-        help=f"Run name under ./{RUNS_DIR_NAME} (defaults to the most recent run).",
+        help=(
+            f"Run name under the runs directory (default: ./{RUNS_DIR_NAME}; "
+            "defaults to the most recent run)."
+        ),
+    )
+    parser.add_argument(
+        "--runs-dir",
+        dest="runs_dir",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help=(
+            f"Directory where scan runs are stored (default: ./{RUNS_DIR_NAME}). "
+            f"Also read from the {RUNS_DIR_ENV} environment variable or cli-config.json."
+        ),
     )
     parser.add_argument(
         "--port",
@@ -56,6 +75,17 @@ def run_view(argv: list[str]) -> None:
         help="Do not open the browser automatically.",
     )
     args = parser.parse_args(argv)
+
+    if args.runs_dir is not None:
+        try:
+            os.environ[RUNS_DIR_ENV] = validate_runs_dir_arg(args.runs_dir)
+        except ValueError as exc:
+            parser.error(str(exc))
+
+    try:
+        validate_effective_runs_dir()
+    except ValueError as exc:
+        parser.error(str(exc))
 
     console = Console()
 
@@ -143,10 +173,11 @@ def _fail_no_run(console: Console, *, requested: str | None) -> NoReturn:
         else []
     )
 
+    display_dir = runs_dir_display()
     if requested:
-        console.print(f"[bold red]No run named '{requested}' under ./{RUNS_DIR_NAME}.[/]")
+        console.print(f"[bold red]No run named '{requested}' under {display_dir}.[/]")
     else:
-        console.print(f"[bold red]No runs found under ./{RUNS_DIR_NAME}.[/]")
+        console.print(f"[bold red]No runs found under {display_dir}.[/]")
 
     if available:
         console.print("Available runs:")

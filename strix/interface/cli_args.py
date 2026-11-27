@@ -10,7 +10,15 @@ from typing import cast
 
 from strix.config import apply_config_override
 from strix.config.settings import DEFAULT_MAX_TURNS
-from strix.core.paths import RUNS_DIR_NAME, run_dir_for, runtime_state_dir
+from strix.core.paths import (
+    RUNS_DIR_ENV,
+    RUNS_DIR_NAME,
+    run_dir_for,
+    runs_dir_display,
+    runtime_state_dir,
+    validate_effective_runs_dir,
+    validate_runs_dir_arg,
+)
 from strix.interface.scan_setup import attach_workspace_mount, build_targets_info
 from strix.interface.update_check import self_update
 from strix.interface.utils import (
@@ -271,6 +279,18 @@ Strix Cloud:
     )
 
     parser.add_argument(
+        "--runs-dir",
+        dest="runs_dir",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help=(
+            f"Directory where scan runs are stored and read from (default: ./{RUNS_DIR_NAME}). "
+            f"Also read from the {RUNS_DIR_ENV} environment variable or cli-config.json."
+        ),
+    )
+
+    parser.add_argument(
         "--mcp-config",
         type=str,
         metavar="PATH",
@@ -327,7 +347,8 @@ Strix Cloud:
         const="",
         metavar="RUN_NAME",
         help=(
-            "Resume a prior scan by its run name (the dir under ./strix_runs/). "
+            "Resume a prior scan by its run name (the dir under the runs directory, "
+            f"default ./{RUNS_DIR_NAME}/). "
             "Picks up the root + every non-terminal subagent's full LLM history "
             "and agent topology. Skips fresh run-name generation. Without a "
             "name, opens a picker of the prior runs."
@@ -346,6 +367,17 @@ Strix Cloud:
 
     if args.config:
         apply_config_override(validate_config_file(args.config))
+
+    if args.runs_dir is not None:
+        try:
+            os.environ[RUNS_DIR_ENV] = validate_runs_dir_arg(args.runs_dir)
+        except ValueError as exc:
+            parser.error(str(exc))
+
+    try:
+        validate_effective_runs_dir()
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if args.mcp_config:
         mcp_config_path = Path(args.mcp_config).expanduser()
@@ -427,7 +459,7 @@ Strix Cloud:
             if args.non_interactive:
                 parser.error(resume_run_list_message("--resume needs a run name in headless mode."))
             if not list_run_summaries():
-                parser.error(f"--resume: no runs in ./{RUNS_DIR_NAME} to resume")
+                parser.error(f"--resume: no runs in {runs_dir_display()} to resume")
             return args
         try:
             load_resume_state(args)
@@ -468,11 +500,12 @@ class ResumeError(ValueError):
 def resume_run_list_message(lead: str) -> str:
     """``lead`` followed by the runs that ``--resume <name>`` would accept."""
     runs = list_run_summaries()
+    display_dir = runs_dir_display()
     if not runs:
-        return f"{lead} There are no runs in ./{RUNS_DIR_NAME}."
+        return f"{lead} There are no runs in {display_dir}."
     name_width = max(len(run.run_name) for run in runs)
     status_width = max(len(run.status) for run in runs)
-    lines = [f"{lead} Runs in ./{RUNS_DIR_NAME}:"]
+    lines = [f"{lead} Runs in {display_dir}:"]
     lines.extend(
         f"  {run.run_name:<{name_width}}  {run.status:<{status_width}}  "
         f"{run.started_at[:19]:<19}  {run.target}".rstrip()
