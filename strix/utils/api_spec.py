@@ -234,6 +234,25 @@ def spec_base_urls(
 POSTMAN_API_BASE = "https://api.getpostman.com"
 _POSTMAN_FETCH_TIMEOUT = 30
 
+# Postman collection/environment uids are `{ownerId}-{uuid}` (digits, hex, hyphens).
+# collection_uid/environment_uid ultimately come from a user-supplied `postman://`
+# target (see interface/utils.py) with no upstream format check. requests collapses
+# `..` in a URL path before the request is sent, so an unvalidated uid containing
+# `../..` turns `GET /collections/{uid}` into a confused-deputy request against an
+# arbitrary Postman API endpoint (e.g. `/workspaces`, `/users/me`), authenticated
+# with the caller's own POSTMAN_API_KEY. Enforced here too (not just at the target
+# parser) so this stays safe regardless of caller.
+_POSTMAN_UID_PATTERN = re.compile(r"^[A-Za-z0-9-]+$")
+
+
+def validate_postman_uid(uid: str, label: str) -> None:
+    if not _POSTMAN_UID_PATTERN.fullmatch(uid):
+        raise SpecParseError(
+            f"Invalid Postman {label} id {uid!r}: expected only letters, digits, "
+            "and hyphens (a real Postman collection/environment id never contains "
+            "'/', '.', or other characters).",
+        )
+
 
 def _postman_api_json(url: str, api_key: str, label: str) -> dict[str, Any]:
     """GET a Postman API resource and return the parsed JSON payload.
@@ -279,6 +298,7 @@ def fetch_postman_collection(collection_uid: str, api_key: str) -> dict[str, Any
     wraps the collection under a ``collection`` key, unwrapped here so the result
     matches an exported collection file.
     """
+    validate_postman_uid(collection_uid, "collection")
     payload = _postman_api_json(
         f"{POSTMAN_API_BASE}/collections/{collection_uid}",
         api_key,
@@ -296,6 +316,7 @@ def fetch_postman_environment(environment_uid: str, api_key: str) -> dict[str, s
     Disabled values are skipped, matching how Postman resolves an environment at
     request time.
     """
+    validate_postman_uid(environment_uid, "environment")
     payload = _postman_api_json(
         f"{POSTMAN_API_BASE}/environments/{environment_uid}",
         api_key,
