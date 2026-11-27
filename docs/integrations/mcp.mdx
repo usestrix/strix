@@ -22,10 +22,17 @@ Create the directory if it does not exist, then write the file:
 mkdir -p ~/.strix
 ```
 
-Paste the servers you want into `~/.strix/mcp-servers.json`. The example below shows one of each transport: a local filesystem server over `stdio` and a remote GitHub server over `http` with a bearer token:
+Paste the servers you want into `~/.strix/mcp-servers.json`. The example below shows local `stdio` servers (CyberChef for payload deobfuscation and a local filesystem server) alongside a remote GitHub server over `http` with a bearer token:
 
 ```json
 [
+  {
+    "name": "cyberchef",
+    "transport": "stdio",
+    "command": "npx",
+    "args": ["-y", "@noorfatima123456/cyber-chef-mcp"],
+    "notes": "CyberChef MCP server for multi-layer payload deobfuscation, crypto decoding, and entropy analysis."
+  },
   {
     "name": "local_fs",
     "transport": "stdio",
