@@ -476,7 +476,7 @@ _FENCE_CLOSE_RE = re.compile(r"^(`{3,})$")
 
 def _closes_fence(line: str, fence_len: int) -> bool:
     closing = _FENCE_CLOSE_RE.match(line.strip())
-    return bool(closing) and len(closing.group(1)) >= fence_len
+    return closing is not None and len(closing.group(1)) >= fence_len
 
 
 def _markdown_flowables(  # noqa: PLR0915 - cohesive block parser, splitting hurts clarity
