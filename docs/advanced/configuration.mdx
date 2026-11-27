@@ -15,6 +15,13 @@ Configure Strix using environment variables or a config file.
   API key for your LLM provider. Not required for local models or cloud provider auth (Vertex AI, AWS Bedrock).
 </ParamField>
 
+<ParamField path="ORCAROUTER_API_KEY" type="string">
+  API key for `orcarouter/<model>` models. Takes precedence over a key stored by
+  `strix auth login orcarouter`, which in turn takes precedence over `LLM_API_KEY`.
+  `ORCA_BASE_URL`, `ORCA_AUTH_BASE_URL`, and `ORCA_API_BASE_URL` point OrcaRouter
+  at a self-hosted gateway. See [OrcaRouter](/llm-providers/orcarouter).
+</ParamField>
+
 <ParamField path="LLM_API_BASE" type="string">
   Custom API base URL. Also accepts `OPENAI_API_BASE`, `LITELLM_BASE_URL`, or `OLLAMA_API_BASE`.
 </ParamField>
