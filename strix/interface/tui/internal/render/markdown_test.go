@@ -32,6 +32,21 @@ func TestMarkdownEscapesInAssistantAndToolProse(t *testing.T) {
 	}
 }
 
+func TestMarkdownEmphasisPreservesLiteralInlineCode(t *testing.T) {
+	for _, test := range []struct{ input, want string }{
+		{"**run `grep \\.go`**", "run grep \\.go"},
+		{"*run `grep \\.go *` on \\*.txt*", "run grep \\.go * on *.txt"},
+		{"~~run `grep \\.go ~~` and stop~~", "run grep \\.go ~~ and stop"},
+		{"**run `grep \\.go **` and stop**", "run grep \\.go ** and stop"},
+	} {
+		t.Run(test.input, func(t *testing.T) {
+			if got := ansi.Strip(inlineFormat(test.input)); got != test.want {
+				t.Fatalf("got %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestMarkdownCodeFenceIsHighlighted(t *testing.T) {
 	out := renderAssistantMarkdown("intro\n```python\nimport os\n```\ndone")
 	plain := ansi.Strip(out)
