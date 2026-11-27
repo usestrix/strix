@@ -1034,6 +1034,7 @@ def record_llm_request(event: "LlmRequestEvent") -> None:
             "agent_id": event.agent_id,
             "model": event.model,
             "provider": details.get("upstream_provider") or event.provider,
+            "response_id": event.response_id,
             "outcome": event.outcome,
             "status": event.status_code,
             "duration_ms": event.duration_ms,

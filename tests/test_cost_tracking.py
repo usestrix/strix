@@ -499,6 +499,7 @@ def test_request_timings_land_in_run_record() -> None:
             "agent_id": "agent-1",
             "model": "openrouter/deepseek/deepseek-v4.1-flash",
             "provider": "Together",
+            "response_id": "gen-1",
             "outcome": "success",
             "status": 200,
             "duration_ms": 4200,
