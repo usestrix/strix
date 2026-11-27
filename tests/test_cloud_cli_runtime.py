@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import requests
 from rich.console import Console
+from urllib3.response import HTTPResponse
 
 from strix.interface import cloud, platform_cli
 from strix.interface.cloud import http, render, runner, source_scan
@@ -565,6 +566,48 @@ def test_redirected_binary_parse_errors_go_only_to_stderr(
     captured = capsysbinary.readouterr()
     assert captured.out == b""
     assert b"invalid arguments" in captured.err
+
+
+@pytest.mark.parametrize("content_type", ["application/json", "text/plain"])
+@pytest.mark.parametrize("output_file", [False, True], ids=["stdout", "file"])
+def test_download_handles_a_truncated_http_error_body(
+    content_type: str,
+    output_file: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsysbinary: Any,
+) -> None:
+    response = requests.Response()
+    response.status_code = 503
+    response.headers["Content-Type"] = content_type
+    response.raw = HTTPResponse(
+        body=io.BytesIO(b'{"error":'),
+        headers={"Content-Length": "100"},
+        preload_content=False,
+        enforce_content_length=True,
+    )
+    monkeypatch.setattr(requests, "request", lambda *_a, **_k: response)
+    target = tmp_path / "report.pdf"
+    target.write_bytes(b"original")
+    arguments = ["scans", "report", "scan-1"]
+    if output_file:
+        arguments += ["--output", str(target), "--force", "--json"]
+
+    assert cloud.run_cloud(arguments) == http.EXIT_ERROR
+
+    captured = capsysbinary.readouterr()
+    if output_file:
+        error = json.loads(captured.out)["error"]
+        assert "could not read" in error
+        assert "HTTP 503" in error
+        assert captured.err == b""
+    else:
+        assert captured.out == b""
+        assert b"could not read" in captured.err
+        assert b"HTTP 503" in captured.err
+    assert response.raw.closed
+    assert target.read_bytes() == b"original"
+    assert list(tmp_path.iterdir()) == [target]
 
 
 def test_explicit_json_binary_response_requires_an_output_file(
