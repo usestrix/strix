@@ -1310,8 +1310,19 @@ def is_whitebox_scan(targets_info: list[dict[str, Any]]) -> bool:
     return any(t.get("type") == "local_code" for t in targets_info or [])
 
 
+def _mount_read_only() -> bool:
+    """STRIX_MOUNT_READONLY: bind local targets into the sandbox read-only.
+
+    For review/localization scans the agent should inspect, not modify, the code
+    under review — a read-only mount makes write/patch/delete physically impossible
+    (prevents an agent from wiping or "fixing" the target instead of reporting on it).
+    """
+    return os.environ.get("STRIX_MOUNT_READONLY", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, Any]]:
     local_sources: list[dict[str, Any]] = []
+    force_ro = _mount_read_only()
 
     for target_info in targets_info:
         details = target_info["details"]
@@ -1323,7 +1334,7 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
                     "source_path": details["target_path"],
                     "workspace_subdir": workspace_subdir,
                     "protect_metadata": True,
-                    "read_only": bool(details.get("read_only")),
+                    "read_only": bool(details.get("read_only")) or force_ro,
                 }
             )
 
@@ -1333,6 +1344,7 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
                     "source_path": details["cloned_repo_path"],
                     "workspace_subdir": workspace_subdir,
                     "protect_metadata": False,
+                    "read_only": force_ro,
                 }
             )
 
