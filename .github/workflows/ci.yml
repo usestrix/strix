@@ -44,7 +44,7 @@ jobs:
       - uses: ./.github/actions/setup-python-env
         with:
           python-version: ${{ matrix.python-version }}
-      - run: uv run --frozen pytest -q
+      - run: uv run --frozen pytest -q -o faulthandler_timeout=120
 
   tui:
     runs-on: ubuntu-latest
