@@ -44,13 +44,13 @@ class DockerConnectionError(RuntimeError):
 
 
 def resolve_docker_endpoint(environ: dict[str, str] | None = None) -> DockerEndpoint:
-    """``DOCKER_HOST``, else the current docker context, else the SDK default."""
+    """``DOCKER_HOST``, shell/saved context, then the SDK default."""
     env = os.environ if environ is None else environ
     host = env.get("DOCKER_HOST", "").strip()
     if host:
         return DockerEndpoint(host, "DOCKER_HOST")
 
-    name = get_current_context_name()
+    name = env.get("DOCKER_CONTEXT", "").strip() or get_current_context_name()
     if name == DEFAULT_CONTEXT:
         return DockerEndpoint(None, "default socket")
 
