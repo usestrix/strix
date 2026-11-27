@@ -8,6 +8,7 @@ from typing import Any
 from agents import RunContextWrapper, function_tool
 
 from strix.core.agents import coordinator_from_context
+from strix.tools.agents_graph.tools import _session_items_payload
 
 
 def _ctx(ctx: RunContextWrapper) -> dict[str, Any]:
@@ -76,7 +77,7 @@ async def wait_for_user(ctx: RunContextWrapper) -> str:
 
     # A message that arrived while this turn was running is the user already
     # talking: take it now instead of parking for one they have sent.
-    pending, _ = await coordinator.consume_pending(me)
+    pending, items = await coordinator.consume_pending(me, include_items=True)
     if pending > 0:
         await coordinator.mark_running(me)
         return json.dumps(
@@ -84,7 +85,8 @@ async def wait_for_user(ctx: RunContextWrapper) -> str:
                 "success": True,
                 "wait_outcome": "message_arrived",
                 "pending_messages": pending,
-                "note": "The user had already sent a new message; keep going.",
+                "messages": _session_items_payload(items),
+                "note": "The user sent new messages while you worked; answer them.",
             },
             ensure_ascii=False,
             default=str,
