@@ -300,6 +300,10 @@ func findEmphasisEnd(line string, i int, marker string) int {
 			return -1
 		}
 		end += from
+		if markdownEscaped(line, end) {
+			from = end + 1
+			continue
+		}
 		if end == i+len(marker) {
 			return -1
 		}
@@ -310,16 +314,51 @@ func findEmphasisEnd(line string, i int, marker string) int {
 	}
 }
 
+func markdownEscaped(line string, i int) bool {
+	start := i
+	for start > 0 && line[start-1] == '\\' {
+		start--
+	}
+	return (i-start)%2 != 0
+}
+
+func markdownEscapeAt(line string, i int) bool {
+	if line[i] != '\\' || i+1 == len(line) {
+		return false
+	}
+	next := line[i+1]
+	return next >= '!' && next <= '~' && !isWordByte(next) || next == '_'
+}
+
+func unescapeMarkdown(text string) string {
+	if !strings.Contains(text, "\\") {
+		return text
+	}
+	var out strings.Builder
+	for i := 0; i < len(text); i++ {
+		if markdownEscapeAt(text, i) {
+			i++
+		}
+		out.WriteByte(text[i])
+	}
+	return out.String()
+}
+
 // inlineFormat ports _process_inline_formatting.
 func inlineFormat(line string) string {
 	var out strings.Builder
 	i, n := 0, len(line)
 	for i < n {
+		if markdownEscapeAt(line, i) {
+			out.WriteByte(line[i+1])
+			i += 2
+			continue
+		}
 		if i+1 < n && (line[i:i+2] == "**" || line[i:i+2] == "__") {
 			marker := line[i : i+2]
 			if canOpenEmphasis(line, i, 2) {
 				if end := findEmphasisEnd(line, i, marker); end != -1 {
-					out.WriteString(Bold(Field).Render(line[i+2 : end]))
+					out.WriteString(Bold(Field).Render(unescapeMarkdown(line[i+2 : end])))
 					i = end + 2
 					continue
 				}
@@ -328,7 +367,7 @@ func inlineFormat(line string) string {
 		if i+1 < n && line[i:i+2] == "~~" {
 			if canOpenEmphasis(line, i, 2) {
 				if end := findEmphasisEnd(line, i, "~~"); end != -1 {
-					out.WriteString(lipgloss.NewStyle().Strikethrough(true).Foreground(Strike).Render(line[i+2 : end]))
+					out.WriteString(lipgloss.NewStyle().Strikethrough(true).Foreground(Strike).Render(unescapeMarkdown(line[i+2 : end])))
 					i = end + 2
 					continue
 				}
@@ -346,7 +385,7 @@ func inlineFormat(line string) string {
 			marker := string(line[i])
 			if i+1 < n && line[i+1] != line[i] && canOpenEmphasis(line, i, 1) {
 				if end := findEmphasisEnd(line, i, marker); end != -1 && (end+1 >= n || line[end+1] != line[i]) {
-					out.WriteString(lipgloss.NewStyle().Italic(true).Foreground(Mint).Render(line[i+1 : end]))
+					out.WriteString(lipgloss.NewStyle().Italic(true).Foreground(Mint).Render(unescapeMarkdown(line[i+1 : end])))
 					i = end + 1
 					continue
 				}
