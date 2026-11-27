@@ -630,6 +630,16 @@ SPEC: dict[str, dict[str, Cmd]] = {
                 P("review_on_push", "bool", help="Review new pushes to open PRs."),
                 P("block_on_findings", "bool", help="Block PRs that have findings."),
                 P("blocking_severities", "list", help="Severities that block a PR."),
+                P(
+                    "posted_severities",
+                    "list",
+                    help=(
+                        "Severities posted in PR inline and summary comments. "
+                        "At most 4 values: critical, high, medium, low. Defaults to all four. "
+                        "Other severities stay in Strix but are not posted and never block or "
+                        "fail the status check, even if included in blocking_severities."
+                    ),
+                ),
                 P("approve_clean_prs", "bool", help="Approve PRs without findings."),
                 P("target_branches", "list", help="Branches that get reviews."),
             ),
