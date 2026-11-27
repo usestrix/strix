@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -495,12 +496,21 @@ def _parse_json_object(value: Any) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _parse_finite_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError("Non-finite numbers cannot be projected as JSON")
+    return parsed
+
+
 def _parse_json_value(value: Any) -> Any:
     if not isinstance(value, str):
         return value
     try:
-        return json.loads(value)
-    except json.JSONDecodeError:
+        return json.loads(
+            value, parse_float=_parse_finite_float, parse_constant=_parse_finite_float
+        )
+    except ValueError:
         return value
 
 
