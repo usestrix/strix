@@ -121,6 +121,8 @@ _UPSTREAM_RE = re.compile(r"[A-Za-z0-9.-]+:\d{1,5}")
 
 _FALLBACK_SCRIPT = """
 port_open() {{ (exec 3<>/dev/tcp/127.0.0.1/{port}) 2>/dev/null; }}
+# The entrypoint exits if Caido dies before it has written the proxy settings.
+for _ in $(seq 120); do [ -e /etc/profile.d/proxy.sh ] && break; sleep 0.25; done
 sudo pkill -x caido-cli
 for _ in $(seq 40); do port_open || break; sleep 0.25; done
 setsid nohup {proxy} >/dev/null 2>&1 </dev/null &
