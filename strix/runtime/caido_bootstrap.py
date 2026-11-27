@@ -123,8 +123,8 @@ _FALLBACK_SCRIPT = """
 port_open() {{ (exec 3<>/dev/tcp/127.0.0.1/{port}) 2>/dev/null; }}
 sudo pkill -x caido-cli
 for _ in $(seq 40); do port_open || break; sleep 0.25; done
-setsid nohup ncat -l 127.0.0.1 {port} -k {mode} >/dev/null 2>&1 </dev/null &
-for _ in $(seq 40); do port_open && exit 0; sleep 0.25; done
+setsid nohup {proxy} >/dev/null 2>&1 </dev/null &
+for _ in $(seq 80); do port_open && exit 0; sleep 0.25; done
 exit 1
 """
 
@@ -144,14 +144,16 @@ async def start_proxy_fallback(
     destination itself.
     """
     if upstream is None:
-        mode = "--proxy-type http"
+        # Ignored hosts are tunnelled, so TLS is not intercepted.
+        proxy = f"mitmdump -q --listen-host 127.0.0.1 -p {port} --ignore-hosts '.*'"
     elif _UPSTREAM_RE.fullmatch(upstream):
         host, _, upstream_port = upstream.rpartition(":")
-        mode = "--sh-exec " + shlex.quote(f"ncat {host} {upstream_port}")
+        relay = shlex.quote(f"ncat {host} {upstream_port}")
+        proxy = f"ncat -l 127.0.0.1 {port} -k --sh-exec {relay}"
     else:
         raise ValueError(f"Invalid proxy upstream: {upstream!r}")
 
     result = await session.exec(
-        "bash", "-c", _FALLBACK_SCRIPT.format(port=port, mode=mode), timeout=60
+        "bash", "-c", _FALLBACK_SCRIPT.format(port=port, proxy=proxy), timeout=60
     )
     return bool(result.ok())
