@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import json
 import logging
 import re
 import uuid
@@ -13,6 +14,7 @@ from dataclasses import replace
 from functools import cache
 from typing import TYPE_CHECKING, Any, cast
 
+import httpx
 from agents import ItemHelpers, MessageOutputItem, RunConfig, Runner
 from agents.exceptions import AgentsException, MaxTurnsExceeded, UserError
 from agents.sandbox.errors import ExecTransportError
@@ -164,7 +166,7 @@ def _with_image_scrub(run_config: RunConfig, context: dict[str, Any]) -> RunConf
     return replace(run_config, call_model_input_filter=_scrub)
 
 
-_MAX_TRANSIENT_MODEL_RETRIES = 5
+_MAX_TRANSIENT_MODEL_RETRIES = 8
 _TRANSIENT_MODEL_RETRY_BASE_DELAY_S = 2.0
 _TRANSIENT_MODEL_RETRY_MAX_DELAY_S = 90.0
 
@@ -184,7 +186,14 @@ def _is_transient_model_error(exc: BaseException) -> bool:
     if codex.is_content_guardrail_error(exc):
         return False
     if isinstance(
-        exc, APITimeoutError | APIConnectionError | TimeoutError | ConnectionError | OSError
+        exc,
+        APITimeoutError
+        | APIConnectionError
+        | TimeoutError
+        | ConnectionError
+        | OSError
+        | httpx.TransportError
+        | json.JSONDecodeError,
     ):
         return True
     code = _model_error_status_code(exc)
@@ -193,9 +202,26 @@ def _is_transient_model_error(exc: BaseException) -> bool:
     return isinstance(exc, APIError)
 
 
-def _transient_model_retry_delay(attempt: int) -> float:
+def _retry_after_seconds(exc: BaseException | None) -> float:
+    headers = getattr(getattr(exc, "response", None), "headers", None)
+    try:
+        return max(float(headers.get("retry-after")), 0.0) if headers else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _transient_model_retry_delay(attempt: int, exc: BaseException | None = None) -> float:
+    """Exponential backoff, or the provider's ``Retry-After`` when that is longer."""
     delay = _TRANSIENT_MODEL_RETRY_BASE_DELAY_S * float(2 ** (attempt - 1))
-    return min(delay, _TRANSIENT_MODEL_RETRY_MAX_DELAY_S)
+    return min(max(delay, _retry_after_seconds(exc)), _TRANSIENT_MODEL_RETRY_MAX_DELAY_S)
+
+
+def _is_model_response_event(event: Any, *, completed: bool = False) -> bool:
+    if getattr(event, "type", None) != "raw_response_event":
+        return False
+    return not completed or getattr(getattr(event, "data", None), "type", None) == (
+        "response.completed"
+    )
 
 
 async def _salvage_stream_to_session(
@@ -781,6 +807,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
     while True:
         stream: Any = None
         pre_run_items: list[Any] = []
+        replied = False
         try:
             await coordinator.mark_running(agent_id)
             if session is not None:
@@ -809,6 +836,15 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             try:
                 try:
                     async for event in stream.stream_events():
+                        # The budget is per turn. A turn is over once the next one streams:
+                        # a failure between its reply and that point replays the same turn.
+                        if replied and _is_model_response_event(event):
+                            replied = False
+                            if model_retries:
+                                model_retries = 0
+                                request_log.set_retry_attempt(0)
+                        if _is_model_response_event(event, completed=True):
+                            replied = True
                         if event_sink is not None:
                             try:
                                 event_sink(agent_id, event)
@@ -893,7 +929,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     continue
             if model_retries < _MAX_TRANSIENT_MODEL_RETRIES and _is_transient_model_error(exc):
                 model_retries += 1
-                delay = _transient_model_retry_delay(model_retries)
+                delay = _transient_model_retry_delay(model_retries, exc)
                 logger.warning(
                     "transient model/provider error for %s; replaying turn "
                     "(attempt %d/%d, backoff %.1fs): %r",

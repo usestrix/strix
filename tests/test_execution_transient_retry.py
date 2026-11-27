@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
 from typing import Any, cast
 
 import httpx
@@ -67,6 +69,30 @@ def test_dns_and_connection_errors_are_transient() -> None:
     assert execution._is_transient_model_error(OSError("nodename nor servname provided")) is True
     assert execution._is_transient_model_error(ConnectionError("reset")) is True
     assert execution._is_transient_model_error(TimeoutError("timed out")) is True
+    assert execution._is_transient_model_error(httpx.ReadError("connection closed")) is True
+    assert execution._is_transient_model_error(httpx.RemoteProtocolError("disconnected")) is True
+
+
+def test_turn_gets_nine_attempts_with_capped_backoff() -> None:
+    assert execution._MAX_TRANSIENT_MODEL_RETRIES == 8
+    delays = [execution._transient_model_retry_delay(n) for n in range(1, 9)]
+    assert delays == [2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 90.0, 90.0]
+
+
+def test_backoff_waits_for_the_providers_retry_after() -> None:
+    def limited(retry_after: str) -> RateLimitError:
+        response = httpx.Response(429, request=_request(), headers={"retry-after": retry_after})
+        return RateLimitError("slow down", response=response, body=None)
+
+    assert execution._transient_model_retry_delay(1, limited("30")) == 30.0
+    assert execution._transient_model_retry_delay(5, limited("30")) == 32.0
+    assert execution._transient_model_retry_delay(1, limited("600")) == 90.0
+    assert execution._transient_model_retry_delay(1, limited("soon")) == 2.0
+
+
+def test_malformed_stream_frame_is_transient() -> None:
+    bad_frame = json.JSONDecodeError("Expecting value", "<html>", 0)
+    assert execution._is_transient_model_error(bad_frame) is True
 
 
 def test_content_guardrail_is_not_retried() -> None:
@@ -90,16 +116,22 @@ def test_client_errors_are_transient() -> None:
 
 
 class _FakeStream:
-    def __init__(self, exc: BaseException | None = None) -> None:
+    def __init__(self, exc: BaseException | None = None, replies: int = 0) -> None:
         self._exc = exc
-        self._events: list[Any] = []
+        reply = SimpleNamespace(
+            type="raw_response_event", data=SimpleNamespace(type="response.completed")
+        )
+        next_turn = SimpleNamespace(
+            type="raw_response_event", data=SimpleNamespace(type="response.created")
+        )
+        self._events: list[Any] = [reply, next_turn] * (replies // 2) + [reply] * (replies % 2)
         self.run_loop_exception: BaseException | None = None
 
     async def stream_events(self) -> Any:
-        if self._exc is not None:
-            raise self._exc
         for event in self._events:
             yield event
+        if self._exc is not None:
+            raise self._exc
 
 
 def _patch_fast_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -158,6 +190,31 @@ async def test_run_cycle_gives_up_after_max_retries(
 ) -> None:
     streams = [
         _FakeStream(exc=_midstream_api_error())
+        for _ in range(execution._MAX_TRANSIENT_MODEL_RETRIES + 1)
+    ]
+    with pytest.raises(APIError):
+        await _run_once(monkeypatch, streams)
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_got_its_reply_starts_a_new_retry_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failures = execution._MAX_TRANSIENT_MODEL_RETRIES + 3
+    streams = [_FakeStream(exc=_midstream_api_error(), replies=2) for _ in range(failures)]
+    streams.append(_FakeStream())
+    result, attempts, _coordinator = await _run_once(monkeypatch, streams)
+
+    assert result is streams[-1]
+    assert attempts == failures + 1
+
+
+@pytest.mark.asyncio
+async def test_a_failure_right_after_the_reply_still_uses_the_same_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streams = [
+        _FakeStream(exc=_midstream_api_error(), replies=1)
         for _ in range(execution._MAX_TRANSIENT_MODEL_RETRIES + 1)
     ]
     with pytest.raises(APIError):
