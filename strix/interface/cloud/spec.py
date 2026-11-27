@@ -45,13 +45,31 @@ class Cmd:
     # Caller retries for this mutation must carry one stable opaque key. The
     # platform binds it to the authenticated actor and exact request body.
     idempotent: bool = False
+    fixed_body: tuple[tuple[str, bool], ...] = ()
 
 
 def _q(*names: str) -> tuple[P, ...]:
     return tuple(P(name) for name in names)
 
 
+_ACTION_APPROVALS = P(
+    "action_approvals",
+    "json",
+    help="Pentest-only approval checks as a JSON object: enabled (default false), mode auto or ask "
+    "(default ask), timeout_seconds above 0 (default 300), on_timeout block or allow "
+    "(default block). Supply-chain scans and schedules reject enabled: true.",
+)
+
+_APPROVAL_DECISION_HELP = (
+    "Requires scans:approve and a personal API token. "
+    "Only a current workspace member with scan access can decide. "
+    "The engine accepts the first decision. Later decisions or decisions after the deadline "
+    "return 409. A 502 means delivery was not confirmed. List approvals to see the outcome. "
+    "A 503 means the sandbox is not ready."
+)
+
 _SCAN_START_BODY = (
+    _ACTION_APPROVALS,
     P(
         "engagement_type",
         help=("Test category: code_review, live_test, internal_infra, or compliance_pentest."),
@@ -219,6 +237,25 @@ SPEC: dict[str, dict[str, Cmd]] = {
                 P("scope", help="Retest scope."),
                 P("upload_ids", "list", help="Upload IDs with updated code."),
             ),
+        ),
+        "approvals": Cmd(
+            "GET",
+            "/scans/{scanId}/approvals",
+            "List pending approvals and the 100 most recently settled ones. Requires scans:read. "
+            "When truncated is true, read the whole action on its step in the scan "
+            "before you approve it.",
+        ),
+        "approve": Cmd(
+            "POST",
+            "/scans/{scanId}/approvals/{approvalId}",
+            "Approve an action. " + _APPROVAL_DECISION_HELP,
+            fixed_body=(("approved", True),),
+        ),
+        "deny": Cmd(
+            "POST",
+            "/scans/{scanId}/approvals/{approvalId}",
+            "Deny an action. " + _APPROVAL_DECISION_HELP,
+            fixed_body=(("approved", False),),
         ),
         "retests": Cmd("GET", "/scans/{scanId}/retests", "List the retests of a scan."),
         "sarif": Cmd(
@@ -541,7 +578,8 @@ SPEC: dict[str, dict[str, Cmd]] = {
         "create": Cmd(
             "POST",
             "/schedules",
-            "Create a scan schedule. Use --data for the fields.",
+            "Create a scan schedule. Use --data for every scans start field, "
+            "including action_approvals.",
             idempotent=True,
         ),
         "get": Cmd("GET", "/schedules/{scheduleId}", "Get one schedule."),
@@ -551,6 +589,7 @@ SPEC: dict[str, dict[str, Cmd]] = {
             "Update a schedule. Use --data for fields that have no option.",
             body=(
                 P("action", help="Lifecycle action, for example pause or resume."),
+                _ACTION_APPROVALS,
                 P("cron_expression", help="Cron expression for the schedule."),
                 P("timezone", help="Time zone for the cron expression."),
                 P("name", help="Display name of the schedule."),
@@ -871,6 +910,46 @@ SPEC: dict[str, dict[str, Cmd]] = {
         ),
     },
     "integrations": {
+        "settings get": Cmd(
+            "GET",
+            "/integrations/{provider}/settings",
+            "Get settings for linear, jira or slack. Requires integrations:read.",
+        ),
+        "settings update": Cmd(
+            "PATCH",
+            "/integrations/{provider}/settings",
+            "Update settings for linear, jira or slack. Requires integrations:write. "
+            "Personal tokens must belong to an organization administrator. "
+            "Use --data for Linear and Jira. Slack channels must allow Strix to post. "
+            "Strix joins public channels automatically. Invite @Strix to private channels.",
+            body=(
+                P("slack_default_channel_id", help="Default channel ID. Use --data to set null."),
+                P("slack_channel_groups", "json", help="JSON channel map by notification group."),
+                P(
+                    "slack_notify_severities",
+                    "list",
+                    help="Severities: critical, high, medium, low.",
+                ),
+                P("slack_notify_scan_started", "bool", help="Post scan starts to Slack."),
+                P(
+                    "slack_notify_action_approvals",
+                    "bool",
+                    help="Post actions that need approval to Slack so channel members can "
+                    "approve or deny them. Off by default.",
+                ),
+                P("slack_notify_scan_complete", "bool", help="Post scan completion to Slack."),
+                P("slack_notify_status_change", "bool", help="Post status changes to Slack."),
+                P("slack_notify_dependency_findings", "bool", help="Post dependency findings."),
+                P(
+                    "slack_notify_supply_chain_malicious",
+                    "bool",
+                    help="Post malicious package alerts. "
+                    "Requires organization supply chain access.",
+                ),
+                P("slack_notify_pr_review_findings", "bool", help="Post PR reviews with findings."),
+                P("slack_notify_pr_review_failures", "bool", help="Post failed PR reviews."),
+            ),
+        ),
         "list": Cmd("GET", "/integrations", "List the connected integrations."),
         "connect": Cmd(
             "POST",

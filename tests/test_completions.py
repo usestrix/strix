@@ -5,6 +5,18 @@ from typing import Any
 from strix.interface.completions import completion_candidates, run_completions
 
 
+def test_action_approval_completions() -> None:
+    assert {"approvals", "approve", "deny"} <= set(completion_candidates(["cloud", "scans", ""]))
+    for prefix in (["scans", "start"], ["schedules", "update"]):
+        assert "--action-approvals" in completion_candidates(["cloud", *prefix, "--"])
+    assert {"get", "update"} <= set(
+        completion_candidates(["cloud", "integrations", "settings", ""])
+    )
+    flags = completion_candidates(["cloud", "integrations", "settings", "update", "--"])
+    assert "--slack-notify-action-approvals" in flags
+    assert "--no-slack-notify-action-approvals" in flags
+
+
 def test_root_completion_candidates() -> None:
     assert completion_candidates(["cl"]) == ["cloud"]
     assert "completions" in completion_candidates([""])

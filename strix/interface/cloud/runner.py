@@ -205,6 +205,7 @@ def run(group: str, verb_label: str, cmd: Cmd, argv: list[str]) -> int:
         data = getattr(args, "data", None)
         if data:
             _merge_extra_body(body, _load_data(data))
+        body.update(cmd.fixed_body)
         _validate_body(cmd, body)
         if getattr(args, "no_monthly_cap", False):
             body["monthly_cap_credits"] = None
