@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
-from strix.core.paths import run_record_path
+from strix.core.paths import iter_run_records, run_record_path
 from strix.interface.viewer import auth
 from strix.interface.viewer.transcript import (
     build_run_state,
@@ -56,11 +56,8 @@ def bundle_is_built() -> bool:
 
 def _iter_run_dirs(base_dir: Path) -> list[Path]:
     """Every run directory under ``base_dir``, newest first by record mtime."""
-    if not base_dir.is_dir():
-        return []
-    run_dirs = [child for child in base_dir.iterdir() if run_record_path(child).is_file()]
-    run_dirs.sort(key=lambda child: run_record_path(child).stat().st_mtime, reverse=True)
-    return run_dirs
+    by_mtime = sorted(iter_run_records(base_dir), key=lambda run: run[1], reverse=True)
+    return [run_dir for run_dir, _ in by_mtime]
 
 
 def run_list_entry(run_dir: Path) -> dict[str, Any]:
