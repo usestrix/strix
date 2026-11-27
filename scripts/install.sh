@@ -143,11 +143,13 @@ check_version() {
     fi
 }
 
-download_and_install() {
+download_and_install() (
     print_message info "\n${CYAN}🦉 Installing Strix${NC} ${MUTED}version: ${NC}$specific_version"
     print_message info "${MUTED}Platform: ${NC}$target\n"
 
-    local tmp_dir=$(mktemp -d)
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    trap 'rm -rf -- "$tmp_dir"' EXIT
     cd "$tmp_dir"
 
     echo -e "${MUTED}Downloading...${NC}"
@@ -168,11 +170,8 @@ download_and_install() {
         chmod 755 "$INSTALL_DIR/strix"
     fi
 
-    cd - > /dev/null
-    rm -rf "$tmp_dir"
-
     echo -e "${GREEN}✓ Strix installed to $INSTALL_DIR${NC}"
-}
+)
 
 check_docker() {
     echo ""
