@@ -222,7 +222,7 @@ def fingerprints_for_finding(report: dict[str, Any]) -> FindingFingerprints:
     rule_id = _rule_id(report)
     return FindingFingerprints(
         primary=_primary_fingerprint(rule_id, report, locations, is_synthetic=is_synthetic),
-        vuln_class=_class_fingerprint(rule_id, report),
+        vuln_class=_class_fingerprint(report),
     )
 
 
@@ -530,7 +530,7 @@ def _build_result(
     # determinations across file rename refactors where the primary
     # fingerprint legitimately shifts but the underlying class is
     # unchanged.
-    class_fp = _class_fingerprint(rule_id, report)
+    class_fp = _class_fingerprint(report)
     result["properties"] = _result_properties(report, class_fp, is_synthetic=is_synthetic)
     return result
 
@@ -887,12 +887,16 @@ def _sarif_uri(file_path: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _rule_id(report: dict[str, Any]) -> str:
+def _rule_id(report: dict[str, Any], *, include_finding_id: bool = True) -> str:
     """Choose a stable SARIF rule id, preferring CWE → CVE → finding-id → slug.
 
     CWE values are normalised from Strix output variants (``CWE-306``,
     ``cwe: 306``, ``306``) to the canonical ``CWE-NNN`` form. Without
     normalisation, the same weakness across runs dedups to separate rules.
+
+    Set ``include_finding_id=False`` when computing class fingerprints so
+    findings without CWE or CVE fall back to a stable title slug rather than
+    a per-run sequential finding id.
     """
     cwe = _string_value(report.get("cwe"))
     if cwe:
@@ -904,9 +908,10 @@ def _rule_id(report: dict[str, Any]) -> str:
     if cve:
         return cve
 
-    finding_id = _string_value(report.get("id"))
-    if finding_id:
-        return finding_id
+    if include_finding_id:
+        finding_id = _string_value(report.get("id"))
+        if finding_id:
+            return finding_id
 
     title = _string_value(report.get("title")) or "strix-finding"
     return _slugify(title)
@@ -1065,7 +1070,7 @@ def _first_physical_location(locations: list[dict[str, Any]]) -> dict[str, Any] 
     return None
 
 
-def _class_fingerprint(rule_id: str, report: dict[str, Any]) -> str | None:
+def _class_fingerprint(report: dict[str, Any]) -> str | None:
     """File-independent fingerprint for cross-rename dismissal carryover.
 
     Lets downstream tooling apply prior dismissal determinations to a
@@ -1073,7 +1078,10 @@ def _class_fingerprint(rule_id: str, report: dict[str, Any]) -> str | None:
     primary fingerprint (typical case: file rename, or a fix that moves
     the vulnerable code to a new module).
 
-    Composite of (rule_id, vuln-class keyword extracted from title).
+    Composite of (class_rule_id, vuln-class keyword extracted from title),
+    where ``class_rule_id`` prefers CWE → CVE → title slug (skipping the
+    per-run sequential finding id so findings without CWE/CVE keep a stable
+    class hash across runs).
     Title is LLM-authored so it's stochastic at the prose level, but
     the class keyword extraction picks up the discrete vulnerability
     category, which is much more stable than the full title.
@@ -1086,7 +1094,8 @@ def _class_fingerprint(rule_id: str, report: dict[str, Any]) -> str | None:
     keyword = _class_keyword(title) if title else ""
     if not keyword:
         return None
-    composite = f"rule:{rule_id}|class:{keyword}"
+    class_rule_id = _rule_id(report, include_finding_id=False)
+    composite = f"rule:{class_rule_id}|class:{keyword}"
     return hashlib.sha256(composite.encode("utf-8")).hexdigest()
 
 

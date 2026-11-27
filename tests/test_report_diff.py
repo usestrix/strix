@@ -30,17 +30,19 @@ def sample_finding(
     severity: str = "high",
     file: str = "app.py",
     line: int = 4,
-    cwe: str = "CWE-89",
+    cwe: str | None = "CWE-89",
     timestamp: str = "2026-11-01T10:00:00+00:00",
 ) -> dict[str, Any]:
-    return {
+    finding: dict[str, Any] = {
         "id": vuln_id,
         "title": title,
         "severity": severity,
-        "cwe": cwe,
         "timestamp": timestamp,
         "code_locations": [{"file": file, "start_line": line}],
     }
+    if cwe is not None:
+        finding["cwe"] = cwe
+    return finding
 
 
 def write_fixture_run(
@@ -222,6 +224,60 @@ def test_class_match_pairs_a_finding_whose_path_moved(tmp_path: Path) -> None:
     moved = next(item for item in still_class if item.title.startswith("SQL Injection"))
     assert moved.location_baseline == "app.py:4"
     assert moved.location_current == "db/query.py:12"
+
+
+def test_class_match_pairs_finding_without_cwe_or_cve_across_id_and_path_changes(
+    tmp_path: Path,
+) -> None:
+    baseline_finding = sample_finding(
+        "vuln-0001",
+        "Open redirect in login callback",
+        file="auth/views.py",
+        line=14,
+        cwe=None,
+    )
+    current_finding = sample_finding(
+        "vuln-0005",
+        "Open redirect in login callback",
+        file="web/auth/login.py",
+        line=42,
+        cwe=None,
+    )
+    baseline_dir = write_fixture_run(tmp_path, "before-fix", [baseline_finding])
+    current_dir = write_fixture_run(
+        tmp_path,
+        "after-fix",
+        [current_finding],
+        start_time="2026-11-02T10:00:00+00:00",
+    )
+
+    diff = compare_runs(baseline_dir, current_dir, match="class")
+
+    assert diff.new == []
+    assert diff.fixed == []
+    assert len(diff.still_present) == 1
+    still = diff.still_present[0]
+    assert still.title == "Open redirect in login callback"
+    assert still.id_baseline == "vuln-0001"
+    assert still.id_current == "vuln-0005"
+    assert still.location_baseline == "auth/views.py:14"
+    assert still.location_current == "web/auth/login.py:42"
+
+    # SARIF ruleId still uses the finding id while strix_vuln_class_hash stays stable.
+    baseline_sarif = json.loads((baseline_dir / "findings.sarif").read_text(encoding="utf-8"))
+    current_sarif = json.loads((current_dir / "findings.sarif").read_text(encoding="utf-8"))
+    baseline_result = baseline_sarif["runs"][0]["results"][0]
+    current_result = current_sarif["runs"][0]["results"][0]
+    assert baseline_result["ruleId"] == "vuln-0001"
+    assert current_result["ruleId"] == "vuln-0005"
+    assert (
+        baseline_result["properties"]["strix_vuln_class_hash"]
+        == current_result["properties"]["strix_vuln_class_hash"]
+    )
+    assert (
+        fingerprints_for_finding(baseline_finding).vuln_class
+        == baseline_result["properties"]["strix_vuln_class_hash"]
+    )
 
 
 def test_compare_runs_warns_on_different_targets_and_scan_modes(tmp_path: Path) -> None:
