@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from agents import RunContextWrapper, function_tool
 
+from strix.report.constants import BASELINE_RUN_CONFIG_KEY
 from strix.tools.nullish import clean_optional
 from strix.tools.proxy.tools import existing_request_ids
 
@@ -269,6 +270,35 @@ def _with_warning(result: dict[str, Any], warning: str | None) -> dict[str, Any]
     if warning and result.get("success"):
         result["warning"] = warning
     return result
+
+
+def _baseline_duplicate_response(
+    report_state: ReportState, dedupe: dict[str, Any]
+) -> dict[str, Any] | None:
+    """The rejection for a finding a ``--baseline-run`` already holds, else ``None``.
+
+    The matched finding belongs to a prior scan, so the agent must neither
+    re-file it nor revise it as if it were one of this run's reports.
+    """
+    duplicate_id = str(dedupe.get("duplicate_id") or "")
+    baseline_report = report_state.get_baseline_report(duplicate_id)
+    if baseline_report is None:
+        return None
+    baseline_run = report_state.baseline_run_name
+    duplicate_title = str(baseline_report.get("title") or "")
+    return {
+        "success": False,
+        "error": (
+            f"Already reported in baseline run '{baseline_run}' as '{duplicate_title}' "
+            "- a known finding from a prior scan. Do not re-report it, and do not "
+            "revise or delete it: it is not part of this run."
+        ),
+        "duplicate_of": duplicate_id,
+        "duplicate_title": duplicate_title,
+        BASELINE_RUN_CONFIG_KEY: baseline_run,
+        "confidence": dedupe.get("confidence", 0.0),
+        "reason": dedupe.get("reason", ""),
+    }
 
 
 def _validate_cvss_breakdown(breakdown: Any) -> list[str]:
@@ -872,7 +902,7 @@ async def _do_create(
 
         from strix.report.dedupe import check_duplicate
 
-        existing = report_state.get_existing_vulnerabilities()
+        existing = report_state.get_dedupe_vulnerabilities()
         candidate = {
             "title": title,
             "description": description,
@@ -920,7 +950,7 @@ async def _do_create(
                 (r.get("title", "Unknown") for r in existing if r.get("id") == duplicate_id),
                 "",
             )
-            return {
+            return _baseline_duplicate_response(report_state, dedupe) or {
                 "success": False,
                 "error": (
                     f"Potential duplicate of '{duplicate_title}' "
@@ -2023,7 +2053,7 @@ async def _do_create_dependency(  # noqa: PLR0912, PLR0915
 
         from strix.report.dedupe import check_duplicate
 
-        existing = report_state.get_existing_vulnerabilities()
+        existing = report_state.get_dedupe_vulnerabilities()
         candidate = {
             "title": title,
             "description": description,
@@ -2035,7 +2065,7 @@ async def _do_create_dependency(  # noqa: PLR0912, PLR0915
         dedupe = await check_duplicate(candidate, existing)
         if dedupe.get("is_duplicate"):
             duplicate_id = dedupe.get("duplicate_id", "")
-            return {
+            return _baseline_duplicate_response(report_state, dedupe) or {
                 "success": False,
                 "error": (
                     f"Potential duplicate (id={duplicate_id[:8]}...) — "

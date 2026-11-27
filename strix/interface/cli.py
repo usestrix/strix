@@ -15,6 +15,7 @@ from rich.text import Text
 from strix.config import load_settings
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.runner import run_strix_scan
+from strix.report.constants import BASELINE_RUN_CONFIG_KEY
 from strix.report.state import ReportState, set_global_report_state
 from strix.runtime import session_manager
 
@@ -99,10 +100,12 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         "skills": list(getattr(args, "skills", None) or []),
         "diff_base": getattr(args, "diff_base", None),
         "resume_instruction": getattr(args, "user_explicit_instruction", None) or "",
+        BASELINE_RUN_CONFIG_KEY: getattr(args, "baseline_run", None),
     }
 
     report_state = ReportState(args.run_name)
     report_state.hydrate_from_run_dir()
+    report_state.hydrate_baseline_run(scan_config.get(BASELINE_RUN_CONFIG_KEY))
     report_state.set_scan_config(scan_config)
     report_state.save_run_data()
 

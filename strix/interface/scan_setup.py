@@ -32,6 +32,7 @@ from strix.interface.utils import (
     stage_api_specs,
     write_fetched_collection,
 )
+from strix.report.constants import BASELINE_RUN_CONFIG_KEY
 from strix.telemetry import posthog, scarf
 from strix.utils.api_spec import (
     SpecParseError,
@@ -339,5 +340,6 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         "diff_scope": getattr(args, "diff_scope", {"active": False}),
         "scope_mode": args.scope_mode,
         "diff_base": args.diff_base,
+        BASELINE_RUN_CONFIG_KEY: getattr(args, "baseline_run", None),
     }
     write_run_record(run_dir, run_record)
