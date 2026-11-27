@@ -40,11 +40,13 @@ async def _docker_backend(
     """
     from agents.sandbox.sandboxes.docker import DockerSandboxClientOptions
 
+    from strix.config.loader import load_settings
     from strix.runtime.docker_client import StrixDockerSandboxClient
     from strix.runtime.docker_connection import connect_docker
 
     client = StrixDockerSandboxClient(connect_docker())
     client.strix_bind_mounts = bind_mounts or []
+    client.image_pull_policy = load_settings().runtime.image_pull_policy
     options = DockerSandboxClientOptions(image=image, exposed_ports=exposed_ports)
     session = await client.create(options=options, manifest=manifest)
     await session.start()
