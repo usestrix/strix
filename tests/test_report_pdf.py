@@ -15,8 +15,10 @@ from reportlab.platypus import Paragraph
 
 from strix.interface.viewer.report_pdf import (
     _duration,
+    _field_block,
     _inline_md,
     _normalize_severity,
+    _styles,
     build_encrypted_report,
     encrypt_pdf,
     generate_password,
@@ -75,6 +77,74 @@ def test_generate_report_pdf_has_pdf_header(tmp_path: Path) -> None:
     pdf = generate_report_pdf(run_dir)
     assert pdf.startswith(b"%PDF-")
     assert len(pdf) > 1000
+
+
+@pytest.mark.parametrize(
+    ("field", "fenced"),
+    [
+        ("poc_script_code", False),
+        ("poc_script_code", True),
+        ("evidence", False),
+        ("technical_analysis", True),
+    ],
+)
+def test_pdf_preserves_code_whitespace(tmp_path: Path, field: str, fenced: bool) -> None:
+    run_dir = _make_run(tmp_path)
+    code = "def reproduce():\n    if True:\n        print('a    b')\n    return 1\nreproduce()"
+    value = f"```python\n{code}\n```" if fenced else code
+    finding = {"title": "Whitespace", "severity": "low", field: value}
+    (run_dir / "vulnerabilities.json").write_text(json.dumps([finding]), encoding="utf-8")
+
+    assert code in _pdf_text(generate_report_pdf(run_dir))
+
+
+def test_pdf_code_preserves_tabs_blank_lines_and_literal_markup(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path)
+    code = "first\n\n\tsecond\n    \t<img src='/missing.png'/> &nbsp;"
+    finding = {"title": "Whitespace", "severity": "low", "poc_script_code": code}
+    (run_dir / "vulnerabilities.json").write_text(json.dumps([finding]), encoding="utf-8")
+
+    text = _pdf_text(generate_report_pdf(run_dir))
+    assert "        second\n        <img src='/missing.png'/> &nbsp;" in text
+
+    # Text extractors omit empty lines; check that layout still reserves their height.
+    styles = _styles()
+    paragraph = _field_block(styles, "Code", code, code=True)[1]
+    _, height = paragraph.wrap(470, 1000)
+    assert height == 4 * styles["code"].leading
+
+
+@pytest.mark.parametrize("fill", ["x", " "])
+def test_pdf_wraps_long_code_lines_without_losing_content(tmp_path: Path, fill: str) -> None:
+    run_dir = _make_run(tmp_path)
+    code = f"start{fill * 3000}end"
+    finding = {"title": "Long code", "severity": "low", "poc_script_code": code}
+    (run_dir / "vulnerabilities.json").write_text(json.dumps([finding]), encoding="utf-8")
+
+    assert code in _pdf_text(generate_report_pdf(run_dir)).replace("\n", "")
+
+    styles = _styles()
+    paragraph = _field_block(styles, "Code", code, code=True)[1]
+    assert isinstance(paragraph, Paragraph)
+    _, height = paragraph.wrap(470, 1000)
+    assert height > styles["code"].leading
+    # Negative remaining width would mean a line extends outside its frame.
+    for line in paragraph.blPara.lines:
+        remaining_width = line[0] if isinstance(line, tuple) else line.extraSpace
+        assert remaining_width >= -1e-6
+
+
+def test_pdf_preserves_code_whitespace_across_pages(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path)
+    lines = [f'    line_{index:04d} = "a    b"' for index in range(250)]
+    finding = {"title": "Long code", "severity": "low", "poc_script_code": "\n".join(lines)}
+    (run_dir / "vulnerabilities.json").write_text(json.dumps([finding]), encoding="utf-8")
+
+    pdf = generate_report_pdf(run_dir)
+    assert len(PdfReader(BytesIO(pdf)).pages) > 3
+    text = _pdf_text(pdf)
+    for line in lines:
+        assert line in text
 
 
 def test_generate_password_is_long_and_random() -> None:
