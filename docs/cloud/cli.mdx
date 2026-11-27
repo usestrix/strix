@@ -89,6 +89,22 @@ Non-Enterprise scans consume the deterministic estimate shown for their scope. A
 
 Report downloads need Enterprise, schedules need Pro, and billing writes need an admin token. A plan block exits `4`. An insufficient credit wallet exits `5` without the creation of a scan and without a charge.
 
+## Network Test Users
+
+Use `strix cloud networks test-users list|add|update|remove|verify|verify-status` to manage network accounts.
+The network ID is a connector ID from `strix cloud connectors list`, not a domain asset ID.
+On a self-hosted install, use `direct` for the local network.
+
+```bash
+strix cloud networks test-users add <connector-id> --label Auditor --username auditor \
+  --auth-kind directory --directory-domain CORP.EXAMPLE --data @credentials.json
+```
+
+The JSON file supplies the `password` field. Directory accounts require a password and `directory_domain`. They do not accept `login_url`.
+Web accounts are the default and require `login_url`. Network accounts support `none` or `totp` for `mfa_method`.
+Use `--totp-secret` when `mfa_method` is `totp`.
+Read operations require `test_users:read`. Writes and verification require `test_users:write`.
+
 ## Local Source Scans
 
 See [Scan Local Source](/cloud/overview#scan-local-source) for the upload approval flow, the exclusion rules, and the size limits.

@@ -16,6 +16,22 @@ def test_cloud_group_and_alias_candidates() -> None:
 
 
 def test_cloud_verb_candidates_include_multiword_prefixes() -> None:
+    assert "networks" in completion_candidates(["cloud", ""])
+    assert "test-users" in completion_candidates(["cloud", "networks", ""])
+    assert completion_candidates(["cloud", "networks", "test-users", "ver"]) == [
+        "verify",
+        "verify-status",
+    ]
+    assert "--directory-domain" in completion_candidates(
+        [
+            "cloud",
+            "networks",
+            "test-users",
+            "add",
+            "direct",
+            "--",
+        ]
+    )
     assert "test-users" in completion_candidates(["cloud", "domains", ""])
     assert completion_candidates(["cloud", "domains", "test-users", "in"]) == [
         "inbox",
