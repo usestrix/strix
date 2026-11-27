@@ -164,6 +164,10 @@ affecting the agents that do the actual testing.
   Record every LLM request's and tool call's timing in `run.json`, under `llm_requests` and `tool_calls`. Adds about 0.5 MB to a typical scan's `run.json`.
 </ParamField>
 
+<ParamField path="STRIX_REDACT_ENV" type="string">
+  Names of environment variables, separated by commas or spaces, whose values are secret, for example `STRIX_REDACT_ENV="TARGET_PASSWORD,TARGET_TOKEN"`. Credentials passed in `--instruction` are copied into `run.json`, `.state/agents.db`, notes, to-dos, threat models and reports. When the run ends, Strix replaces each named value with `[REDACTED:<NAME>]` in every file under `strix_runs/<run_name>/`, including its raw, JSON-escaped and URL-encoded forms. The agents still see the real values during the scan. Values shorter than 4 characters are not redacted. A scan resumed from a redacted run directory sees the markers instead of the values, so pass the credentials again with `--instruction` when you resume.
+</ParamField>
+
 <ParamField path="STRIX_SKILLS_DIR" type="string">
   Extra skill directories, separated by the OS path separator (`:` on Linux and macOS). Each directory uses the `<category>/<name>.md` layout of the built-in skills. Skills in these directories replace built-in skills with the same path. `--skills-dir` adds directories in front of this list. See [Skills](/advanced/skills#add-your-own-skills).
 </ParamField>
