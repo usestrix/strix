@@ -19,7 +19,7 @@ from agents.sandbox.manifest import Environment, Manifest
 
 from strix.config import load_settings
 from strix.runtime.backends import backend_supports_bind_mounts, get_backend
-from strix.runtime.caido_bootstrap import bootstrap_caido
+from strix.runtime.caido_bootstrap import bootstrap_caido, start_proxy_fallback
 from strix.runtime.caido_handle import CaidoBootstrapHandle
 from strix.runtime.deferred_session import DeferredSandboxClient, DeferredSandboxSession
 
@@ -280,6 +280,28 @@ async def _resolve_extra_file_archive(
     return build_extra_file_archive(files, local_sources) if files else None
 
 
+async def _bootstrap_or_fall_back(
+    session: Any, *, host_url: str, container_url: str, upstream: str | None
+) -> Any:
+    try:
+        return await bootstrap_caido(session, host_url=host_url, container_url=container_url)
+    except Exception:
+        await _start_pass_through(session, upstream)
+        raise
+
+
+async def _start_pass_through(session: Any, upstream: str | None) -> None:
+    try:
+        started = await start_proxy_fallback(session, port=_CONTAINER_CAIDO_PORT, upstream=upstream)
+    except Exception:
+        logger.exception("Pass-through proxy raised after the Caido bootstrap failed")
+        return
+    if started:
+        logger.warning("Caido bootstrap failed; sandbox traffic now uses a pass-through proxy")
+    else:
+        logger.error("Caido bootstrap failed and the pass-through proxy did not start")
+
+
 async def create_or_reuse(
     scan_id: str,
     *,
@@ -289,6 +311,7 @@ async def create_or_reuse(
     status_sink: StatusSink | None = None,
     defer: bool = False,
     proxy: bool = True,
+    proxy_upstream: str | None = None,
 ) -> dict[str, Any]:
     """Return the existing session bundle for ``scan_id`` or create a new one.
 
@@ -304,6 +327,11 @@ async def create_or_reuse(
 
     ``proxy=False`` brings the sandbox up without the Caido proxy: nothing is
     routed through it and the bundle's ``caido_client`` is ``None``.
+
+    When the Caido bootstrap fails, a pass-through proxy takes over Caido's port
+    so the sandbox keeps its network. ``proxy_upstream`` (``host:port``) names
+    the proxy Caido forwards to inside the sandbox, if any; the pass-through
+    then relays only to it.
     """
 
     def report(phase: str) -> None:
@@ -380,10 +408,11 @@ async def create_or_reuse(
         return host_caido_url
 
     def _caido(session: Any, host_caido_url: str) -> Any:
-        return bootstrap_caido(
+        return _bootstrap_or_fall_back(
             session,
             host_url=host_caido_url,
             container_url=container_caido_url,
+            upstream=proxy_upstream,
         )
 
     if defer:
