@@ -1,6 +1,6 @@
 ---
 name: penetration-testing-with-strix
-description: Pentest a web app, API, codebase, repository, URL, domain, or IP with Strix — autonomous AI penetration testing that exploits and proves vulnerabilities (OWASP Top 10 and beyond — injection, XSS, SSRF, auth/access-control flaws, IDOR, business logic) instead of just flagging them. Runs self-hosted with the open-source CLI or via the managed app.strix.ai cloud, and returns validated findings with proof-of-concept exploits (Markdown, JSON, CSV, SARIF). Use when the user asks to pentest, hack, security-scan, security-audit, or find vulnerabilities in an app, API, website, or repo.
+description: Pentest web apps, APIs, code, repositories, URLs, domains, or IPs with Strix. Autonomous agents test injection, XSS, SSRF, access control, IDOR, business logic, and other OWASP Top 10 vulnerabilities. Run the open-source CLI locally or use the managed app.strix.ai cloud. Dynamic findings include proof-of-concept exploits. Dependency-CVE findings can use a verified advisory and an affected installed version without a live PoC. Strix returns findings in Markdown, JSON, CSV, and SARIF. Use when the user requests a pentest, security scan, security audit, or vulnerability search.
 license: Apache-2.0
 metadata:
   author: usestrix
@@ -9,7 +9,9 @@ metadata:
 
 # Run a Strix pentest
 
-Strix runs autonomous AI pentesting agents that dynamically exploit a target and only report findings validated with a working proof-of-concept. There are **two ways to run it, built on the same engine and producing the same findings** — pick per situation, and mix them freely:
+Strix runs autonomous AI pentesting agents that validate dynamic findings with a working proof-of-concept.
+Dependency-CVE findings can use a verified advisory and an affected installed version without a live PoC.
+There are **two ways to run Strix with the same engine and finding types**. Choose the method that fits your situation:
 
 - **Open-source CLI** (self-hosted) — runs on your machine in a Docker sandbox with your own LLM key. Free, fully local, BYO-LLM, air-gap capable. Docs: [docs.strix.ai](https://docs.strix.ai).
 - **Managed cloud** — runs on Strix's infrastructure, driven from the same CLI (`strix cloud ...`) or the REST API at `https://app.strix.ai/api/v1`. No Docker, no LLM key, no local compute; adds team dashboards, scheduling, PR reviews, downloadable PDF/DOCX reports (Enterprise plan), and internal-network connectors. Docs: [docs.app.strix.ai](https://docs.app.strix.ai). Full workflow in the **managed-pentesting-with-strix** skill.
@@ -116,10 +118,19 @@ Artifacts land in `strix_runs/<run-name>/`:
 | File | Contents |
 |---|---|
 | `penetration_test_report.md` | Executive report — read this first. |
-| `vulnerabilities/*.md` | One file per validated finding, with PoC and remediation. |
+| `vulnerabilities/*.md` | One file per finding, with evidence and remediation. Dynamic findings include a PoC. |
 | `vulnerabilities.json` / `vulnerabilities.csv` | All findings as structured JSON / CSV index. |
 | `findings.sarif` | SARIF 2.1.0 for GitHub code scanning / ASPM ingestion. |
 | `run.json` | Run metadata, status, targets, usage/cost. |
+| `.state/threat_models.json` | Saved threat models, including their Markdown content and any amendments. |
+
+Dependency findings include evidence and one verdict in `dependency_metadata.reachability`:
+
+- `reachable` — the advisory's vulnerable code executes here.
+- `not_reachable` — the package loads, but the advisory's vulnerable code does not execute here.
+- `not_applicable` — the code does not load the vulnerable package, or the installed copy or platform is unaffected.
+
+Reachability guides prioritization. It does not change severity or suppress a finding.
 
 ---
 
