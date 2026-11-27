@@ -1,0 +1,32 @@
+<!doctype html>
+<!--
+  CSPT NEGATIVE — validated input (NOT CSPT)
+  Source: URL fragment (location.hash)
+  Sink:   fetch()
+  The segment is validated against a strict allowlist pattern before use. Any
+  value containing "/", ".", or "%" fails the check, so no traversal can form
+  and the request is rejected before the sink. Safe.
+-->
+<html lang="en">
+<head><meta charset="utf-8" /><title>Order detail (validated)</title></head>
+<body>
+<h1>Order detail</h1>
+<pre id="out">loading…</pre>
+<script>
+  // SOURCE: fragment, e.g. #/orders/abc123
+  const orderId = location.hash.replace(/^#\/orders\//, "");
+
+  // GUARD: strict allowlist — a single path segment of [a-z0-9-] only.
+  // Traversal characters (/, ., %) cannot pass, so no CSPT.
+  const VALID_ID = /^[a-z0-9-]{1,64}$/;
+  if (!VALID_ID.test(orderId)) {
+    document.getElementById("out").textContent = "invalid order id";
+  } else {
+    fetch("/api/orders/" + orderId + "/detail", { credentials: "include" })
+      .then((r) => r.text())
+      .then((t) => { document.getElementById("out").textContent = t; })
+      .catch((e) => { document.getElementById("out").textContent = String(e); });
+  }
+</script>
+</body>
+</html>
