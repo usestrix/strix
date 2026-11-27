@@ -82,6 +82,23 @@ instance close a vulnerable one, and never collapse multiple instances
 into one candidate just because they share a root cause — each reachable
 instance stands or falls on its own.
 
+**A test that never reached the code.** A WAF or rate-limit block, an
+error the endpoint would return to anyone, an empty response to a
+parameter name you guessed, or a callback that never arrived tells you
+about your request, not about the target. Get one benign request the
+handler accepts and processes first, then change only the payload. With
+no working baseline, the candidate is an `open_proof_gap`.
+
+**A different account, parameter, or operation.** A denial for one
+account does not cover another role, or another user of the same role
+with different assignments. One clean parameter does not clear the
+others on the endpoint, and one operation does not clear its siblings.
+Close what you tested and name what you did not.
+
+**Found but not tested.** An endpoint that appears in a bundle, a route
+list, or a note and never received a valid request has not been
+assessed. It is an `open_proof_gap`, not an inventory entry.
+
 **Missing information.** "I could not find a caller", "I could not tell
 if this is deployed", "I could not determine whether this route is
 exposed", "I could not stand up the service" — every one of these is an
