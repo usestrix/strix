@@ -314,9 +314,11 @@ def _estimate_litellm_entry_cost(entry: Any, model: str) -> float | None:
         if not resolved:
             continue
         try:
+            # Inferring the provider can start an interactive subscription login.
             cost = completion_cost(
                 completion_response={"model": resolved, "usage": usage_payload},
                 model=resolved,
+                custom_llm_provider=resolved.split("/", 1)[0],
             )
         except Exception:  # nosec B112  # noqa: BLE001, S112
             continue
