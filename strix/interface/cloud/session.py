@@ -126,7 +126,20 @@ def _run_scopes_set(console: Console, argv: list[str]) -> int:
                     if key in result
                 }
             )
-            save_record(stored)
+            try:
+                save_record(stored)
+            except OSError as exc:
+                return _error(
+                    console,
+                    http.CloudError(
+                        "the platform updated the session scopes, but the local session "
+                        f"metadata could not be stored: {exc}. Check the active scopes with "
+                        "`strix cloud session scopes`; fix local storage and rerun the same "
+                        "scopes set command to refresh the stored metadata.",
+                        payload={"scopes_updated": True, "local_record_updated": False},
+                    ),
+                    as_json=as_json,
+                )
     if as_json:
         emit(console, result, as_json=True)
     else:
