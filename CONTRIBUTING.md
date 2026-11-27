@@ -60,7 +60,7 @@ Skills are specialized knowledge packages that enhance agent capabilities. See [
 2. **Fork and branch** - Work from the `main` branch
 3. **Make your changes** - Follow existing code style
 4. **Write/update tests** - Ensure coverage for new features
-5. **Run quality checks** - `make check-all` should pass
+5. **Run quality checks** - The CI lint job is the gate: `uv lock --check`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy strix/`, and `uv run bandit -r strix/ -c pyproject.toml` must all pass. `make check-all` runs those checks plus Pyright (`uv run pyright strix/`), but Pyright is not part of the CI lint job and currently fails on `main` with pre-existing diagnostics (968 errors at `9ed84f9`), so a Pyright failure on code you did not touch does not block your PR. Treat Pyright as advisory: avoid introducing new Pyright diagnostics — compare `uv run pyright strix/` on your branch against `main` — rather than trying to fix the baseline.
 6. **Submit PR** - Link to issue and provide context
 
 ### PR Guidelines
@@ -69,7 +69,7 @@ Skills are specialized knowledge packages that enhance agent capabilities. See [
 - **Small, focused changes** - One feature/fix per PR
 - **Include examples** - Show before/after behavior
 - **Update documentation** - If adding features
-- **Pass all checks** - Tests, linting, type checking
+- **Pass all checks** - Tests and the CI lint checks (see step 5 above)
 
 ### Code Style
 
