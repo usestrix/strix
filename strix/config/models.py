@@ -45,6 +45,7 @@ from strix.config.tool_call_arguments import repair_input
 from strix.config.tool_call_ids import TurnCallIdRewriter, dedupe_input
 from strix.config.tool_call_limits import TurnToolCallLimiter
 from strix.llm import request_log
+from strix.llm.content_blocks import tolerate_content_blocks
 
 
 if TYPE_CHECKING:
@@ -632,7 +633,7 @@ class StrixProvider(MultiProvider):
                 base_url=None,
             )
         else:
-            model = super().get_model(model_name)
+            model = tolerate_content_blocks(super().get_model(model_name))
             resolved_name = model_name or llm.model or "unknown"
             if _routes_via_litellm(model):
                 # LiteLLM's callbacks log every reply; only a cancelled attempt
