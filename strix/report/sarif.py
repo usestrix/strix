@@ -329,6 +329,19 @@ def write_sarif_report(
             json.dump(sarif, sarif_file, ensure_ascii=False, indent=2)
             sarif_file.write("\n")
         tmp_path.replace(output_path)  # atomic on the same filesystem
+    except OSError as err:
+        # Disk full / I/O errors must not destroy the report contents: emit a
+        # compact summary to the log so findings survive in strix.log even
+        # when the SARIF file itself cannot be written.
+        results = sarif.get("runs", [{}])[0].get("results", [])
+        titles = [str(r.get("message", {}).get("text", "")[:120]) for r in results]
+        logger.error(
+            "SARIF write failed (%s); %d findings preserved in log only: %s",
+            err,
+            len(results),
+            titles,
+        )
+        raise
     finally:
         tmp_path.unlink(missing_ok=True)
 

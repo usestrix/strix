@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from strix.core.sessions import session_write_lock
+from strix.core.sessions import add_items_resilient, session_write_lock
 
 
 if TYPE_CHECKING:
@@ -530,15 +530,8 @@ class AgentCoordinator:
                     len(items),
                 )
             else:
-                try:
-                    async with session_write_lock(session):
-                        await session.add_items(items)
-                except Exception:
-                    logger.exception(
-                        "failed to append %d queued messages to the session of %s",
-                        len(items),
-                        agent_id,
-                    )
+                async with session_write_lock(session):
+                    await add_items_resilient(session, items)
         await self._maybe_snapshot()
         if not include_items:
             return count, []
