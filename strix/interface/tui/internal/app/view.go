@@ -553,12 +553,13 @@ func (m Model) sidebarView(width, height int) string {
 	}
 	agents := ""
 	if agentHeight > 1 {
-		agentRows := max(1, agentHeight-4)
+		agentRows := sidebarBodyRows(agentHeight)
+		rows := m.agentDisplayRows(max(1, width-5))
 		agents = withVerticalScrollbar(
-			m.agentsView(max(1, width-5), agentRows),
+			renderAgentRows(rows, m.agentOffset, agentRows),
 			width-4,
 			agentRows,
-			len(m.agentDisplayEntries()),
+			len(rows),
 			agentRows,
 			m.agentOffset,
 			m.scrollbarThumb(scrollbarAgents),
@@ -568,7 +569,7 @@ func (m Model) sidebarView(width, height int) string {
 	if vulnHeight > 0 {
 		findings := ""
 		if vulnHeight > 1 {
-			vulnRows := max(1, vulnHeight-4)
+			vulnRows := sidebarBodyRows(vulnHeight)
 			totalRows, offsetRows := m.vulnerabilityScrollRows()
 			findings = withVerticalScrollbar(
 				m.vulnerabilitiesView(m.vulnerabilityListWidth(), vulnRows),
@@ -585,7 +586,7 @@ func (m Model) sidebarView(width, height int) string {
 	if mcpHeight > 0 {
 		roster := ""
 		if mcpHeight > 1 {
-			roster = m.mcpConnectionsView(width-4, max(1, mcpHeight-4))
+			roster = m.mcpConnectionsView(width-4, sidebarBodyRows(mcpHeight))
 		}
 		parts = append(parts, m.panelBox(panelMcp, roster, width, mcpHeight, m.focus == focusMcp))
 	}
@@ -801,8 +802,7 @@ func (m Model) mcpConnectionsView(width, rows int) string {
 // fixed header line.
 func (m Model) mcpPageSize() int {
 	_, _, mcpHeight, _ := m.sidebarHeights()
-	// mcpHeight = 2 (border) + header (1) + roster rows.
-	return max(1, mcpHeight-3)
+	return max(1, sidebarBodyRows(mcpHeight))
 }
 
 // clampMcpOffset keeps the roster offset within the range that still shows a

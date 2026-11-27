@@ -33,6 +33,17 @@ type panelRect struct {
 	height int
 }
 
+const sidebarBodyInset = 3
+
+func sidebarBodyRows(height int) int {
+	return max(0, height-sidebarBodyInset-1)
+}
+
+func (r panelRect) bodyRow(y int) (int, bool) {
+	row := y - r.top - sidebarBodyInset
+	return row, row >= 0 && row < sidebarBodyRows(r.height)
+}
+
 func (m Model) panelControls() bool {
 	return len(m.snapshot.Vulnerabilities) > 0 || len(m.snapshot.Connections) > 0
 }
@@ -152,7 +163,7 @@ func (m Model) panelBox(panel sidebarPanel, body string, width, height int, focu
 	if panel != panelStats {
 		content = m.panelHeader(panel, width-4)
 		if body != "" {
-			content += "\n\n" + body
+			content += strings.Repeat("\n", sidebarBodyInset-1) + body
 		}
 	}
 	return lipgloss.NewStyle().Width(width-2).Height(height-2).Border(lipgloss.RoundedBorder()).
@@ -293,7 +304,7 @@ func (m *Model) scrollPanel(panel sidebarPanel, delta int) {
 		m.focus = focusAgents
 		m.input.Blur()
 		rows := m.agentPageSize()
-		total := len(agentTreeEntries(m.snapshot.Agents, m.collapsedAgents))
+		total := len(m.agentDisplayRows(m.agentListWidth()))
 		m.agentOffset = min(max(0, total-rows), max(0, m.agentOffset+delta))
 		m.keepAgentSelectionInWindow()
 		m.refreshViewport()

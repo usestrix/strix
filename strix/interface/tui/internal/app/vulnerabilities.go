@@ -135,7 +135,7 @@ func clampVulnerabilityOffset(offset, total, height int) int {
 
 func (m Model) vulnerabilityPageSize() int {
 	_, vulnHeight, _, _ := m.sidebarHeights()
-	return max(1, vulnHeight-4)
+	return max(1, sidebarBodyRows(vulnHeight))
 }
 
 // vulnerabilityPageItems is how many findings a page step should move by: the
@@ -197,14 +197,14 @@ func (m Model) modalView() string {
 		return lipgloss.NewStyle().Width(38).Border(lipgloss.RoundedBorder()).BorderForeground(green).Background(black).Padding(1, 2).Render(content)
 	case modalQuit:
 		// #quit_dialog: width 24, border round #333333, title #d4d4d4.
-		return m.confirmView("Quit Strix?", 24, dark, textColor)
+		return m.confirmView("Quit Strix?", m.confirmDialogWidth(), dark, textColor)
 	case modalStop:
 		name := "agent"
 		if len(m.snapshot.Agents) > 0 {
 			name = m.snapshot.Agents[m.selectedAgent].Name
 		}
 		// #stop_agent_dialog: width 30, border round #a3a3a3, title #a3a3a3.
-		return m.confirmView("🛑 Stop '"+name+"'?", 30, mid, mid)
+		return m.confirmView("🛑 Stop '"+name+"'?", m.confirmDialogWidth(), mid, mid)
 	case modalConfirmMount:
 		return m.mountConfirmView()
 	case modalApproval:
@@ -218,8 +218,20 @@ func (m Model) modalView() string {
 	return ""
 }
 
+func (m Model) confirmDialogWidth() int {
+	if m.modal == modalStop {
+		return 30
+	}
+	return 24
+}
+
+const (
+	confirmYes = "Yes"
+	confirmNo  = "No"
+)
+
 func (m Model) confirmView(title string, width int, border, titleColor lipgloss.Color) string {
-	return m.confirmDialog(title, "", width, border, titleColor, red, "Yes", "No")
+	return m.confirmDialog(title, "", width, border, titleColor, red, confirmYes, confirmNo)
 }
 
 // The mount prompt's buttons, named so the renderer and the click test cannot

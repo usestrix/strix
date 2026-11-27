@@ -185,6 +185,31 @@ func TestSteppingResetsTheReportView(t *testing.T) {
 	}
 }
 
+func TestReportCopyOnlyRespondsToFooterButton(t *testing.T) {
+	m := reportModel(t, 1)
+	m.snapshot.Vulnerabilities[0]["title"] = "Copy this title"
+	m.resizeVulnerabilityViewport()
+	view := m.modalView()
+	left, top, _, _ := m.centeredViewBounds(view)
+	for _, test := range []struct {
+		label string
+		copy  bool
+	}{{"Copy this title", false}, {"Copy", true}} {
+		frame := view
+		offset := 0
+		if test.copy {
+			_, offset = renderedCell(t, view, "Done")
+			frame = strings.Split(view, "\n")[offset]
+		}
+		x, y := renderedCell(t, frame, test.label)
+		y += offset
+		_, cmd := m.updateModalMouse(tea.MouseMsg{X: x + left, Y: y + top, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+		if (cmd != nil) != test.copy {
+			t.Fatalf("clicking %q: copy command present = %v, want %v", test.label, cmd != nil, test.copy)
+		}
+	}
+}
+
 // Prev and Next are buttons, not just key hints: they can be clicked.
 func TestReportStepButtonsAreClickable(t *testing.T) {
 	m := reportModel(t, 3)
