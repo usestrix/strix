@@ -172,9 +172,38 @@ func wrapBlock(value string, width int) string {
 			out = append(out, line)
 			continue
 		}
-		out = append(out, strings.Split(ansi.Wrap(line, width, " -"), "\n")...)
+		rows := strings.Split(ansi.Wrap(line, width, " -"), "\n")
+		if strings.ContainsAny(line, "\x1b\x9b") {
+			restoreWrappedSGR(rows)
+		}
+		out = append(out, rows...)
 	}
 	return strings.Join(out, "\n")
+}
+
+func restoreWrappedSGR(rows []string) {
+	p := ansi.GetParser()
+	defer ansi.PutParser(p)
+	var active string
+	for i, row := range rows {
+		rows[i] = active + row
+		var state byte
+		for len(row) > 0 {
+			seq, _, n, next := ansi.DecodeSequence(row, state, p)
+			state = next
+			row = row[n:]
+			if !ansi.HasCsiPrefix(seq) || p.Command() != 'm' {
+				continue
+			}
+			switch seq {
+			case ansi.ResetStyle, "\x1b[0m", "\x9bm", "\x9b0m":
+				active = ""
+			default:
+				// Replay SGRs in order so selective resets and extended colors retain their meaning.
+				active += seq
+			}
+		}
+	}
 }
 
 // hyperlinkBlock wraps a URL to the column width and marks every wrapped line

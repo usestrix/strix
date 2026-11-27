@@ -5,7 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 func tool(name string, args map[string]any, result any, status string) map[string]any {
@@ -55,6 +57,37 @@ func TestApplyPatchHighlightsCode(t *testing.T) {
 	lines := strings.Split(out, "\n")
 	if len(lines) != 5 {
 		t.Fatalf("diff line structure must survive highlighting, got %d lines:\n%q", len(lines), out)
+	}
+}
+
+func TestProseToolsRenderMarkdownAndShellStaysLiteral(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	t.Cleanup(func() { lipgloss.SetColorProfile(previous) })
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	prose := "- **Error 10 means retry.** Error 99 means wait.\n1. **Follow up** with `retry --once`."
+	for _, test := range []struct {
+		name, field string
+		attrs       string
+	}{
+		{"send_message_to_agent", "message", ansi.SGR(ansi.FaintAttr)},
+		{"think", "thought", ansi.SGR(ansi.FaintAttr, ansi.ItalicAttr)},
+		{"wait_for_agents", "reason", ansi.SGR(ansi.FaintAttr)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := Tool(tool(test.name, map[string]any{test.field: prose}, nil, "completed"))
+			if plain := ansi.Strip(got); !strings.Contains(plain, "  • Error 10 means retry. Error 99 means wait.\n  1. Follow up with retry --once.") {
+				t.Fatalf("tool prose was not formatted as Markdown: %q", plain)
+			}
+			if !strings.Contains(got, Bold(Field).Render("Error 10 means retry.")) ||
+				!strings.Contains(got, "\x1b[0m"+test.attrs+" Error 99 means wait.") {
+				t.Fatalf("tool prose did not preserve Markdown styling and its base style: %q", got)
+			}
+		})
+	}
+	const command = "echo '**literal command**'"
+	const output = "- **literal output** with `backticks`"
+	if got := ansi.Strip(Tool(tool("exec_command", map[string]any{"cmd": command}, output, "completed"))); !strings.Contains(got, command) || !strings.Contains(got, output) {
+		t.Fatalf("shell command or output was reformatted: %q", got)
 	}
 }
 

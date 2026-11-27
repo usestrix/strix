@@ -2,6 +2,8 @@ package render
 
 import (
 	"strings"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ---------------------------------------------------------------------------
@@ -11,11 +13,11 @@ import (
 func renderThink(args map[string]any) string {
 	thought := StringValue(args["thought"])
 	var b strings.Builder
-	b.WriteString("🧠 " + Bold(Purple).Render("Thinking") + "\n  ")
+	b.WriteString("🧠 " + Bold(Purple).Render("Thinking") + "\n")
 	if thought != "" {
-		b.WriteString(Dim().Italic(true).Render(thought))
+		b.WriteString(renderToolMarkdown(thought, ansi.FaintAttr, ansi.ItalicAttr))
 	} else {
-		b.WriteString(Dim().Italic(true).Render("Thinking..."))
+		b.WriteString("  " + Dim().Italic(true).Render("Thinking..."))
 	}
 	return b.String()
 }

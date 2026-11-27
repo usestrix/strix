@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ---------------------------------------------------------------------------
@@ -32,7 +33,7 @@ func renderAgentGraphTool(name string, args map[string]any, result any) string {
 			b.WriteString(Dim().Render("sending message"))
 		}
 		if msg := StringValue(args["message"]); msg != "" {
-			b.WriteString("\n  " + Dim().Render(msg))
+			b.WriteString("\n" + renderToolMarkdown(msg, ansi.FaintAttr))
 		}
 	case "agent_finish":
 		success := true
@@ -58,7 +59,7 @@ func renderAgentGraphTool(name string, args map[string]any, result any) string {
 		// The chat pane animates the marker while the agent is parked here.
 		b.WriteString(Col(Gray).Render(SpinnerMarker+" ") + Dim().Render("waiting"))
 		if reason := StringValue(args["reason"]); reason != "" {
-			b.WriteString("\n  " + Dim().Render(reason))
+			b.WriteString("\n" + renderToolMarkdown(reason, ansi.FaintAttr))
 		}
 	case "stop_agent":
 		b.WriteString(Col(Red).Render("◼ ") + Dim().Render("stopping"))

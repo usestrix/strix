@@ -500,6 +500,31 @@ func TestModalKeepsBackgroundVisible(t *testing.T) {
 	}
 }
 
+func TestWrappedTraceRowsRestoreStyleBeforeTextAndResetBeforePadding(t *testing.T) {
+	const (
+		dimItalic = "\x1b[2;3m"
+		noItalic  = "\x1b[23m"
+		reset     = "\x1b[0m"
+		width     = 22
+	)
+	text := dimItalic + "Error 10 means retry. Error 99 means wait." + noItalic + " Continue dim only." + reset + " Always plain."
+	wrapped := wrapBlock(text, width)
+	if plain := ansi.Strip(wrapped); plain != ansi.Wrap(ansi.Strip(text), width, " -") {
+		t.Fatalf("restoring SGR changed wrapped text: %q", plain)
+	}
+	lines := strings.Split(wrapped, "\n")
+	if len(lines) != 4 || !strings.HasPrefix(lines[1], dimItalic) ||
+		!strings.HasPrefix(lines[2], dimItalic+noItalic) || !strings.HasPrefix(lines[3], "Always plain.") {
+		t.Fatalf("wrong SGR state at the start of wrapped rows: %q", lines)
+	}
+	painted := fixedPanelBody(wrapped, width, len(lines))
+	for _, line := range strings.Split(painted, "\n") {
+		if !strings.HasSuffix(strings.TrimRight(line, " "), reset+blackBG) {
+			t.Fatalf("row did not reset before padding: %q", line)
+		}
+	}
+}
+
 func TestChatWrapsWithinChatWidth(t *testing.T) {
 	model := New(nil)
 	model.width, model.height = 130, 30

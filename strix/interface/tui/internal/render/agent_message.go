@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 // ---------------------------------------------------------------------------
@@ -36,6 +38,22 @@ func renderAssistantMarkdown(content string) string {
 		return ""
 	}
 	return applyMarkdownStyles(cleaned)
+}
+
+func renderToolMarkdown(content string, attrs ...ansi.Attr) string {
+	body := renderAssistantMarkdown(content)
+	if body == "" {
+		return ""
+	}
+	if lipgloss.ColorProfile() == termenv.Ascii {
+		return "  " + strings.ReplaceAll(body, "\n", "\n  ")
+	}
+	style := ansi.SGR(attrs...)
+	return "  " + style + strings.NewReplacer(
+		"\x1b[0m", "\x1b[0m"+style,
+		ansi.ResetStyle, ansi.ResetStyle+style,
+		"\n", ansi.ResetStyle+"\n  "+style,
+	).Replace(body) + ansi.ResetStyle
 }
 
 func collapseBlankLines(content string) string {
