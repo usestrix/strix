@@ -101,3 +101,14 @@ async def test_aclose_swallows_a_failed_bootstrap() -> None:
     with pytest.raises(RuntimeError, match="boom"):
         await handle.get()
     await handle.aclose()
+
+
+async def test_a_failed_bootstrap_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    async def _bootstrap() -> Any:
+        raise RuntimeError("no project")
+
+    handle = _handle(_bootstrap())
+    with pytest.raises(RuntimeError):
+        await handle.get()
+    await asyncio.sleep(0)
+    assert "Caido bootstrap failed" in caplog.text
