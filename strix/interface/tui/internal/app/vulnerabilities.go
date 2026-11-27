@@ -225,8 +225,13 @@ func (m Model) confirmDialogWidth() int {
 	return 24
 }
 
+const (
+	confirmYes = "Yes"
+	confirmNo  = "No"
+)
+
 func (m Model) confirmView(title string, width int, border, titleColor lipgloss.Color) string {
-	return m.confirmDialog(title, "", width, border, titleColor, red, "Yes", "No")
+	return m.confirmDialog(title, "", width, border, titleColor, red, confirmYes, confirmNo)
 }
 
 // The mount prompt's buttons, named so the renderer and the click test cannot

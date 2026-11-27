@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 	"github.com/usestrix/strix/tui/internal/protocol"
 )
 
@@ -480,6 +481,39 @@ func TestMouseActivatesQuitPromptButtons(t *testing.T) {
 	result = updated.(Model)
 	if !result.quitting || cmd == nil {
 		t.Fatalf("Yes did not confirm quit: quitting=%v cmd=%v", result.quitting, cmd)
+	}
+}
+
+func TestConfirmDialogIgnoresBlankCellsBesideUnfocusedButton(t *testing.T) {
+	profile := lipgloss.ColorProfile()
+	t.Cleanup(func() { lipgloss.SetColorProfile(profile) })
+	lipgloss.SetColorProfile(termenv.TrueColor)
+
+	for _, dialog := range []struct {
+		name string
+		mode modalMode
+	}{{"quit", modalQuit}, {"stop", modalStop}} {
+		t.Run(dialog.name, func(t *testing.T) {
+			m := New(nil)
+			m.width, m.height, m.ready, m.showSplash = 100, 30, true, false
+			m.snapshot.Agents = []protocol.Agent{{ID: "agent", Name: "Worker", Status: "running"}}
+			m.modal, m.modalChoice = dialog.mode, 1
+			x, y := renderedCell(t, m.View(), "Yes")
+			click := func(x int) (Model, tea.Cmd) {
+				result, cmd := m.updateMouse(tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+				return result.(Model), cmd
+			}
+			if result, cmd := click(x - 2); result.modal != dialog.mode || cmd != nil {
+				t.Errorf("blank cell confirmed %s", dialog.name)
+			}
+			if result, _ := click(x); result.modal != modalNone {
+				t.Error("drawn Yes button did not confirm")
+			}
+			m.modalChoice = 0
+			if result, _ := click(x - 2); result.modal != modalNone {
+				t.Error("filled Yes button did not confirm")
+			}
+		})
 	}
 }
 

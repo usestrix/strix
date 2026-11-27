@@ -6,6 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 func (m Model) updateMain(key tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -489,14 +490,18 @@ func (m Model) updateModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	case modalQuit, modalStop:
-		if msg.Y == top+height-3 {
+		row := height - 3
+		if msg.Y == top+row {
 			width := m.confirmDialogWidth() - 4
 			column := (width - 1) / 2
 			x := msg.X - left - 2
+			colored := lipgloss.ColorProfile() != termenv.Ascii
+			yesFill := colored && m.modalChoice == 0 && x >= 0 && x < column
+			noFill := colored && m.modalChoice != 0 && x > column && x < width
 			switch {
-			case x >= 0 && x < column:
+			case yesFill || buttonHitAt(view, confirmYes, left, top, row, msg):
 				m.modalChoice = 0
-			case x > column && x < width:
+			case noFill || buttonHitAt(view, confirmNo, left, top, row, msg):
 				m.modalChoice = 1
 			default:
 				return m, nil
