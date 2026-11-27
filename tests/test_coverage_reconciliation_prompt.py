@@ -8,6 +8,7 @@ from strix.agents.prompt import render_system_prompt
 
 
 _FOLLOW_UP = 'calls `list_coverage(outcome="needs_follow_up")` and follows up every row it returns'
+_UNTESTED_IS_OPEN = "**A test that never reached the code.**"
 _KEEP_GENUINE_GAPS = "stays `needs_follow_up` only when it is genuinely blocked"
 
 
@@ -20,3 +21,4 @@ def test_prompt_follows_up_open_coverage(scan_mode: str, is_whitebox: bool, is_r
     assert prompt
     assert _FOLLOW_UP in prompt
     assert _KEEP_GENUINE_GAPS in prompt
+    assert _UNTESTED_IS_OPEN in prompt
