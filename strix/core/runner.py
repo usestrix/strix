@@ -265,6 +265,11 @@ async def run_strix_scan(
     agent before its next LLM call until the caller resumes the scan through
     ``coordinator.resume_budget()`` (optionally with a higher limit) or cancels
     it. ``coordinator.pause_budget()`` parks a running scan the same way.
+    When the LLM provider rejects a call because the account is out of quota or
+    credits, the scan pauses under either policy: every agent parks with its
+    session intact and ``coordinator.pause_reason`` is set. It stays paused until
+    ``coordinator.resume_budget()``, a user message in interactive mode, or a
+    restart with ``--resume``.
     ``mcp_connection_requests`` supplies the run's MCP connections from any
     source: when given, the engine connects those requests; when ``None`` (the
     command-line default) it reads ``~/.strix/mcp-servers.json`` itself. Either
@@ -381,6 +386,7 @@ async def run_strix_scan(
                 f"Cannot resume scan {scan_id}: missing SDK session database at {agents_db}",
             )
         await coordinator.restore(snap)
+        await coordinator.clear_restored_provider_pause()
         report_state = get_global_report_state()
         if report_state is not None:
             budget_stopped, reserve_stopped = recomputed_budget_flags(

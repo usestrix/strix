@@ -43,6 +43,7 @@ from strix.core.sessions import (
 )
 from strix.llm import request_log
 from strix.llm.compaction import is_context_overflow, maybe_compact
+from strix.llm.provider_errors import classify_provider_failure
 from strix.skills import skill_turn_limit
 
 
@@ -310,6 +311,8 @@ async def _run_agent_loop(
         await coordinator.send(agent_id, _reserve_notice(coordinator.root_finish_tool))
 
     if not (start_parked and interactive):
+        # A restored agent may hold messages queued while it was parked.
+        await coordinator.consume_pending(agent_id)
         with contextlib.suppress(BudgetPausedError):
             result = await _run_until_lifecycle(
                 agent,
@@ -891,6 +894,17 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     )
                     input_data = []
                     continue
+            if (failure := classify_provider_failure(exc)) is not None:
+                # The provider account is out of quota or credits: nothing is
+                # lost, the scan waits and this same call goes out again later.
+                epoch = await coordinator.pause_for_provider(
+                    agent_id, failure, request_log.failure_text(exc)
+                )
+                raise BudgetPausedError(
+                    "scan paused; the LLM provider account is out of quota or credits",
+                    resume_epoch=epoch,
+                    operator_pause=True,
+                ) from exc
             if model_retries < _MAX_TRANSIENT_MODEL_RETRIES and _is_transient_model_error(exc):
                 model_retries += 1
                 delay = _transient_model_retry_delay(model_retries)

@@ -14,6 +14,7 @@ from rich.text import Text
 
 from strix.config import load_settings
 from strix.config.settings import DEFAULT_MAX_TURNS
+from strix.core.agents import AgentCoordinator
 from strix.core.runner import run_strix_scan
 from strix.report.state import ReportState, set_global_report_state
 from strix.runtime import session_manager
@@ -166,11 +167,34 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
     set_global_report_state(report_state)
 
     startup_phase: list[str] = ["Starting up"]
+    coordinator = AgentCoordinator()
+    max_budget = getattr(args, "max_budget_usd", None)
+    resume_command = (
+        ("strix -n" if getattr(args, "non_interactive", False) else "strix")
+        + f" --resume {args.run_name}"
+        + (f" --max-budget {max_budget!r}" if max_budget else "")
+    )
+    pause_notice = (
+        "Nothing is lost. Restore the quota, then stop this run (Ctrl+C) and continue "
+        f"it with: {resume_command} (plus any MCP or skills options this run started with)"
+    )
 
     def create_live_status() -> Panel:
         status_text = Text()
-        status_text.append("Penetration test in progress", style="bold #22c55e")
-        status_text.append("\n\n")
+        if coordinator.pause_reason is not None:
+            status_text.append(
+                "Paused: the LLM provider account is out of quota or credits",
+                style="bold #f59e0b",
+            )
+            status_text.append("\n\n")
+            if coordinator.pause_detail:
+                status_text.append(coordinator.pause_detail[:300], style="dim")
+                status_text.append("\n\n")
+            status_text.append(pause_notice, style="dim")
+            status_text.append("\n\n")
+        else:
+            status_text.append("Penetration test in progress", style="bold #22c55e")
+            status_text.append("\n\n")
 
         if not has_model_response(report_state):
             status_text.append(f"{startup_phase[0]}...", style="dim")
@@ -200,8 +224,19 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
             stop_updates = threading.Event()
 
             def update_status() -> None:
+                announced = False
                 while not stop_updates.is_set():
                     try:
+                        paused = coordinator.pause_reason is not None
+                        if paused and not announced and not console.is_terminal:
+                            # Redirected output shows the panel only at exit.
+                            print(  # noqa: T201
+                                "Paused: the LLM provider account is out of quota or credits. "
+                                f"{pause_notice}",
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                        announced = paused
                         live.update(create_live_status())
                         time.sleep(2)
                     except Exception:
@@ -227,6 +262,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                     max_budget_usd=getattr(args, "max_budget_usd", None),
                     max_turns=getattr(args, "max_turns", DEFAULT_MAX_TURNS),
                     status_sink=_note_startup_phase,
+                    coordinator=coordinator,
                 )
             finally:
                 stop_updates.set()
