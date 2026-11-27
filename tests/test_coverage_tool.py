@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from strix.report.state import ReportState, set_global_report_state
 from strix.tools.coverage.tools import (
     _list_impl,
     _record_impl,
@@ -29,7 +30,7 @@ def coverage_store(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _record(**overrides: str) -> dict[str, Any]:
+def _record(**overrides: Any) -> dict[str, Any]:
     kwargs = {
         "surface": "POST /api/orders/{id}",
         "risk_area": "object-level authorization",
@@ -115,7 +116,7 @@ def test_hydrate_reloads_from_disk(coverage_store: Path) -> None:
     assert entries[0]["risk_area"] == "object-level authorization"
 
 
-def _update(entry_id: str, **overrides: str) -> dict[str, Any]:
+def _update(entry_id: str, **overrides: Any) -> dict[str, Any]:
     kwargs = {
         "entry_id": entry_id,
         "outcome": "reported",
@@ -282,3 +283,49 @@ def test_concurrent_records_all_survive_persistence(coverage_store: Path) -> Non
     assert len(persisted) == 8
     hydrate_coverage_from_disk(coverage_store)
     assert len(get_coverage_entries()) == 8
+
+
+@pytest.fixture
+def execution_state() -> ReportState:
+    state = ReportState.__new__(ReportState)
+    state.run_record = {
+        "tool_calls": [
+            {
+                "call_id": "call-1",
+                "agent_id": "agent-1",
+                "tool": "exec_command",
+                "finished_at": "2026-11-13T10:00:00+00:00",
+            },
+            {
+                "call_id": "other-agent",
+                "agent_id": "agent-2",
+                "tool": "repeat_request",
+                "finished_at": "2026-11-13T10:01:00+00:00",
+            },
+        ]
+    }
+    set_global_report_state(state)
+    yield state
+    set_global_report_state(None)
+
+
+def test_record_links_only_own_completed_execution(execution_state: ReportState) -> None:  # noqa: ARG001
+    assert _record(execution_refs=["call-1"])["success"] is True
+    assert get_coverage_entries()[0]["execution_refs"] == ["call-1"]
+
+
+def test_record_rejects_cross_agent_and_unknown_execution(execution_state: ReportState) -> None:  # noqa: ARG001
+    for ref in ("other-agent", "not-real"):
+        result = _record(execution_refs=[ref])
+        assert result["success"] is False
+        assert "belonging to this agent" in result["error"]
+    assert get_coverage_entries() == []
+
+
+def test_updating_a_conclusion_clears_stale_execution(execution_state: ReportState) -> None:  # noqa: ARG001
+    entry_id = str(_record(execution_refs=["call-1"])["entry_id"])
+    assert _update(entry_id, outcome="needs_follow_up", evidence="No second tenant")["success"]
+    [entry] = get_coverage_entries()
+    assert "execution_refs" not in entry
+    assert entry["history"][0]["execution_refs"] == ["call-1"]
+    assert entry["agent_id"] == "agent-2"

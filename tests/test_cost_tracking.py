@@ -528,3 +528,25 @@ async def test_tool_call_timings_land_in_run_record() -> None:
     assert entry["agent_id"] == "agent-1"
     assert entry["tool"] == "terminal_execute"
     assert entry["duration_ms"] >= 0
+
+
+async def test_completed_tool_receipt_is_recorded_without_timing_telemetry() -> None:
+    hooks = ReportUsageHooks(model="m", record_tool_timings=False)
+    context = SimpleNamespace(tool_call_id="receipt-1", context={"agent_id": "agent-1"})
+    tool = SimpleNamespace(name="exec_command")
+    state = ReportState.__new__(ReportState)
+    state.run_record = {}
+    try:
+        set_global_report_state(state)
+        await hooks.on_tool_start(context, MagicMock(), tool)  # type: ignore[arg-type]
+        await hooks.on_tool_end(context, MagicMock(), tool, "ok")  # type: ignore[arg-type]
+    finally:
+        set_global_report_state(None)
+
+    [receipt] = state.run_record["tool_calls"]
+    assert receipt["call_id"] == "receipt-1"
+    assert receipt["agent_id"] == "agent-1"
+    assert receipt["tool"] == "exec_command"
+    assert "finished_at" in receipt
+    assert "duration_ms" not in receipt
+    assert "result" not in receipt

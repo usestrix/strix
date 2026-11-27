@@ -52,7 +52,8 @@ def test_cleared_surfaces_reach_sarif(state: ReportState) -> None:
 
     sarif = json.loads((state.get_run_dir() / "findings.sarif").read_text(encoding="utf-8"))
     results = sarif["runs"][0]["results"]
-    assert [result["kind"] for result in results] == ["pass"]
+    assert [result["kind"] for result in results] == ["open"]
+    assert "No matching runtime tool execution" in results[0]["message"]["text"]
 
 
 def test_artifacts_still_land_when_coverage_is_empty(state: ReportState) -> None:
