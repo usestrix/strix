@@ -95,7 +95,7 @@ async def test_fallback_goes_direct_without_an_upstream() -> None:
     assert await start_proxy_fallback(session, port=48080)  # type: ignore[arg-type]
     assert "pkill -x caido-cli" in session.script
     assert "mitmdump -q --listen-host 127.0.0.1 -p 48080 --ignore-hosts" in session.script
-    assert "ncat -l 127.0.0.1 48080 -k --proxy-type http" in session.script
+    assert "ncat -l 127.0.0.1 48080 -k --proxy-type http --allow 127.0.0.1" in session.script
 
 
 async def test_fallback_only_relays_to_the_upstream() -> None:
