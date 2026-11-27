@@ -280,6 +280,48 @@ def test_class_match_pairs_finding_without_cwe_or_cve_across_id_and_path_changes
     )
 
 
+def test_class_match_pairs_reworded_title_without_cwe_or_cve(tmp_path: Path) -> None:
+    baseline_finding = sample_finding(
+        "vuln-0001",
+        "Open redirect in login callback",
+        file="auth/views.py",
+        line=14,
+        cwe=None,
+    )
+    current_finding = sample_finding(
+        "vuln-0003",
+        "Open redirect in authentication callback",
+        file="web/auth/login.py",
+        line=42,
+        cwe=None,
+    )
+    assert (
+        fingerprints_for_finding(baseline_finding).vuln_class
+        == fingerprints_for_finding(current_finding).vuln_class
+    )
+
+    baseline_dir = write_fixture_run(tmp_path, "before", [baseline_finding])
+    current_dir = write_fixture_run(
+        tmp_path,
+        "after",
+        [current_finding],
+        start_time="2026-11-02T10:00:00+00:00",
+    )
+    diff = compare_runs(baseline_dir, current_dir, match="class")
+
+    assert diff.new == []
+    assert diff.fixed == []
+    assert len(diff.still_present) == 1
+
+
+def test_class_fingerprint_without_cwe_or_cve_keeps_classes_apart() -> None:
+    redirect = sample_finding("vuln-0001", "Open redirect in login callback", cwe=None)
+    ssrf = sample_finding("vuln-0002", "SSRF in webhook fetcher", cwe=None)
+    assert fingerprints_for_finding(redirect).vuln_class != (
+        fingerprints_for_finding(ssrf).vuln_class
+    )
+
+
 def test_compare_runs_warns_on_different_targets_and_scan_modes(tmp_path: Path) -> None:
     report = [sample_finding("vuln-0001", "SQL Injection in get_user")]
     write_fixture_run(

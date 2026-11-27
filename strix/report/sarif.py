@@ -887,34 +887,33 @@ def _sarif_uri(file_path: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _rule_id(report: dict[str, Any], *, include_finding_id: bool = True) -> str:
+def _rule_id(report: dict[str, Any]) -> str:
     """Choose a stable SARIF rule id, preferring CWE → CVE → finding-id → slug.
 
     CWE values are normalised from Strix output variants (``CWE-306``,
     ``cwe: 306``, ``306``) to the canonical ``CWE-NNN`` form. Without
     normalisation, the same weakness across runs dedups to separate rules.
-
-    Set ``include_finding_id=False`` when computing class fingerprints so
-    findings without CWE or CVE fall back to a stable title slug rather than
-    a per-run sequential finding id.
     """
+    identifier = _weakness_id(report)
+    if identifier:
+        return identifier
+
+    finding_id = _string_value(report.get("id"))
+    if finding_id:
+        return finding_id
+
+    title = _string_value(report.get("title")) or "strix-finding"
+    return _slugify(title)
+
+
+def _weakness_id(report: dict[str, Any]) -> str | None:
+    """Return the normalised CWE, else the CVE, else None."""
     cwe = _string_value(report.get("cwe"))
     if cwe:
         normalised = _normalise_cwe(cwe)
         if normalised:
             return normalised
-
-    cve = _string_value(report.get("cve"))
-    if cve:
-        return cve
-
-    if include_finding_id:
-        finding_id = _string_value(report.get("id"))
-        if finding_id:
-            return finding_id
-
-    title = _string_value(report.get("title")) or "strix-finding"
-    return _slugify(title)
+    return _string_value(report.get("cve"))
 
 
 def _normalise_cwe(value: str) -> str | None:
@@ -1078,10 +1077,10 @@ def _class_fingerprint(report: dict[str, Any]) -> str | None:
     primary fingerprint (typical case: file rename, or a fix that moves
     the vulnerable code to a new module).
 
-    Composite of (class_rule_id, vuln-class keyword extracted from title),
-    where ``class_rule_id`` prefers CWE → CVE → title slug (skipping the
-    per-run sequential finding id so findings without CWE/CVE keep a stable
-    class hash across runs).
+    Composite of (CWE or CVE, vuln-class keyword extracted from title).
+    Findings without CWE or CVE hash on the class keyword alone: the
+    per-run finding id and the full title both change across runs of the
+    same finding, so neither belongs in a class hash.
     Title is LLM-authored so it's stochastic at the prose level, but
     the class keyword extraction picks up the discrete vulnerability
     category, which is much more stable than the full title.
@@ -1094,7 +1093,7 @@ def _class_fingerprint(report: dict[str, Any]) -> str | None:
     keyword = _class_keyword(title) if title else ""
     if not keyword:
         return None
-    class_rule_id = _rule_id(report, include_finding_id=False)
+    class_rule_id = _weakness_id(report) or "unclassified"
     composite = f"rule:{class_rule_id}|class:{keyword}"
     return hashlib.sha256(composite.encode("utf-8")).hexdigest()
 
