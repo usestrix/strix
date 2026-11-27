@@ -39,6 +39,26 @@ def test_context_window_chatgpt_prefix_skips_provider_auth(
         context_budget._model_info.cache_clear()
 
 
+def test_context_window_mistral_subscription_uses_litellm_mistral_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context_budget._model_info.cache_clear()
+    known = {"mistral/mistral-large-latest": {"max_input_tokens": 262_144}}
+    calls: list[str] = []
+
+    def _model_info(model: str) -> dict[str, int]:
+        calls.append(model)
+        return known[model]
+
+    monkeypatch.setattr("litellm.get_model_info", _model_info)
+    try:
+        assert context_budget.context_window("lechat/mistral-large-latest") == 262_144
+        assert calls == ["mistral/mistral-large-latest"]
+        assert context_budget.context_window("mistral/mistral-large-latest") == 262_144
+    finally:
+        context_budget._model_info.cache_clear()
+
+
 def test_context_window_unmapped_uses_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     context_budget._model_info.cache_clear()
 
