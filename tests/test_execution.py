@@ -18,7 +18,13 @@ from agents.tool_context import ToolContext
 from openai.types.responses import ResponseOutputMessage, ResponseOutputRefusal, ResponseOutputText
 
 from strix.core import execution
-from strix.core.agents import AgentCoordinator, WaitKind
+from strix.core.agents import (
+    COMPACTION_FAILED,
+    COMPACTION_SUCCESS,
+    COMPACTION_UNAVAILABLE,
+    AgentCoordinator,
+    WaitKind,
+)
 from strix.core.execution import (
     _notify_root_on_budget_reserve,
     notify_parent_on_terminal,
@@ -1570,6 +1576,107 @@ async def test_autonomous_nudge_does_not_offer_the_user() -> None:
     )
 
     assert "wait_for_user" not in items[0]["content"]
+
+
+COMPACTION_AGENT_ID = "compact-agent"
+COMPACTION_TEST_MAX_TURNS = 1
+
+
+@pytest.mark.asyncio
+async def test_coordinator_runs_attached_manual_compactor() -> None:
+    compacted_agents: list[str] = []
+
+    async def compact() -> bool:
+        compacted_agents.append(COMPACTION_AGENT_ID)
+        return True
+
+    coordinator = AgentCoordinator()
+    await coordinator.register(COMPACTION_AGENT_ID, "Compactor", parent_id=None)
+    await coordinator.attach_runtime(COMPACTION_AGENT_ID, compact=compact)
+
+    assert await coordinator.compact_agent_session(COMPACTION_AGENT_ID) == COMPACTION_SUCCESS
+    assert compacted_agents == [COMPACTION_AGENT_ID]
+
+
+@pytest.mark.asyncio
+async def test_coordinator_rejects_manual_compaction_without_runtime() -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register(COMPACTION_AGENT_ID, "Compactor", parent_id=None)
+
+    assert await coordinator.compact_agent_session(COMPACTION_AGENT_ID) == COMPACTION_UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_coordinator_reports_failed_manual_compactor() -> None:
+    async def compact() -> bool:
+        raise RuntimeError("compaction failed")
+
+    coordinator = AgentCoordinator()
+    await coordinator.register(COMPACTION_AGENT_ID, "Compactor", parent_id=None)
+    await coordinator.attach_runtime(COMPACTION_AGENT_ID, compact=compact)
+
+    assert await coordinator.compact_agent_session(COMPACTION_AGENT_ID) == COMPACTION_FAILED
+
+
+@pytest.mark.asyncio
+async def test_force_compact_session_rejects_missing_session() -> None:
+    assert await execution._force_compact_session(MagicMock(), None, MagicMock()) is False
+
+
+@pytest.mark.asyncio
+async def test_force_compact_session_uses_provider_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = MagicMock()
+    calls: list[tuple[Any, Any, Any, bool]] = []
+
+    async def compact(agent: Any, attached: Any, config: Any, *, force: bool) -> bool:
+        calls.append((agent, attached, config, force))
+        return True
+
+    agent = MagicMock()
+    run_config = MagicMock()
+    monkeypatch.setattr(execution, "_compact_session", compact)
+
+    assert await execution._force_compact_session(agent, session, run_config) is True
+    assert calls == [(agent, session, run_config, True)]
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_attaches_manual_compactor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register(COMPACTION_AGENT_ID, "Compactor", parent_id=None)
+    await coordinator.trigger_budget_stop()
+    calls: list[tuple[Any, Any, Any]] = []
+
+    async def force_compact(agent: Any, session: Any, run_config: Any) -> bool:
+        calls.append((agent, session, run_config))
+        return True
+
+    monkeypatch.setattr(execution, "_force_compact_session", force_compact)
+    agent = object()
+    run_config = MagicMock()
+
+    with pytest.raises(execution.BudgetExceededError, match="scan budget reached"):
+        await execution._run_agent_loop(
+            agent=agent,
+            initial_input=[],
+            run_config=run_config,
+            context={},
+            max_turns=COMPACTION_TEST_MAX_TURNS,
+            coordinator=coordinator,
+            agent_id=COMPACTION_AGENT_ID,
+            interactive=False,
+            session=None,
+            start_parked=False,
+            event_sink=None,
+            hooks=None,
+        )
+
+    assert await coordinator.compact_agent_session(COMPACTION_AGENT_ID) == COMPACTION_SUCCESS
+    assert calls == [(agent, None, run_config)]
 
 
 @pytest.mark.asyncio
