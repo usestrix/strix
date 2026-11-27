@@ -17,6 +17,10 @@ if [ -n "${STRIX_HOST_UID:-}" ] && [ "${STRIX_HOST_UID}" != "0" ] && [ "${STRIX_
   ' "$0" "$(id -u)" "$(id -g)" "$PATH" "$@"
 fi
 
+if [ "${STRIX_DISABLE_PROXY:-}" = "1" ]; then
+  echo "Proxy disabled — skipping Caido and proxy configuration."
+else
+
 CAIDO_PORT=48080
 CAIDO_LOG="/tmp/caido_startup.log"
 
@@ -122,6 +126,8 @@ sudo -u pentester mkdir -p /home/pentester/.pki/nssdb
 sudo -u pentester certutil -N -d sql:/home/pentester/.pki/nssdb --empty-password
 sudo -u pentester certutil -A -n "Testing Root CA" -t "C,," -i /app/certs/ca.crt -d sql:/home/pentester/.pki/nssdb
 echo "✅ CA added to browser trust store"
+
+fi
 
 mkdir -p /workspace/.agent-browser-screenshots
 

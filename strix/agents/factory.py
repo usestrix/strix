@@ -666,6 +666,14 @@ def _without_coverage_step(tool: FunctionTool) -> FunctionTool:
     return dataclasses.replace(tool, description=description)
 
 
+_PROXY_TOOLS: tuple[Tool, ...] = (
+    list_requests,
+    view_request,
+    repeat_request,
+    list_sitemap,
+    view_sitemap_entry,
+    scope_rules,
+)
 _BASE_TOOLS: tuple[Tool, ...] = (
     think,
     load_skill,
@@ -775,6 +783,7 @@ def build_strix_agent(
     finish_tool: Tool = finish_scan,
     report_tool: Tool = create_vulnerability_report,
     coverage_tools: bool = True,
+    proxy_tools: bool = True,
     select_tools: Callable[..., Sequence[Tool]] | None = None,
 ) -> SandboxAgent[Any]:
     """Build a SandboxAgent for either root or child use.
@@ -793,6 +802,8 @@ def build_strix_agent(
             ``create_vulnerability_report``.
         coverage_tools: Give the agent the coverage ledger tools and the
             prompt rules for them.
+        proxy_tools: Give the agent the Caido proxy tools and the prompt
+            rules for them.
         select_tools: Called with ``is_root``, the agent's ``skills`` and its
             default ``tools``; returns the tools to build it with instead.
     """
@@ -811,6 +822,7 @@ def build_strix_agent(
             supports_images=supports_images,
             report_tool=report_tool.name,
             coverage_tools=coverage_tools,
+            proxy_tools=proxy_tools,
         )
 
     agent_tools = [*_EXTRA_TOOLS, *(extra_tools or [])]
@@ -822,6 +834,8 @@ def build_strix_agent(
         base_tools = [t for t in base_tools if t not in _COVERAGE_TOOLS]
         if finish_tool is finish_scan:
             finish_tool = _without_coverage_step(finish_scan)
+    if not proxy_tools:
+        base_tools = [t for t in base_tools if t not in _PROXY_TOOLS]
     if is_root:
         tools: list[Tool] = [*base_tools, *agent_tools, finish_tool]
     else:
@@ -883,6 +897,7 @@ def make_child_factory(
     supports_images: bool = True,
     report_tool: Tool = create_vulnerability_report,
     coverage_tools: bool = True,
+    proxy_tools: bool = True,
     select_tools: Callable[..., Sequence[Tool]] | None = None,
 ) -> Any:
     """Return the runner-owned builder used by ``spawn_child_agent``.
@@ -908,6 +923,7 @@ def make_child_factory(
             supports_images=supports_images,
             report_tool=report_tool,
             coverage_tools=coverage_tools,
+            proxy_tools=proxy_tools,
             select_tools=select_tools,
         )
 
