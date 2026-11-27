@@ -9,9 +9,13 @@ call at a time against the shared client.
 from __future__ import annotations
 
 import asyncio
+import json
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
+from agents.tool_context import ToolContext
 from caido_sdk_client.errors import OperationUserError
 
 from strix.runtime.caido_handle import CaidoBootstrapHandle
@@ -194,6 +198,99 @@ def test_build_raw_request_drops_stale_content_length_for_empty_body() -> None:
         body="",
     )
     assert _headers_named(raw, "Content-Length") == []
+
+
+@pytest.mark.parametrize("entrypoint", ["sandbox", "host"])
+@pytest.mark.parametrize(
+    ("framing", "body", "modifications", "expected_body"),
+    [
+        pytest.param(b"\r\n", b"\r\n  value \t\r\n", None, b"\r\n  value \t\r\n", id="unmodified"),
+        pytest.param(
+            b"\r\n",
+            b"\r\n  value \t\r\n",
+            {"headers": {"X-Replay": "changed"}},
+            b"\r\n  value \t\r\n",
+            id="header-only",
+        ),
+        pytest.param(b"\r\n", b" \t\r\n", None, b" \t\r\n", id="whitespace-only"),
+        pytest.param(b"\n", b"\n  value \t\n", None, b"\n  value \t\n", id="lf-framing"),
+        pytest.param(
+            b"\r\n",
+            "\u2003caf\u00e9\u2003".encode(),
+            None,
+            "\u2003caf\u00e9\u2003".encode(),
+            id="unicode",
+        ),
+        pytest.param(b"\r\n", b"value", None, b"value", id="plain"),
+        pytest.param(b"\r\n", b"", None, b"", id="empty"),
+        pytest.param(
+            b"\r\n",
+            b" old \r\n",
+            {"body": " \treplacement\r\n"},
+            b" \treplacement\r\n",
+            id="explicit-replacement",
+        ),
+        pytest.param(b"\r\n", b" old \r\n", {"body": ""}, b"", id="explicit-empty"),
+    ],
+)
+async def test_repeat_request_preserves_body(
+    entrypoint: str,
+    framing: bytes,
+    body: bytes,
+    modifications: dict[str, Any] | None,
+    expected_body: bytes,
+) -> None:
+    raw = (
+        framing.join(
+            [
+                b"POST /submit HTTP/1.1",
+                b"Host: example.com",
+                f"Content-Length: {len(body)}".encode(),
+            ]
+        )
+        + framing * 2
+        + body
+    )
+    original = SimpleNamespace(raw=raw, host="example.com", is_tls=True)
+    get = AsyncMock(return_value=SimpleNamespace(request=original))
+    create = AsyncMock(return_value=SimpleNamespace(id="replay-fixture"))
+    send = AsyncMock(
+        return_value=SimpleNamespace(
+            status="DONE", error=None, entry=SimpleNamespace(response=None)
+        )
+    )
+    client = SimpleNamespace(
+        request=SimpleNamespace(get=get),
+        replay=SimpleNamespace(sessions=SimpleNamespace(create=create), send=send),
+    )
+
+    # Mock only the remote Caido operations; both entrypoints use the real
+    # request parser, modification handling, and replay serialization.
+    if entrypoint == "sandbox":
+        caido_api._CLIENT_CACHE["default"] = cast("Any", client)
+        result = await caido_api.repeat_request("fixture", modifications=modifications)
+    else:
+        arguments = json.dumps({"request_id": "fixture", "modifications": modifications})
+        ctx = ToolContext(
+            context={"caido_client": client},
+            tool_name="repeat_request",
+            tool_call_id="call-replay",
+            tool_arguments=arguments,
+        )
+        result = json.loads(await tools.repeat_request.on_invoke_tool(ctx, arguments))
+
+    assert result["status"] == "DONE"
+    get.assert_awaited_once()
+    create.assert_awaited_once_with()
+    send.assert_awaited_once()
+    assert send.await_args is not None
+    assert send.await_args.args[0] == "replay-fixture"
+    sent_raw = send.await_args.args[1].raw
+    assert sent_raw.split(b"\r\n\r\n", 1)[1] == expected_body
+    expected_lengths = [str(len(expected_body))] if expected_body else []
+    assert _headers_named(sent_raw, "Content-Length") == expected_lengths
+    if modifications and "headers" in modifications:
+        assert _headers_named(sent_raw, "X-Replay") == ["changed"]
 
 
 class _Ctx:

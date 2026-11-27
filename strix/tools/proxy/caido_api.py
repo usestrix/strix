@@ -274,7 +274,8 @@ def parse_raw_request(raw_content: str) -> dict[str, Any]:
             key, value = line.split(":", 1)
             parsed_headers[key.strip()] = value.strip()
 
-    body = "\n".join(lines[body_start:]).strip() if body_start < len(lines) else ""
+    # Whitespace belongs to the payload and must survive unmodified replays.
+    body = "\n".join(lines[body_start:]) if body_start < len(lines) else ""
     return {"method": method, "url_path": url_path, "headers": parsed_headers, "body": body}
 
 
