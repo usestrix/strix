@@ -17,6 +17,7 @@ from rich.text import Text
 
 from strix.config import codex, load_settings, persist_current
 from strix.core.paths import RUNS_DIR_NAME, run_dir_for
+from strix.interface import herdr
 from strix.interface.cli_args import (
     FAIL_ON_SEVERITIES,
     ResumeError,
@@ -492,6 +493,8 @@ def main() -> None:
 
     if args.non_interactive or not args.needs_setup:
         _bootstrap_scan(args)
+    if not args.run_name:
+        herdr.report_state("working")
 
     from strix.report.state import get_global_report_state
 
@@ -536,6 +539,7 @@ def main() -> None:
             with contextlib.suppress(KeyboardInterrupt, Exception):
                 posthog.end(report_state, exit_reason=exit_reason)
                 scarf.end(report_state, exit_reason=exit_reason)
+        herdr.release_agent()
 
     if not args.run_name:
         # Setup mode where the user quit before starting a scan: nothing ran.
