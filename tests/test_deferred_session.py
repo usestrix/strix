@@ -356,3 +356,53 @@ async def test_proxy_on_routes_the_sandbox_through_caido(backend: _Backend) -> N
         assert backend.kwargs["exposed_ports"] == (48080,)
     finally:
         await session_manager.cleanup(scan_id)
+
+
+@pytest.mark.asyncio
+async def test_broken_bootstrap_starts_the_pass_through(
+    backend: _Backend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def _fail(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("no project")
+
+    async def _fallback(_session: Any, **kwargs: Any) -> bool:
+        calls.append(kwargs)
+        return True
+
+    monkeypatch.setattr(session_manager, "bootstrap_caido", _fail)
+    monkeypatch.setattr(session_manager, "start_proxy_fallback", _fallback)
+    scan_id = "bootstrap-broken"
+    backend.gate.set()
+    try:
+        bundle = await session_manager.create_or_reuse(
+            scan_id, image="img", local_sources=[], proxy_upstream="127.0.0.1:3128"
+        )
+        with pytest.raises(RuntimeError, match="no project"):
+            await bundle["caido_client"].get()
+        assert calls == [{"port": 48080, "upstream": "127.0.0.1:3128"}]
+    finally:
+        await session_manager.cleanup(scan_id)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_bootstrap_does_not_start_the_pass_through(
+    backend: _Backend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = asyncio.Event()
+
+    async def _hang(*_args: Any, **_kwargs: Any) -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    async def _fallback(*_args: Any, **_kwargs: Any) -> bool:
+        raise AssertionError("teardown must not start the pass-through")
+
+    monkeypatch.setattr(session_manager, "bootstrap_caido", _hang)
+    monkeypatch.setattr(session_manager, "start_proxy_fallback", _fallback)
+    scan_id = "bootstrap-cancelled"
+    backend.gate.set()
+    await session_manager.create_or_reuse(scan_id, image="img", local_sources=[])
+    await asyncio.wait_for(started.wait(), timeout=1)
+    await session_manager.cleanup(scan_id)
