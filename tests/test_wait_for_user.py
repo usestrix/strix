@@ -72,6 +72,7 @@ async def test_a_message_that_already_arrived_is_taken_instead_of_parking() -> N
 
     assert result["wait_outcome"] == "message_arrived"
     assert result["pending_messages"] == 1
+    assert any("wait, one more thing" in str(m["content"]) for m in result["messages"])
     assert coordinator.statuses["root"] == "running"
 
 
