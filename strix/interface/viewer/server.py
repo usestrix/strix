@@ -119,7 +119,7 @@ class _ViewerState:
         self,
         run_dir: Path,
         assets_dir: Path,
-        steer_handler: Callable[[str, str], bool] | None = None,
+        steer_handler: Callable[[str, str], bool | str] | None = None,
         approval_state: Callable[[], dict[str, Any]] | None = None,
         approval_decide: Callable[[str, bool], bool] | None = None,
     ) -> None:
@@ -501,9 +501,11 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 # Standalone / finished-run viewing has no live scan to steer.
                 self._send_json(HTTPStatus.FORBIDDEN, {"error": "steering_unavailable"})
                 return
-            delivered = state.steer_handler(agent_id, message)
-            if delivered:
+            outcome = state.steer_handler(agent_id, message)
+            if outcome is True or outcome == "delivered":
                 self._send_json(HTTPStatus.OK, {"ok": True})
+            elif outcome == "delivery_unknown":
+                self._send_json(HTTPStatus.OK, {"ok": False, "error": "delivery_unknown"})
             else:
                 self._send_json(HTTPStatus.OK, {"ok": False, "error": "not_delivered"})
 
@@ -618,7 +620,7 @@ def serve(
     host: str = "127.0.0.1",
     port: int = 0,
     open_browser: bool = True,
-    steer_handler: Callable[[str, str], bool] | None = None,
+    steer_handler: Callable[[str, str], bool | str] | None = None,
     approval_state: Callable[[], dict[str, Any]] | None = None,
     approval_decide: Callable[[str, bool], bool] | None = None,
 ) -> tuple[ThreadingHTTPServer, str, str]:
