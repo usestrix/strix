@@ -720,20 +720,34 @@ class ReportState:
         methodology: str,
         technical_analysis: str,
         recommendations: str,
+        *,
+        mark_complete: bool = True,
     ) -> None:
+        """Persist report prose, optionally deferring completion until the inbox is settled."""
         self.scan_results = {
-            "scan_completed": True,
+            "scan_completed": False,
             "executive_summary": executive_summary.strip(),
             "methodology": methodology.strip(),
             "technical_analysis": technical_analysis.strip(),
             "recommendations": recommendations.strip(),
-            "success": True,
+            "success": False,
         }
 
         self.final_scan_result = self._format_final_scan_result(self.scan_results)
         self.run_record["scan_results"] = self.scan_results
 
         logger.info("Updated scan final fields")
+        if mark_complete:
+            self.complete_scan()
+        else:
+            self.save_run_data()
+
+    def complete_scan(self) -> None:
+        """Commit an accepted finish and emit completion telemetry only then."""
+        if self.scan_results is None:
+            raise ValueError("Cannot complete a scan without a report summary")
+        self.scan_results["scan_completed"] = True
+        self.scan_results["success"] = True
         self.save_run_data(mark_complete=True)
         posthog.end(self, exit_reason="finished_by_tool")
         scarf.end(self, exit_reason="finished_by_tool")
