@@ -12,6 +12,7 @@ from strix.report.diff import (
     DiffError,
     _redact_target,
     compare_runs,
+    dumps_diff,
     load_run,
     match_findings,
     resolve_run_spec,
@@ -548,6 +549,147 @@ def test_compare_runs_redacts_target_credentials(
     assert diff.current.to_json()["targets"] == [redacted]
     assert secret not in json.dumps(metadata)
     assert diff.warnings == [f"targets differ ({redacted} vs {redacted})"]
+
+
+@pytest.mark.parametrize(
+    ("extra", "secret", "expected_location"),
+    [
+        (
+            {"method": "GET", "endpoint": "https://u:p4ss@example.com/api/items"},
+            "p4ss",
+            "GET https://u:***@example.com/api/items",
+        ),
+        (
+            {"method": "POST", "endpoint": "https://ghp_secret@example.com/hook?token=qsecret"},
+            "ghp_secret",
+            "POST https://***@example.com/hook?token=***",
+        ),
+        (
+            {"endpoint": "https://user:s3cret@example.com/plain"},
+            "s3cret",
+            "https://user:***@example.com/plain",
+        ),
+        (
+            {"target": "https://admin:t4rget@example.com/app"},
+            "t4rget",
+            "https://admin:***@example.com/app",
+        ),
+        (
+            {"target": "https://example.com/app?api_key=k3y"},
+            "k3y",
+            "https://example.com/app?api_key=***",
+        ),
+    ],
+)
+def test_compare_runs_redacts_finding_endpoint_and_target_locations(
+    tmp_path: Path, extra: dict[str, str], secret: str, expected_location: str
+) -> None:
+    finding = {
+        **sample_finding("vuln-0001", "SQL Injection in search"),
+        "code_locations": [],
+        **extra,
+    }
+    baseline = write_fixture_run(tmp_path, "baseline", [])
+    current = write_fixture_run(tmp_path, "current", [finding])
+
+    diff = compare_runs(baseline, current)
+
+    assert len(diff.new) == 1
+    item = diff.new[0]
+    assert item.location == expected_location
+    assert item.location_current == expected_location
+    assert item.location_baseline is None
+
+    serialized = dumps_diff(diff)
+    assert secret not in serialized
+    assert "qsecret" not in serialized
+    payload = json.loads(serialized)
+    assert payload["new"][0]["location"] == expected_location
+    assert payload["new"][0]["location_current"] == expected_location
+    assert payload["new"][0]["location_baseline"] is None
+
+
+def test_compare_runs_redacts_still_present_baseline_and_current_locations(
+    tmp_path: Path,
+) -> None:
+    baseline_endpoint_finding = {
+        **sample_finding("vuln-0001", "SQL Injection in search", cwe="CWE-89"),
+        "code_locations": [],
+        "method": "GET",
+        "endpoint": "https://user:base-pass@example.com/v1/search?token=base-tok",
+    }
+    current_endpoint_finding = {
+        **sample_finding("vuln-0002", "SQL Injection in search", cwe="CWE-89"),
+        "code_locations": [],
+        "method": "GET",
+        "endpoint": "https://user:curr-pass@example.com/v2/search?token=curr-tok",
+    }
+    baseline_target_finding = {
+        **sample_finding("vuln-0003", "Cross-site scripting in portal", cwe="CWE-79"),
+        "code_locations": [],
+        "target": "https://admin:old-target-pass@example.com/portal",
+    }
+    current_target_finding = {
+        **sample_finding("vuln-0004", "Cross-site scripting in portal", cwe="CWE-79"),
+        "code_locations": [],
+        "target": "https://admin:new-target-pass@example.com/portal-v2",
+    }
+
+    baseline = write_fixture_run(
+        tmp_path,
+        "baseline",
+        [baseline_endpoint_finding, baseline_target_finding],
+    )
+    current = write_fixture_run(
+        tmp_path,
+        "current",
+        [current_endpoint_finding, current_target_finding],
+    )
+
+    diff = compare_runs(baseline, current, match="class")
+
+    assert diff.new == []
+    assert diff.fixed == []
+    by_title = {item.title: item for item in diff.still_present}
+
+    endpoint_item = by_title["SQL Injection in search"]
+    assert endpoint_item.location_baseline == "GET https://user:***@example.com/v1/search?token=***"
+    assert endpoint_item.location_current == "GET https://user:***@example.com/v2/search?token=***"
+    assert endpoint_item.location == "GET https://user:***@example.com/v2/search?token=***"
+
+    target_item = by_title["Cross-site scripting in portal"]
+    assert target_item.location_baseline == "https://admin:***@example.com/portal"
+    assert target_item.location_current == "https://admin:***@example.com/portal-v2"
+    assert target_item.location == "https://admin:***@example.com/portal-v2"
+
+    serialized = dumps_diff(diff)
+    for leaked in (
+        "base-pass",
+        "base-tok",
+        "curr-pass",
+        "curr-tok",
+        "old-target-pass",
+        "new-target-pass",
+    ):
+        assert leaked not in serialized
+    payload = json.loads(serialized)
+    still_by_title = {item["title"]: item for item in payload["still_present"]}
+    assert (
+        still_by_title["SQL Injection in search"]["location_baseline"]
+        == "GET https://user:***@example.com/v1/search?token=***"
+    )
+    assert (
+        still_by_title["SQL Injection in search"]["location_current"]
+        == "GET https://user:***@example.com/v2/search?token=***"
+    )
+    assert (
+        still_by_title["Cross-site scripting in portal"]["location_baseline"]
+        == "https://admin:***@example.com/portal"
+    )
+    assert (
+        still_by_title["Cross-site scripting in portal"]["location_current"]
+        == "https://admin:***@example.com/portal-v2"
+    )
 
 
 def test_compare_runs_warns_on_different_targets_and_scan_modes(tmp_path: Path) -> None:

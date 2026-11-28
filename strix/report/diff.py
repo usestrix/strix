@@ -372,12 +372,11 @@ def _location(report: dict[str, Any]) -> str:
             return file_path
     endpoint = str(report.get("endpoint") or "").strip()
     method = str(report.get("method") or "").strip()
-    if endpoint and method:
-        return f"{method} {endpoint}"
     if endpoint:
-        return endpoint
+        redacted_endpoint = _redact_target(endpoint)
+        return f"{method} {redacted_endpoint}" if method else redacted_endpoint
     target = str(report.get("target") or "").strip()
-    return target or "-"
+    return _redact_target(target) if target else "-"
 
 
 def _meta(run_dir: Path, record: dict[str, Any]) -> RunMeta:

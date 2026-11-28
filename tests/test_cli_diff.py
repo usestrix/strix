@@ -654,6 +654,85 @@ def test_different_targets_warning_does_not_refuse(
     assert json.loads(output)["baseline"]["targets"] == [redacted]
 
 
+def test_finding_endpoint_and_target_credentials_are_redacted_in_human_and_json_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    baseline_reports = [
+        {
+            **sample_finding("vuln-0001", "SQL Injection in search", cwe="CWE-89"),
+            "code_locations": [],
+            "method": "GET",
+            "endpoint": "https://user:base-ep-secret@example.com/v1/search",
+        },
+        {
+            **sample_finding("vuln-0002", "Cross-site scripting in portal", cwe="CWE-79"),
+            "code_locations": [],
+            "target": "https://admin:fixed-target-secret@example.com/legacy",
+        },
+    ]
+    current_reports = [
+        {
+            **sample_finding("vuln-0001", "SQL Injection in search", cwe="CWE-89"),
+            "code_locations": [],
+            "method": "GET",
+            "endpoint": "https://user:curr-ep-secret@example.com/v2/search",
+        },
+        {
+            **sample_finding("vuln-0003", "IDOR in billing", cwe="CWE-639"),
+            "code_locations": [],
+            "method": "POST",
+            "endpoint": "https://svc:new-ep-secret@example.com/billing",
+        },
+        {
+            **sample_finding("vuln-0004", "Open redirect in portal", cwe="CWE-601"),
+            "code_locations": [],
+            "target": "https://admin:new-target-secret@example.com/app",
+        },
+    ]
+    write_fixture_run(tmp_path, "run-a", baseline_reports)
+    write_fixture_run(tmp_path, "run-b", current_reports)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("COLUMNS", "220")
+
+    secrets = (
+        "base-ep-secret",
+        "curr-ep-secret",
+        "fixed-target-secret",
+        "new-ep-secret",
+        "new-target-secret",
+    )
+
+    assert run_diff(["run-a", "run-b", "--match", "class"]) == 0
+    human_output = capsys.readouterr().out
+    for secret in secrets:
+        assert secret not in human_output
+    assert "POST https://svc:***@example.com/billing" in human_output
+    assert "https://admin:***@example.com/app" in human_output
+    assert "https://admin:***@example.com/legacy" in human_output
+    assert (
+        "GET https://user:***@example.com/v1/search -> GET https://user:***@example.com/v2/search"
+        in human_output
+    )
+
+    assert run_diff(["run-a", "run-b", "--match", "class", "--json"]) == 0
+    json_output = capsys.readouterr().out
+    for secret in secrets:
+        assert secret not in json_output
+    payload = json.loads(json_output)
+    new_by_title = {item["title"]: item for item in payload["new"]}
+    assert new_by_title["IDOR in billing"]["location"] == "POST https://svc:***@example.com/billing"
+    assert (
+        new_by_title["Open redirect in portal"]["location"] == "https://admin:***@example.com/app"
+    )
+    assert payload["fixed"][0]["location"] == "https://admin:***@example.com/legacy"
+    still = payload["still_present"][0]
+    assert still["location_baseline"] == "GET https://user:***@example.com/v1/search"
+    assert still["location_current"] == "GET https://user:***@example.com/v2/search"
+    assert still["location"] == "GET https://user:***@example.com/v2/search"
+
+
 def test_main_dispatches_diff_before_scan_setup(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 
