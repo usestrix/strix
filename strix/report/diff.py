@@ -6,12 +6,16 @@ import json
 from collections import Counter, deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import urlsplit, urlunsplit
 
 from strix.core.paths import RUNS_DIR_NAME, run_dir_for, run_record_path
-from strix.report.sarif import _build_physical_locations, _rule_id, fingerprints_for_finding
+from strix.report.sarif import _build_physical_locations, _weakness_id, fingerprints_for_finding
 from strix.report.writer import read_run_record
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 MatchMode = Literal["strict", "class"]
@@ -229,10 +233,11 @@ def match_findings(
 ) -> tuple[list[DiffFinding], list[DiffFinding], list[DiffFinding]]:
     """Group findings by strict or class identity and pair the best matches.
 
-    Within each group, match by ID, primary fingerprint, normalized title, then
-    location. Pair a lone remaining finding on each side as a fallback.
-    In strict mode, also pair unique unmatched findings with the same rule and
-    first code file, ignoring line numbers.
+    Strict mode pairs within each primary fingerprint group by normalized title
+    or location, then pairs unique line-only moves by weakness (or normalized
+    title) and first code file. Other findings remain unmatched.
+    Class mode tries primary fingerprint, normalized title, then location within
+    each class group, and pairs a lone remaining finding on each side.
     """
     baseline_groups = _group(baseline, match)
     current_groups = _group(current, match)
@@ -242,7 +247,7 @@ def match_findings(
     for key in sorted(set(baseline_groups) | set(current_groups)):
         left = baseline_groups.get(key, [])
         right = current_groups.get(key, [])
-        pairs, unmatched_left, unmatched_right = _pair_group(left, right)
+        pairs, unmatched_left, unmatched_right = _pair_group(left, right, match)
         still_present.extend(_still(before, after) for before, after in pairs)
         unmatched_baseline.extend(unmatched_left)
         unmatched_current.extend(unmatched_right)
@@ -276,13 +281,14 @@ def _looks_like_path(spec: str, expanded: Path) -> bool:
 def _snapshot(report: dict[str, Any]) -> FindingSnapshot:
     fingerprints = fingerprints_for_finding(report)
     locations, _ = _build_physical_locations(report.get("code_locations"))
+    title = str(report.get("title") or "Untitled")
     move_key = None
     if locations:
         uri = locations[0]["physicalLocation"]["artifactLocation"]["uri"]
-        move_key = json.dumps([_rule_id(report), uri])
+        move_key = json.dumps([_weakness_id(report) or _normalized_title(title), uri])
     return FindingSnapshot(
         id=str(report.get("id") or ""),
-        title=str(report.get("title") or "Untitled"),
+        title=title,
         severity=str(report.get("severity") or "").strip().lower() or "unknown",
         location=_location(report),
         primary=fingerprints.primary,
@@ -376,7 +382,7 @@ def _identity_key(finding: FindingSnapshot, match: MatchMode) -> str:
         return f"class:{finding.class_hash}"
     if finding.primary:
         return f"primary:{finding.primary}"
-    return f"id:{finding.id}"
+    return "unanchored"
 
 
 def _group(
@@ -389,9 +395,14 @@ def _group(
     return groups
 
 
+def _normalized_title(title: str) -> str:
+    return " ".join(title.split()).casefold()
+
+
 def _pair_group(
     left: list[FindingSnapshot],
     right: list[FindingSnapshot],
+    match: MatchMode,
 ) -> tuple[
     list[tuple[FindingSnapshot, FindingSnapshot]],
     list[FindingSnapshot],
@@ -403,12 +414,13 @@ def _pair_group(
     left = sorted(left, key=sort_key)
     right = sorted(right, key=sort_key)
     pairs: list[tuple[FindingSnapshot, FindingSnapshot]] = []
-    for tier_key in (
-        lambda item: item.id or None,
-        lambda item: item.primary,
-        lambda item: " ".join(item.title.split()).casefold(),
+    tiers: list[Callable[[FindingSnapshot], str | None]] = [
+        lambda item: _normalized_title(item.title),
         lambda item: item.location if item.location != "-" else None,
-    ):
+    ]
+    if match == "class":
+        tiers.insert(0, lambda item: item.primary)
+    for tier_key in tiers:
         candidates: dict[str, deque[int]] = {}
         for index, item in enumerate(right):
             key = tier_key(item)
@@ -429,7 +441,7 @@ def _pair_group(
         left = unmatched_left
         right = [item for index, item in enumerate(right) if index not in matched_right]
 
-    if len(left) == len(right) == 1:
+    if match == "class" and len(left) == len(right) == 1:
         pairs.append((left[0], right[0]))
         return pairs, [], []
     return pairs, left, right

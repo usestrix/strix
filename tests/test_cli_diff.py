@@ -180,6 +180,19 @@ def test_fail_on_new_high_exits_one(
     assert "Command injection in upload handler" in capsys.readouterr().out
 
 
+def test_fail_on_new_high_for_unrelated_locationless_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    before = {**sample_finding("vuln-0001", "SQL injection in search"), "code_locations": []}
+    after = {**before, "title": "SQL injection in billing"}
+    write_fixture_run(tmp_path, "before-fix", [before])
+    write_fixture_run(tmp_path, "after-fix", [after])
+    monkeypatch.chdir(tmp_path)
+
+    assert run_diff(["before-fix", "after-fix", "--fail-on-new", "high"]) == 1
+    assert "1 new, 1 fixed, 0 still present" in capsys.readouterr().out
+
+
 def test_fail_on_new_critical_passes_when_new_is_high(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

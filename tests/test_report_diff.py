@@ -205,6 +205,73 @@ def test_match_findings_marks_severity_change(tmp_path: Path) -> None:
     assert still[0].severity_current == "medium"
 
 
+def test_strict_match_pairs_renumbered_locationless_findings_by_title(tmp_path: Path) -> None:
+    first = {
+        **sample_finding("vuln-0001", "SQL injection in search"),
+        "code_locations": [],
+    }
+    second = {
+        **sample_finding("vuln-0002", "SQL injection in lookup", severity="low"),
+        "code_locations": [],
+    }
+    baseline = write_fixture_run(tmp_path, "a", [first, second])
+    current = write_fixture_run(
+        tmp_path,
+        "b",
+        [{**second, "id": "vuln-0001"}, {**first, "id": "vuln-0002"}],
+    )
+    primary = fingerprints_for_finding(first).primary
+    assert primary is not None
+    assert primary == fingerprints_for_finding(second).primary
+
+    diff = compare_runs(baseline, current)
+
+    assert diff.new == diff.fixed == []
+    assert diff.severity_changed == 0
+    assert [(item.id_baseline, item.id_current) for item in diff.still_present] == [
+        ("vuln-0001", "vuln-0002"),
+        ("vuln-0002", "vuln-0001"),
+    ]
+
+
+@pytest.mark.parametrize("keep_sibling", [False, True])
+def test_strict_match_leaves_unrelated_locationless_findings_unpaired(
+    tmp_path: Path, keep_sibling: bool
+) -> None:
+    before = {**sample_finding("vuln-0001", "SQL injection in search"), "code_locations": []}
+    after = {**before, "title": "SQL injection in billing"}
+    sibling = (
+        [{**before, "id": "vuln-0002", "title": "SQL injection in lookup"}] if keep_sibling else []
+    )
+    primary = fingerprints_for_finding(before).primary
+    assert primary is not None
+    assert primary == fingerprints_for_finding(after).primary
+
+    baseline = write_fixture_run(tmp_path, "a", [before, *sibling])
+    current = write_fixture_run(tmp_path, "b", [after, *sibling])
+    diff = compare_runs(baseline, current)
+
+    assert [(item.title, item.severity) for item in diff.new] == [(after["title"], "high")]
+    assert [item.title for item in diff.fixed] == [before["title"]]
+    assert [item.title for item in diff.still_present] == [item["title"] for item in sibling]
+
+
+def test_strict_match_pairs_line_move_without_weakness_by_normalized_title(tmp_path: Path) -> None:
+    baseline = write_fixture_run(
+        tmp_path, "a", [sample_finding("vuln-0001", "Open redirect in login", cwe=None)]
+    )
+    current = write_fixture_run(
+        tmp_path, "b", [sample_finding("vuln-0002", "OPEN  REDIRECT in login", line=8, cwe=None)]
+    )
+
+    diff = compare_runs(baseline, current)
+
+    assert diff.new == diff.fixed == []
+    assert [(item.id_baseline, item.id_current) for item in diff.still_present] == [
+        ("vuln-0001", "vuln-0002")
+    ]
+
+
 @pytest.mark.parametrize(
     ("match", "current_severity"),
     [("strict", "high"), ("strict", "low"), ("class", "high")],

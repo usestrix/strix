@@ -170,7 +170,7 @@ strix --target https://app.com --workspace-file ./openapi.yaml:specs/openapi.yam
 
 ## Compare two runs
 
-After a fix, re-run Strix and compare findings. Each argument is a run name under `./strix_runs` or a path to a run directory. Matching uses the same SARIF fingerprints as `findings.sarif`: `strict` (default) is the primary location hash; `class` is the file-independent class hash, so a finding whose path moved still matches.
+After a fix, re-run Strix and compare findings. Each argument is a run name under `./strix_runs` or a path to a run directory. Matching uses the same SARIF fingerprints as `findings.sarif`. In `strict` mode (the default), findings in the same primary fingerprint group pair only when their normalized titles or locations match. Unique line-only moves also pair, and other findings remain unmatched. In `class` mode, the file-independent class fingerprint allows matches across paths, and a lone leftover on each side of a class group also pairs.
 
 ```bash
 # What is new, fixed, or still present (including severity changes)
@@ -196,7 +196,7 @@ strix diff before-fix after-fix --json
 </ParamField>
 
 <ParamField path="--match" type="string" default="strict">
-  Finding identity: `strict` uses the SARIF primary fingerprint (location + rule). `class` uses the class fingerprint, which ignores file path.
+  `strict` pairs findings within a SARIF primary fingerprint group by matching title or location, also pairs unique line-only moves, and leaves other findings unmatched. `class` groups by the file-independent class fingerprint and also pairs a lone leftover on each side of a class group.
 </ParamField>
 
 <ParamField path="--fail-on-new" type="string">
