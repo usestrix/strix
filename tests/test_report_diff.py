@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from strix.interface.diff_cli import _new_findings_fail
 from strix.report.diff import (
     DiffError,
     _redact_target,
@@ -22,6 +23,8 @@ from strix.report.writer import write_run_record, write_vulnerabilities
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from strix.report.diff import MatchMode
 
 
 def sample_finding(
@@ -225,6 +228,53 @@ def test_class_match_pairs_a_finding_whose_path_moved(tmp_path: Path) -> None:
     moved = next(item for item in still_class if item.title.startswith("SQL Injection"))
     assert moved.location_baseline == "app.py:4"
     assert moved.location_current == "db/query.py:12"
+
+
+def test_class_match_leaves_unrelated_findings_unpaired(tmp_path: Path) -> None:
+    baseline = [
+        sample_finding("vuln-0001", "SQL Injection in search", file="search.py"),
+        sample_finding("vuln-0002", "SQL Injection in billing", file="billing.py"),
+        sample_finding("vuln-0003", "SQL Injection in exports", file="exports.py"),
+    ]
+    current = [
+        sample_finding("vuln-0004", "SQL Injection in imports", file="imports.py"),
+        sample_finding("vuln-0005", "SQL injection in  SEARCH", file="db/search.py"),
+    ]
+    assert len({fingerprints_for_finding(item).vuln_class for item in baseline + current}) == 1
+    baseline_dir = write_fixture_run(tmp_path, "baseline", baseline)
+    current_dir = write_fixture_run(tmp_path, "current", current)
+    diff = compare_runs(baseline_dir, current_dir, match="class")
+
+    assert [(item.id_baseline, item.id_current) for item in diff.still_present] == [
+        ("vuln-0001", "vuln-0005")
+    ]
+    assert {item.id_baseline for item in diff.fixed} == {"vuln-0002", "vuln-0003"}
+    assert [item.id_current for item in diff.new] == ["vuln-0004"]
+    assert _new_findings_fail(diff, "high")
+
+
+@pytest.mark.parametrize("match", ["strict", "class"])
+def test_match_findings_is_order_independent_with_duplicates(
+    tmp_path: Path, match: MatchMode
+) -> None:
+    duplicate = sample_finding("vuln-0001", "SQL Injection in search", file="search.py")
+    other = sample_finding("vuln-0002", "SQL Injection in billing", file="billing.py")
+    baseline_dir = write_fixture_run(tmp_path, "baseline", [duplicate, other])
+    current_dir = write_fixture_run(
+        tmp_path, "current", [duplicate, duplicate, other, {**duplicate, "severity": "medium"}]
+    )
+    _, baseline = load_run(baseline_dir)
+    _, current = load_run(current_dir)
+
+    result = match_findings(baseline, current, match=match)
+    new, fixed, still = result
+    assert [item.severity_current for item in new] == ["high", "medium"]
+    assert fixed == []
+    assert {item.id_current: item.severity_current for item in still} == {
+        "vuln-0001": "high",
+        "vuln-0002": "high",
+    }
+    assert match_findings(baseline, current[::-1], match=match) == result
 
 
 def test_class_match_pairs_finding_without_cwe_or_cve_across_id_and_path_changes(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -225,7 +226,11 @@ def match_findings(
     *,
     match: MatchMode,
 ) -> tuple[list[DiffFinding], list[DiffFinding], list[DiffFinding]]:
-    """Pair findings by primary fingerprint (strict) or class fingerprint (class)."""
+    """Group findings by strict or class identity and pair the best matches.
+
+    Within each group, match by ID, primary fingerprint, normalized title, then
+    location. Pair a lone remaining finding on each side as a fallback.
+    """
     baseline_groups = _group(baseline, match)
     current_groups = _group(current, match)
     new: list[DiffFinding] = []
@@ -234,10 +239,10 @@ def match_findings(
     for key in sorted(set(baseline_groups) | set(current_groups)):
         left = baseline_groups.get(key, [])
         right = current_groups.get(key, [])
-        paired = min(len(left), len(right))
-        still_present.extend(_still(left[index], right[index]) for index in range(paired))
-        fixed.extend(_fixed(item) for item in left[paired:])
-        new.extend(_new(item) for item in right[paired:])
+        pairs, unmatched_left, unmatched_right = _pair_group(left, right)
+        still_present.extend(_still(before, after) for before, after in pairs)
+        fixed.extend(_fixed(item) for item in unmatched_left)
+        new.extend(_new(item) for item in unmatched_right)
     return new, fixed, still_present
 
 
@@ -352,10 +357,55 @@ def _group(
     match: MatchMode,
 ) -> dict[str, list[FindingSnapshot]]:
     groups: dict[str, list[FindingSnapshot]] = {}
-    ordered = sorted(findings, key=lambda item: (item.id, item.title, item.location))
-    for finding in ordered:
+    for finding in findings:
         groups.setdefault(_identity_key(finding, match), []).append(finding)
     return groups
+
+
+def _pair_group(
+    left: list[FindingSnapshot],
+    right: list[FindingSnapshot],
+) -> tuple[
+    list[tuple[FindingSnapshot, FindingSnapshot]],
+    list[FindingSnapshot],
+    list[FindingSnapshot],
+]:
+    def sort_key(item: FindingSnapshot) -> tuple[str, str, str, str, str]:
+        return item.primary or "", item.title, item.location, item.severity, item.id
+
+    left = sorted(left, key=sort_key)
+    right = sorted(right, key=sort_key)
+    pairs: list[tuple[FindingSnapshot, FindingSnapshot]] = []
+    for tier_key in (
+        lambda item: item.id or None,
+        lambda item: item.primary,
+        lambda item: " ".join(item.title.split()).casefold(),
+        lambda item: item.location if item.location != "-" else None,
+    ):
+        candidates: dict[str, deque[int]] = {}
+        for index, item in enumerate(right):
+            key = tier_key(item)
+            if key is not None:
+                candidates.setdefault(key, deque()).append(index)
+
+        unmatched_left: list[FindingSnapshot] = []
+        matched_right: set[int] = set()
+        for item in left:
+            key = tier_key(item)
+            matches = candidates.get(key) if key is not None else None
+            if matches:
+                index = matches.popleft()
+                pairs.append((item, right[index]))
+                matched_right.add(index)
+            else:
+                unmatched_left.append(item)
+        left = unmatched_left
+        right = [item for index, item in enumerate(right) if index not in matched_right]
+
+    if len(left) == len(right) == 1:
+        pairs.append((left[0], right[0]))
+        return pairs, [], []
+    return pairs, left, right
 
 
 def _new(finding: FindingSnapshot) -> DiffFinding:
