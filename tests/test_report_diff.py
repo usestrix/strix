@@ -205,6 +205,63 @@ def test_match_findings_marks_severity_change(tmp_path: Path) -> None:
     assert still[0].severity_current == "medium"
 
 
+@pytest.mark.parametrize(
+    ("match", "current_severity"),
+    [("strict", "high"), ("strict", "low"), ("class", "high")],
+)
+def test_match_findings_pairs_line_move(
+    tmp_path: Path, match: MatchMode, current_severity: str
+) -> None:
+    baseline = write_fixture_run(
+        tmp_path, "a", [sample_finding("vuln-0001", "SQL Injection in search", line=40)]
+    )
+    current = write_fixture_run(
+        tmp_path,
+        "b",
+        [
+            sample_finding(
+                "vuln-0002", "SQL Injection in search", line=52, severity=current_severity
+            )
+        ],
+    )
+
+    diff = compare_runs(baseline, current, match=match)
+
+    assert diff.new == []
+    assert diff.fixed == []
+    assert len(diff.still_present) == 1
+    finding = diff.still_present[0]
+    assert finding.location_baseline == "app.py:40"
+    assert finding.location_current == "app.py:52"
+    assert finding.severity_baseline == "high"
+    assert finding.severity_current == current_severity
+
+
+def test_strict_match_leaves_ambiguous_line_moves_unpaired(tmp_path: Path) -> None:
+    baseline = write_fixture_run(
+        tmp_path,
+        "a",
+        [
+            sample_finding("vuln-0001", "SQL Injection in search", line=40),
+            sample_finding("vuln-0002", "SQL Injection in lookup", line=60),
+        ],
+    )
+    current = write_fixture_run(
+        tmp_path,
+        "b",
+        [
+            sample_finding("vuln-0001", "SQL Injection in search", line=52),
+            sample_finding("vuln-0002", "SQL Injection in lookup", line=72),
+        ],
+    )
+
+    diff = compare_runs(baseline, current)
+
+    assert diff.still_present == []
+    assert {finding.location for finding in diff.new} == {"app.py:52", "app.py:72"}
+    assert {finding.location for finding in diff.fixed} == {"app.py:40", "app.py:60"}
+
+
 def test_class_match_pairs_a_finding_whose_path_moved(tmp_path: Path) -> None:
     baseline, current = _retest_reports()
     _, snapshots_a = load_run(write_fixture_run(tmp_path, "a", baseline))

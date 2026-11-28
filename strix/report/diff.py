@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import json
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.parse import urlsplit, urlunsplit
 
 from strix.core.paths import RUNS_DIR_NAME, run_dir_for, run_record_path
-from strix.report.sarif import fingerprints_for_finding
+from strix.report.sarif import _build_physical_locations, _rule_id, fingerprints_for_finding
 from strix.report.writer import read_run_record
 
 
@@ -39,6 +39,7 @@ class FindingSnapshot:
     location: str
     primary: str | None
     class_hash: str | None
+    move_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -230,19 +231,39 @@ def match_findings(
 
     Within each group, match by ID, primary fingerprint, normalized title, then
     location. Pair a lone remaining finding on each side as a fallback.
+    In strict mode, also pair unique unmatched findings with the same rule and
+    first code file, ignoring line numbers.
     """
     baseline_groups = _group(baseline, match)
     current_groups = _group(current, match)
-    new: list[DiffFinding] = []
-    fixed: list[DiffFinding] = []
+    unmatched_baseline: list[FindingSnapshot] = []
+    unmatched_current: list[FindingSnapshot] = []
     still_present: list[DiffFinding] = []
     for key in sorted(set(baseline_groups) | set(current_groups)):
         left = baseline_groups.get(key, [])
         right = current_groups.get(key, [])
         pairs, unmatched_left, unmatched_right = _pair_group(left, right)
         still_present.extend(_still(before, after) for before, after in pairs)
-        fixed.extend(_fixed(item) for item in unmatched_left)
-        new.extend(_new(item) for item in unmatched_right)
+        unmatched_baseline.extend(unmatched_left)
+        unmatched_current.extend(unmatched_right)
+
+    moves: dict[str, FindingSnapshot] = {}
+    if match == "strict":
+        baseline_counts = Counter(item.move_key for item in unmatched_baseline)
+        current_counts = Counter(item.move_key for item in unmatched_current)
+        moves = {
+            move_key: item
+            for item in unmatched_baseline
+            if (move_key := item.move_key) is not None
+            and baseline_counts[move_key] == current_counts[move_key] == 1
+        }
+        still_present.extend(
+            _still(moves[move_key], item)
+            for item in unmatched_current
+            if (move_key := item.move_key) is not None and move_key in moves
+        )
+    new = [_new(item) for item in unmatched_current if item.move_key not in moves]
+    fixed = [_fixed(item) for item in unmatched_baseline if item.move_key not in moves]
     return new, fixed, still_present
 
 
@@ -254,6 +275,11 @@ def _looks_like_path(spec: str, expanded: Path) -> bool:
 
 def _snapshot(report: dict[str, Any]) -> FindingSnapshot:
     fingerprints = fingerprints_for_finding(report)
+    locations, _ = _build_physical_locations(report.get("code_locations"))
+    move_key = None
+    if locations:
+        uri = locations[0]["physicalLocation"]["artifactLocation"]["uri"]
+        move_key = json.dumps([_rule_id(report), uri])
     return FindingSnapshot(
         id=str(report.get("id") or ""),
         title=str(report.get("title") or "Untitled"),
@@ -261,6 +287,7 @@ def _snapshot(report: dict[str, Any]) -> FindingSnapshot:
         location=_location(report),
         primary=fingerprints.primary,
         class_hash=fingerprints.vuln_class,
+        move_key=move_key,
     )
 
 

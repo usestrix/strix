@@ -218,6 +218,30 @@ def test_fail_on_new_for_still_present_finding(
     assert "0 new, 0 fixed, 1 still present" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    ("current_severity", "threshold", "exit_code"),
+    [("high", "high", 0), ("low", "high", 0), ("low", "low", 0), ("critical", "critical", 1)],
+)
+def test_fail_on_new_for_line_move(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    current_severity: str,
+    threshold: str,
+    exit_code: int,
+) -> None:
+    write_fixture_run(tmp_path, "before-fix", [sample_finding("vuln-0001", "Finding", line=40)])
+    write_fixture_run(
+        tmp_path,
+        "after-fix",
+        [sample_finding("vuln-0002", "Finding", severity=current_severity, line=52)],
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert run_diff(["before-fix", "after-fix", "--fail-on-new", threshold]) == exit_code
+    assert "0 new, 0 fixed, 1 still present" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("baseline", [None, "", "  ", "severe", "unknown"])
 @pytest.mark.parametrize(("current", "exit_code"), [("critical", 1), ("high", 0)])
 def test_fail_on_new_escalation_from_unrankable_baseline(
