@@ -520,7 +520,7 @@ def test_different_targets_warning_does_not_refuse(
         tmp_path,
         "run-a",
         [sample_finding("vuln-0001", "SQL Injection in get_user")],
-        targets=["https://app.example.com"],
+        targets=["https://admin:s3cret@example.com/app"],
     )
     write_fixture_run(
         tmp_path,
@@ -533,9 +533,17 @@ def test_different_targets_warning_does_not_refuse(
 
     assert run_diff(["run-a", "run-b"]) == 0
     output = capsys.readouterr().out
-    assert "Warning: targets differ" in output
+    redacted = "https://admin:***@example.com/app"
+    assert "s3cret" not in output
+    assert any("run-a" in line and redacted in line for line in output.splitlines())
+    assert f"Warning: targets differ ({redacted} vs" in output
     assert "Warning: scan modes differ" in output
     assert "0 new, 0 fixed, 1 still present" in output
+
+    assert run_diff(["run-a", "run-b", "--json"]) == 0
+    output = capsys.readouterr().out
+    assert "s3cret" not in output
+    assert json.loads(output)["baseline"]["targets"] == [redacted]
 
 
 def test_main_dispatches_diff_before_scan_setup(monkeypatch: pytest.MonkeyPatch) -> None:

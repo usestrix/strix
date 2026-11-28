@@ -9,6 +9,7 @@ import pytest
 
 from strix.report.diff import (
     DiffError,
+    _redact_target,
     compare_runs,
     load_run,
     match_findings,
@@ -320,6 +321,39 @@ def test_class_fingerprint_without_cwe_or_cve_keeps_classes_apart() -> None:
     assert fingerprints_for_finding(redirect).vuln_class != (
         fingerprints_for_finding(ssrf).vuln_class
     )
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        ("https://admin:s3cret@example.com/app", "https://admin:***@example.com/app"),
+        ("https://user:pass@[::1]:8443/app?x=1#top", "https://user:***@[::1]:8443/app?x=1#top"),
+        ("https://user@example.com/app", "https://user@example.com/app"),
+        ("https://example.com/app", "https://example.com/app"),
+        ("/work/repo", "/work/repo"),
+        ("owner/repo", "owner/repo"),
+        ("https://user:pass@[::1", "https://user:pass@[::1"),
+    ],
+)
+def test_redact_target(target: str, expected: str) -> None:
+    assert _redact_target(target) == expected
+
+
+def test_compare_runs_redacts_target_passwords(tmp_path: Path) -> None:
+    baseline = write_fixture_run(
+        tmp_path, "baseline", [], targets=["https://admin:s3cret@example.com/app"]
+    )
+    current = write_fixture_run(
+        tmp_path, "current", [], targets=["https://admin:changed@example.com/app"]
+    )
+
+    diff = compare_runs(baseline, current)
+
+    redacted = "https://admin:***@example.com/app"
+    metadata = diff.baseline.to_json()
+    assert metadata["targets"] == [redacted]
+    assert "s3cret" not in json.dumps(metadata)
+    assert diff.warnings == [f"targets differ ({redacted} vs {redacted})"]
 
 
 def test_compare_runs_warns_on_different_targets_and_scan_modes(tmp_path: Path) -> None:

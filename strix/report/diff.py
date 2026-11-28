@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
+from urllib.parse import urlsplit, urlunsplit
 
 from strix.core.paths import RUNS_DIR_NAME, run_dir_for, run_record_path
 from strix.report.sarif import fingerprints_for_finding
@@ -76,6 +77,7 @@ class RunMeta:
     scan_mode: str
     targets: list[str]
     status: str
+    raw_targets: list[str] = field(compare=False, repr=False)
 
     @property
     def completed(self) -> bool:
@@ -306,15 +308,28 @@ def _location(report: dict[str, Any]) -> str:
 
 
 def _meta(run_dir: Path, record: dict[str, Any]) -> RunMeta:
+    raw_targets = _target_originals(record)
     return RunMeta(
         name=str(record.get("run_name") or run_dir.name),
         path=str(run_dir),
         started_at=str(record.get("start_time") or ""),
         ended_at=str(record.get("end_time") or ""),
         scan_mode=str(record.get("scan_mode") or "").strip(),
-        targets=_target_originals(record),
+        targets=[_redact_target(target) for target in raw_targets],
         status=str(record.get("status") or ""),
+        raw_targets=raw_targets,
     )
+
+
+def _redact_target(value: str) -> str:
+    try:
+        parts = urlsplit(value)
+        if not parts.scheme or not parts.netloc or parts.password is None:
+            return value
+        _, _, host = parts.netloc.rpartition("@")
+        return urlunsplit(parts._replace(netloc=f"{parts.username}:***@{host}"))
+    except ValueError:
+        return value
 
 
 def _target_originals(record: dict[str, Any]) -> list[str]:
@@ -408,7 +423,7 @@ def _warnings(baseline: RunMeta, current: RunMeta) -> list[str]:
     if not baseline.completed:
         status = baseline.status or "unknown"
         warnings.append(f"run '{baseline.name}' is not completed (status: {status})")
-    if set(baseline.targets) != set(current.targets):
+    if set(baseline.raw_targets) != set(current.raw_targets):
         warnings.append(
             "targets differ "
             f"({_format_targets(baseline.targets)} vs {_format_targets(current.targets)})"
