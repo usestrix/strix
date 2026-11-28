@@ -269,8 +269,8 @@ def match_findings(
     """Group findings by strict or class identity and pair the best matches.
 
     Strict mode pairs within each primary fingerprint group by normalized title
-    or location, then pairs unique line-only moves by weakness (or normalized
-    title) and first code file. Other findings remain unmatched.
+    or location, then pairs unique line-only moves by weakness, normalized
+    title and first code file. Other findings remain unmatched.
     Class mode tries primary fingerprint, normalized title, then location within
     each class group, and pairs a lone remaining finding on each side.
     """
@@ -320,7 +320,7 @@ def _snapshot(report: dict[str, Any]) -> FindingSnapshot:
     move_key = None
     if locations:
         uri = locations[0]["physicalLocation"]["artifactLocation"]["uri"]
-        move_key = json.dumps([_weakness_id(report) or _normalized_title(title), uri])
+        move_key = json.dumps([_weakness_id(report), _normalized_title(title), uri])
     return FindingSnapshot(
         id=str(report.get("id") or ""),
         title=title,

@@ -311,6 +311,31 @@ def test_strict_match_leaves_ambiguous_line_moves_unpaired(tmp_path: Path) -> No
         "a",
         [
             sample_finding("vuln-0001", "SQL Injection in search", line=40),
+            sample_finding("vuln-0002", "SQL Injection in search", line=60),
+        ],
+    )
+    current = write_fixture_run(
+        tmp_path,
+        "b",
+        [
+            sample_finding("vuln-0001", "SQL Injection in search", line=52),
+            sample_finding("vuln-0002", "SQL Injection in search", line=72),
+        ],
+    )
+
+    diff = compare_runs(baseline, current)
+
+    assert diff.still_present == []
+    assert {finding.location for finding in diff.new} == {"app.py:52", "app.py:72"}
+    assert {finding.location for finding in diff.fixed} == {"app.py:40", "app.py:60"}
+
+
+def test_strict_match_pairs_line_moves_of_same_weakness_by_title(tmp_path: Path) -> None:
+    baseline = write_fixture_run(
+        tmp_path,
+        "a",
+        [
+            sample_finding("vuln-0001", "SQL Injection in search", line=40),
             sample_finding("vuln-0002", "SQL Injection in lookup", line=60),
         ],
     )
@@ -325,9 +350,62 @@ def test_strict_match_leaves_ambiguous_line_moves_unpaired(tmp_path: Path) -> No
 
     diff = compare_runs(baseline, current)
 
+    assert diff.new == diff.fixed == []
+    assert {(item.location_baseline, item.location_current) for item in diff.still_present} == {
+        ("app.py:40", "app.py:52"),
+        ("app.py:60", "app.py:72"),
+    }
+
+
+def test_strict_match_keeps_new_same_weakness_finding_in_same_file_new(tmp_path: Path) -> None:
+    baseline = write_fixture_run(
+        tmp_path, "a", [sample_finding("vuln-0001", "SQL Injection in search", line=40)]
+    )
+    current = write_fixture_run(
+        tmp_path, "b", [sample_finding("vuln-0001", "SQL Injection in billing", line=52)]
+    )
+
+    diff = compare_runs(baseline, current)
+
     assert diff.still_present == []
-    assert {finding.location for finding in diff.new} == {"app.py:52", "app.py:72"}
-    assert {finding.location for finding in diff.fixed} == {"app.py:40", "app.py:60"}
+    assert [item.location for item in diff.new] == ["app.py:52"]
+    assert [item.location for item in diff.fixed] == ["app.py:40"]
+    assert _new_findings_fail(diff, "high")
+
+
+def test_strict_match_without_weakness_ignores_reordered_finding_ids(tmp_path: Path) -> None:
+    first = sample_finding("vuln-0001", "Open redirect in login", line=4, cwe=None)
+    second = sample_finding("vuln-0002", "Open redirect in login", line=30, cwe=None)
+    baseline = write_fixture_run(tmp_path, "a", [first, second])
+    current = write_fixture_run(
+        tmp_path, "b", [{**second, "id": "vuln-0001"}, {**first, "id": "vuln-0002"}]
+    )
+
+    diff = compare_runs(baseline, current)
+
+    assert diff.new == diff.fixed == []
+    assert sorted((item.id_baseline, item.id_current) for item in diff.still_present) == [
+        ("vuln-0001", "vuln-0002"),
+        ("vuln-0002", "vuln-0001"),
+    ]
+
+
+def test_strict_match_without_weakness_keeps_different_titles_sharing_id_apart(
+    tmp_path: Path,
+) -> None:
+    before = sample_finding("vuln-0001", "Open redirect in login", cwe=None)
+    after = sample_finding("vuln-0001", "Hardcoded secret in config", cwe=None)
+    assert fingerprints_for_finding(before).primary != fingerprints_for_finding(after).primary
+
+    diff = compare_runs(
+        write_fixture_run(tmp_path, "a", [before]),
+        write_fixture_run(tmp_path, "b", [after]),
+    )
+
+    assert diff.still_present == []
+    assert [item.title for item in diff.new] == ["Hardcoded secret in config"]
+    assert [item.title for item in diff.fixed] == ["Open redirect in login"]
+    assert _new_findings_fail(diff, "high")
 
 
 def test_class_match_pairs_a_finding_whose_path_moved(tmp_path: Path) -> None:

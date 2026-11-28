@@ -216,10 +216,13 @@ def fingerprints_for_finding(report: dict[str, Any]) -> FindingFingerprints:
     """Return the primary and class fingerprints SARIF would emit for *report*.
 
     ``strix diff`` matches findings with these hashes so comparison uses the
-    same identity as ``findings.sarif``.
+    same identity as ``findings.sarif``. One exception: a finding without CWE
+    or CVE keys its primary hash on the title slug, not on the per-run finding
+    id that ``_rule_id`` falls back to, so renumbered findings keep their
+    identity and different findings that share an id do not.
     """
     locations, is_synthetic, _dropped = _build_locations(report)
-    rule_id = _rule_id(report)
+    rule_id = _weakness_id(report) or _slugify(_string_value(report.get("title")) or "")
     return FindingFingerprints(
         primary=_primary_fingerprint(rule_id, report, locations, is_synthetic=is_synthetic),
         vuln_class=_class_fingerprint(report),

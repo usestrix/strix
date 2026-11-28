@@ -193,6 +193,38 @@ def test_fail_on_new_high_for_unrelated_locationless_finding(
     assert "1 new, 1 fixed, 0 still present" in capsys.readouterr().out
 
 
+def test_fail_on_new_high_for_new_same_weakness_finding_in_same_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_fixture_run(
+        tmp_path, "before-fix", [sample_finding("vuln-0001", "SQL Injection in search", line=40)]
+    )
+    write_fixture_run(
+        tmp_path, "after-fix", [sample_finding("vuln-0002", "SQL Injection in billing", line=52)]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert run_diff(["before-fix", "after-fix", "--fail-on-new", "high"]) == 1
+    assert "1 new, 1 fixed, 0 still present" in capsys.readouterr().out
+
+
+def test_fail_on_new_high_for_reused_id_without_weakness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_fixture_run(
+        tmp_path, "before-fix", [sample_finding("vuln-0001", "Open redirect in login", cwe=None)]
+    )
+    write_fixture_run(
+        tmp_path,
+        "after-fix",
+        [sample_finding("vuln-0001", "Hardcoded secret in config", cwe=None)],
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert run_diff(["before-fix", "after-fix", "--fail-on-new", "high"]) == 1
+    assert "1 new, 1 fixed, 0 still present" in capsys.readouterr().out
+
+
 def test_fail_on_new_critical_passes_when_new_is_high(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
