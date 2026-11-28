@@ -182,10 +182,56 @@ strix --target ./my-project --workspace-file ./wordlist.txt
 strix --target https://app.com --workspace-file ./openapi.yaml:specs/openapi.yaml
 ```
 
+## Compare two runs
+
+After a fix, re-run Strix and compare findings. Each argument is a run name under `./strix_runs` or a path to a run directory. Matching uses the same SARIF fingerprints as `findings.sarif`. In `strict` mode (the default), findings in the same primary fingerprint group pair only when their normalized titles or locations match. Unique line-only moves also pair, and other findings remain unmatched. In `class` mode, the file-independent class fingerprint allows matches across paths, and a lone leftover on each side of a class group also pairs.
+
+```bash
+# What is new, fixed, or still present (including severity changes)
+strix diff before-fix after-fix
+
+# Treat a moved file as the same finding
+strix diff before-fix after-fix --match class
+
+# Machine-readable document
+strix diff before-fix after-fix --json
+```
+
+<ParamField path="RUN-A" type="string">
+  Baseline run (the earlier scan). A name under `./strix_runs`, or a path to a run directory.
+</ParamField>
+
+<ParamField path="RUN-B" type="string">
+  Current run (the re-test). A name under `./strix_runs`, or a path to a run directory.
+</ParamField>
+
+<ParamField path="--json" type="boolean">
+  Print a stable JSON document instead of the human summary.
+</ParamField>
+
+<ParamField path="--match" type="string" default="strict">
+  `strict` pairs findings within a SARIF primary fingerprint group by matching title or location, also pairs unique line-only moves, and leaves other findings unmatched. `class` groups by the file-independent class fingerprint and also pairs a lone leftover on each side of a class group.
+</ParamField>
+
+<ParamField path="--fail-on-new" type="string">
+  Exit `1` when a **new** finding is at or above this severity (`critical`, `high`, `medium`, `low`, `info`) or a still-present finding escalates from below the threshold to at or above it. Uses the same severity order as `--fail-on`. Unrecognized severities always count. The comparison still prints; a missing or unreadable run exits `1` without comparing.
+</ParamField>
+
+Re-test after a fix, and fail CI on regressions:
+
+```bash
+strix -n --target ./ --scan-mode quick --fail-on high
+strix diff before-fix after-fix --fail-on-new high
+```
+
+If the two runs targeted different things or used different scan modes, `strix diff` warns and still compares. When the current run used a narrower scan mode than the baseline (for example `deep` then `quick`), baseline findings it did not report are **not re-checked** rather than fixed, and `--fail-on-new` exits `1`. A baseline finding the current run reported and then withdrew as a false positive is listed as **withdrawn**, not fixed. A completed run with no findings may omit `vulnerabilities.json`; that is an empty report, not an error. If the current run has not completed, findings present in the baseline but missing from the current run are **not re-checked** (not fixed), and the command exits `1` so a CI gate cannot pass on a partial re-test. If the baseline run has not completed, the comparison still prints but exits `1`, since findings the baseline never reached would show as new. `--json` includes `not_rechecked` and `withdrawn` lists alongside `new` / `fixed` / `still_present`.
+
+See also [`strix view`](/usage/viewer) for browsing a single run.
+
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
-| 0 | Scan completed successfully (interactive mode always exits `0`; in headless mode, `0` means no vulnerabilities were found, or with `--fail-on`, none at or above the threshold; lower findings are still in the report) |
-| 1 | A fatal error occurred before or during the scan (e.g. missing environment variables, Docker unavailable, invalid config file, diff-scope resolution failure, or an unhandled error) |
+| 0 | Scan completed successfully (interactive mode always exits `0`; in headless mode, `0` means no vulnerabilities were found, or with `--fail-on`, none at or above the threshold; lower findings are still in the report). For `strix diff`, comparison succeeded, both runs completed, and `--fail-on-new` did not fire. |
+| 1 | A fatal error occurred before or during the scan (e.g. missing environment variables, Docker unavailable, invalid config file, diff-scope resolution failure, or an unhandled error). For `strix diff`, a run was missing or unreadable, either run was not completed, or `--fail-on-new` found a new finding at or above the threshold or a still-present finding that escalated from below the threshold to at or above it. |
 | 2 | Vulnerabilities found (headless mode only; with `--fail-on`, at least one finding at or above that severity) |

@@ -7,7 +7,18 @@ from strix.interface.completions import completion_candidates, run_completions
 
 def test_root_completion_candidates() -> None:
     assert completion_candidates(["cl"]) == ["cloud"]
+    assert completion_candidates(["di"]) == ["diff"]
     assert "completions" in completion_candidates([""])
+    assert "diff" in completion_candidates([""])
+
+
+def test_diff_completion_candidates() -> None:
+    flags = completion_candidates(["diff", "--"])
+    assert "--json" in flags
+    assert "--fail-on-new" in flags
+    assert "--match" in flags
+    assert completion_candidates(["diff", "--match", "c"]) == ["class"]
+    assert completion_candidates(["diff", "--fail-on-new", "h"]) == ["high"]
 
 
 def test_cloud_group_and_alias_candidates() -> None:

@@ -18,11 +18,11 @@ from rich.text import Text
 from strix.config import codex, load_settings, persist_current
 from strix.core.paths import RUNS_DIR_NAME, run_dir_for
 from strix.interface.cli_args import (
-    FAIL_ON_SEVERITIES,
     ResumeError,
     load_resume_state,
     parse_arguments,
     resume_run_list_message,
+    severity_meets_fail_on,
     terminal_attached,
 )
 from strix.interface.environment import (
@@ -64,6 +64,7 @@ Additional commands:
   strix cloud ...          Use the managed Strix platform
   strix auth ...           Manage model-subscription sign-in
   strix view [RUN]         View a completed or running scan
+  strix diff RUN-A RUN-B   Compare findings between two runs
   strix completions SHELL  Generate zsh, bash, or fish tab completion
 """
 
@@ -282,16 +283,7 @@ def findings_fail_build(reports: list[dict[str, Any]], fail_on: str | None) -> b
         return False
     if fail_on is None:
         return True
-    threshold = FAIL_ON_SEVERITIES.index(fail_on)
-    for report in reports:
-        severity = str(report.get("severity") or "").strip().lower()
-        if severity == "none":
-            continue
-        if severity not in FAIL_ON_SEVERITIES:
-            return True
-        if FAIL_ON_SEVERITIES.index(severity) <= threshold:
-            return True
-    return False
+    return any(severity_meets_fail_on(report.get("severity"), fail_on) for report in reports)
 
 
 def _print_error_panel(title: str, message: str) -> None:
@@ -448,6 +440,13 @@ def main() -> None:
 
         run_view(sys.argv[2:])
         return
+
+    # `strix diff RUN-A RUN-B` compares findings between two completed runs.
+    # No Docker, model, or target: it only reads on-disk artifacts.
+    if len(sys.argv) > 1 and sys.argv[1] == "diff":
+        from strix.interface.diff_cli import run_diff
+
+        sys.exit(run_diff(sys.argv[2:]))
 
     # `strix auth …` manages model-subscription sign-in and exits; it needs no
     # target, Docker, or scan setup.

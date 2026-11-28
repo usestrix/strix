@@ -53,6 +53,7 @@ import json
 import logging
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
@@ -196,6 +197,36 @@ def _stride_legs_for_cwe(cwe: str | None) -> tuple[str, ...]:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FindingFingerprints:
+    """Identity hashes SARIF emits for one finding.
+
+    ``primary`` is ``partialFingerprints.primaryLocationLineHash`` (location +
+    rule). ``vuln_class`` is ``properties.strix_vuln_class_hash`` (rule + class
+    keyword, independent of file path).
+    """
+
+    primary: str | None
+    vuln_class: str | None
+
+
+def fingerprints_for_finding(report: dict[str, Any]) -> FindingFingerprints:
+    """Return the primary and class fingerprints SARIF would emit for *report*.
+
+    ``strix diff`` matches findings with these hashes so comparison uses the
+    same identity as ``findings.sarif``. One exception: a finding without CWE
+    or CVE keys its primary hash on the title slug, not on the per-run finding
+    id that ``_rule_id`` falls back to, so renumbered findings keep their
+    identity and different findings that share an id do not.
+    """
+    locations, is_synthetic, _dropped = _build_locations(report)
+    rule_id = _weakness_id(report) or _slugify(_string_value(report.get("title")) or "")
+    return FindingFingerprints(
+        primary=_primary_fingerprint(rule_id, report, locations, is_synthetic=is_synthetic),
+        vuln_class=_class_fingerprint(report),
+    )
 
 
 def build_sarif_report(
@@ -502,7 +533,7 @@ def _build_result(
     # determinations across file rename refactors where the primary
     # fingerprint legitimately shifts but the underlying class is
     # unchanged.
-    class_fp = _class_fingerprint(rule_id, report)
+    class_fp = _class_fingerprint(report)
     result["properties"] = _result_properties(report, class_fp, is_synthetic=is_synthetic)
     return result
 
@@ -866,15 +897,9 @@ def _rule_id(report: dict[str, Any]) -> str:
     ``cwe: 306``, ``306``) to the canonical ``CWE-NNN`` form. Without
     normalisation, the same weakness across runs dedups to separate rules.
     """
-    cwe = _string_value(report.get("cwe"))
-    if cwe:
-        normalised = _normalise_cwe(cwe)
-        if normalised:
-            return normalised
-
-    cve = _string_value(report.get("cve"))
-    if cve:
-        return cve
+    identifier = _weakness_id(report)
+    if identifier:
+        return identifier
 
     finding_id = _string_value(report.get("id"))
     if finding_id:
@@ -882,6 +907,16 @@ def _rule_id(report: dict[str, Any]) -> str:
 
     title = _string_value(report.get("title")) or "strix-finding"
     return _slugify(title)
+
+
+def _weakness_id(report: dict[str, Any]) -> str | None:
+    """Return the normalised CWE, else the CVE, else None."""
+    cwe = _string_value(report.get("cwe"))
+    if cwe:
+        normalised = _normalise_cwe(cwe)
+        if normalised:
+            return normalised
+    return _string_value(report.get("cve"))
 
 
 def _normalise_cwe(value: str) -> str | None:
@@ -1037,7 +1072,7 @@ def _first_physical_location(locations: list[dict[str, Any]]) -> dict[str, Any] 
     return None
 
 
-def _class_fingerprint(rule_id: str, report: dict[str, Any]) -> str | None:
+def _class_fingerprint(report: dict[str, Any]) -> str | None:
     """File-independent fingerprint for cross-rename dismissal carryover.
 
     Lets downstream tooling apply prior dismissal determinations to a
@@ -1045,7 +1080,10 @@ def _class_fingerprint(rule_id: str, report: dict[str, Any]) -> str | None:
     primary fingerprint (typical case: file rename, or a fix that moves
     the vulnerable code to a new module).
 
-    Composite of (rule_id, vuln-class keyword extracted from title).
+    Composite of (CWE or CVE, vuln-class keyword extracted from title).
+    Findings without CWE or CVE hash on the class keyword alone: the
+    per-run finding id and the full title both change across runs of the
+    same finding, so neither belongs in a class hash.
     Title is LLM-authored so it's stochastic at the prose level, but
     the class keyword extraction picks up the discrete vulnerability
     category, which is much more stable than the full title.
@@ -1058,7 +1096,8 @@ def _class_fingerprint(rule_id: str, report: dict[str, Any]) -> str | None:
     keyword = _class_keyword(title) if title else ""
     if not keyword:
         return None
-    composite = f"rule:{rule_id}|class:{keyword}"
+    class_rule_id = _weakness_id(report) or "unclassified"
+    composite = f"rule:{class_rule_id}|class:{keyword}"
     return hashlib.sha256(composite.encode("utf-8")).hexdigest()
 
 
