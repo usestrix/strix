@@ -104,13 +104,26 @@ def run_diff(argv: list[str]) -> int:
 
 def _new_findings_fail(diff: RunDiff, threshold: str) -> bool:
     return any(severity_meets_fail_on(finding.severity, threshold) for finding in diff.new) or any(
-        severity_meets_fail_on(finding.severity_current, threshold)
-        and (
-            finding.severity_baseline is None
-            or not severity_meets_fail_on(finding.severity_baseline, threshold)
-        )
-        for finding in diff.still_present
+        _escalated_past(finding, threshold) for finding in diff.still_present
     )
+
+
+def _is_ranked(severity: object) -> bool:
+    return str(severity or "").strip().lower() in FAIL_ON_SEVERITIES
+
+
+def _escalated_past(finding: DiffFinding, threshold: str) -> bool:
+    """Whether a still-present finding crossed the threshold since the baseline.
+
+    An unrankable baseline label counts as below a ranked current severity, so
+    ``unknown -> critical`` fails the gate. Two unrankable labels stay unchanged.
+    """
+    if not severity_meets_fail_on(finding.severity_current, threshold):
+        return False
+    baseline = finding.severity_baseline
+    if baseline is None or not severity_meets_fail_on(baseline, threshold):
+        return True
+    return not _is_ranked(baseline) and _is_ranked(finding.severity_current)
 
 
 def _print_plain(console: Console, text: str) -> None:

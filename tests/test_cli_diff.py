@@ -218,6 +218,60 @@ def test_fail_on_new_for_still_present_finding(
     assert "0 new, 0 fixed, 1 still present" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("baseline", [None, "", "  ", "severe", "unknown"])
+@pytest.mark.parametrize(("current", "exit_code"), [("critical", 1), ("high", 0)])
+def test_fail_on_new_escalation_from_unrankable_baseline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    baseline: str | None,
+    current: str,
+    exit_code: int,
+) -> None:
+    before = sample_finding("vuln-0001", "Finding", severity=baseline or "")
+    baseline_dir = write_fixture_run(tmp_path, "before-fix", [before])
+    if baseline is None:
+        # The report writers require a severity, so drop it from the saved file.
+        findings_path = baseline_dir / "vulnerabilities.json"
+        saved = json.loads(findings_path.read_text(encoding="utf-8"))
+        for item in saved:
+            item.pop("severity", None)
+        findings_path.write_text(json.dumps(saved), encoding="utf-8")
+    write_fixture_run(
+        tmp_path, "after-fix", [sample_finding("vuln-0001", "Finding", severity=current)]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert run_diff(["before-fix", "after-fix", "--fail-on-new", "critical"]) == exit_code
+    assert "0 new, 0 fixed, 1 still present" in capsys.readouterr().out
+
+
+def test_fail_on_new_unrankable_on_both_sides_is_not_an_escalation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_fixture_run(
+        tmp_path, "before-fix", [sample_finding("vuln-0001", "Finding", severity="severe")]
+    )
+    write_fixture_run(
+        tmp_path, "after-fix", [sample_finding("vuln-0001", "Finding", severity="bad")]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert run_diff(["before-fix", "after-fix", "--fail-on-new", "critical"]) == 0
+
+
+def test_fail_on_new_still_fails_closed_on_unrankable_new_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_fixture_run(tmp_path, "before-fix", [])
+    write_fixture_run(
+        tmp_path, "after-fix", [sample_finding("vuln-0001", "Finding", severity="severe")]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert run_diff(["before-fix", "after-fix", "--fail-on-new", "critical"]) == 1
+
+
 def test_fail_on_new_is_case_insensitive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _retest_pair(tmp_path)
     monkeypatch.chdir(tmp_path)
