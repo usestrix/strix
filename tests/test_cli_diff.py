@@ -189,6 +189,35 @@ def test_fail_on_new_critical_passes_when_new_is_high(
     assert run_diff(["before-fix", "after-fix", "--fail-on-new", "critical"]) == 0
 
 
+@pytest.mark.parametrize(
+    ("baseline", "current", "threshold", "exit_code"),
+    [
+        ("high", "critical", "critical", 1),
+        ("critical", "critical", "critical", 0),
+        ("high", "medium", "medium", 0),
+    ],
+)
+def test_fail_on_new_for_still_present_finding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    baseline: str,
+    current: str,
+    threshold: str,
+    exit_code: int,
+) -> None:
+    write_fixture_run(
+        tmp_path, "before-fix", [sample_finding("vuln-0001", "Finding", severity=baseline)]
+    )
+    write_fixture_run(
+        tmp_path, "after-fix", [sample_finding("vuln-0001", "Finding", severity=current)]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert run_diff(["before-fix", "after-fix", "--fail-on-new", threshold]) == exit_code
+    assert "0 new, 0 fixed, 1 still present" in capsys.readouterr().out
+
+
 def test_fail_on_new_is_case_insensitive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _retest_pair(tmp_path)
     monkeypatch.chdir(tmp_path)

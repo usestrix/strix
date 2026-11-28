@@ -200,7 +200,7 @@ strix diff before-fix after-fix --json
 </ParamField>
 
 <ParamField path="--fail-on-new" type="string">
-  Exit `1` when a **new** finding is at or above this severity (`critical`, `high`, `medium`, `low`, `info`). Uses the same severity order as `--fail-on`. Unrecognized severities always count. The comparison still prints; a missing or unreadable run exits `1` without comparing.
+  Exit `1` when a **new** finding is at or above this severity (`critical`, `high`, `medium`, `low`, `info`) or a still-present finding escalates from below the threshold to at or above it. Uses the same severity order as `--fail-on`. Unrecognized severities always count. The comparison still prints; a missing or unreadable run exits `1` without comparing.
 </ParamField>
 
 Re-test after a fix, and fail CI on regressions:
@@ -219,5 +219,5 @@ See also [`strix view`](/usage/viewer) for browsing a single run.
 | Code | Meaning |
 |------|---------|
 | 0 | Scan completed successfully (interactive mode always exits `0`; in headless mode, `0` means no vulnerabilities were found, or with `--fail-on`, none at or above the threshold; lower findings are still in the report). For `strix diff`, comparison succeeded, the current run completed, and `--fail-on-new` did not fire. |
-| 1 | A fatal error occurred before or during the scan (e.g. missing environment variables, Docker unavailable, invalid config file, diff-scope resolution failure, or an unhandled error). For `strix diff`, a run was missing or unreadable, the current run was not completed, or `--fail-on-new` saw a new finding at or above the threshold. |
+| 1 | A fatal error occurred before or during the scan (e.g. missing environment variables, Docker unavailable, invalid config file, diff-scope resolution failure, or an unhandled error). For `strix diff`, a run was missing or unreadable, the current run was not completed, or `--fail-on-new` found a new finding at or above the threshold or a still-present finding that escalated from below the threshold to at or above it. |
 | 2 | Vulnerabilities found (headless mode only; with `--fail-on`, at least one finding at or above that severity) |

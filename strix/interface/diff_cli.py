@@ -55,8 +55,9 @@ def run_diff(argv: list[str]) -> int:
         default=None,
         metavar="SEVERITY",
         help=(
-            "Exit 1 when a new finding is at or above this severity "
-            "(critical, high, medium, low, info). Unrecognized severities always count."
+            "Exit 1 when a new finding is at or above this severity or a still-present "
+            "finding escalates to it or higher (critical, high, medium, low, info). "
+            "Unrecognized severities always count."
         ),
     )
     parser.add_argument(
@@ -100,7 +101,14 @@ def run_diff(argv: list[str]) -> int:
 
 
 def _new_findings_fail(diff: RunDiff, threshold: str) -> bool:
-    return any(severity_meets_fail_on(finding.severity, threshold) for finding in diff.new)
+    return any(severity_meets_fail_on(finding.severity, threshold) for finding in diff.new) or any(
+        severity_meets_fail_on(finding.severity_current, threshold)
+        and (
+            finding.severity_baseline is None
+            or not severity_meets_fail_on(finding.severity_baseline, threshold)
+        )
+        for finding in diff.still_present
+    )
 
 
 def _print_plain(console: Console, text: str) -> None:
