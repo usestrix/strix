@@ -93,7 +93,9 @@ def run_diff(argv: list[str]) -> int:
     else:
         _print_human(console, diff)
 
-    if not diff.current.completed:
+    # A comparison is only complete when both runs completed. An unfinished
+    # baseline may be missing findings, so its "new" list cannot gate a job.
+    if not (diff.baseline.completed and diff.current.completed):
         return 1
     if args.fail_on_new and _new_findings_fail(diff, args.fail_on_new):
         return 1

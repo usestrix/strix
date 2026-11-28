@@ -33,7 +33,7 @@ To fail only on serious findings, pass `--fail-on` with a minimum severity. Lowe
 strix -n --target ./app --scan-mode quick --fail-on high
 ```
 
-After a remediating change, re-run the scan and fail the job if **new** findings appear at or above a severity. `strix diff` reads `./strix_runs` (or paths you pass) and does not start a scan. Both runs should be completed: a partial re-test lists unchecked baseline findings as not re-checked (not fixed) and exits `1`.
+After a remediating change, re-run the scan and fail the job if **new** findings appear at or above a severity. `strix diff` reads `./strix_runs` (or paths you pass) and does not start a scan. Both runs should be completed: a partial re-test lists unchecked baseline findings as not re-checked (not fixed) and exits `1`, and an unfinished baseline also exits `1`.
 
 ```bash
 strix diff before-fix after-fix --fail-on-new high

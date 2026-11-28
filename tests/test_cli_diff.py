@@ -319,6 +319,32 @@ def test_incomplete_retest_exits_one_without_fail_on_new(
     assert run_diff(["before-fix", "after-partial"]) == 1
 
 
+@pytest.mark.parametrize("status", ["running", "failed"])
+def test_incomplete_baseline_exits_one_even_when_current_is_clean(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    status: str,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_fixture_run(
+        tmp_path,
+        "before-partial",
+        [sample_finding("vuln-0001", "SQL Injection in get_user")],
+        status=status,
+    )
+    write_fixture_run(
+        tmp_path,
+        "after-fix",
+        [],
+        start_time="2026-11-02T10:00:00+00:00",
+    )
+
+    assert run_diff(["before-partial", "after-fix"]) == 1
+    output = capsys.readouterr().out
+    assert f"run 'before-partial' is not completed (status: {status})" in output
+
+
 def test_incomplete_retest_json_lists_not_rechecked(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
