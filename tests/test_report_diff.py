@@ -867,6 +867,55 @@ def test_compare_runs_clean_retest_marks_baseline_findings_fixed(
     assert diff.current.completed
 
 
+def test_compare_runs_reports_withdrawn_false_positive_apart_from_fixed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    baseline = write_fixture_run(
+        tmp_path,
+        "before-fix",
+        [
+            sample_finding("vuln-0001", "SQL Injection in get_user"),
+            sample_finding("vuln-0002", "CSRF on settings form", cwe="CWE-352", file="form.py"),
+        ],
+    )
+    state = ReportState(run_name="after-fix")
+    state.run_record["scan_mode"] = "quick"
+    state.run_record["targets_info"] = [{"original": "https://app.example.com"}]
+    report_id = state.add_vulnerability_report(title="SQL injection in  get_user", severity="high")
+    assert report_id
+    assert state.delete_vulnerability_report(report_id, delete_reason="Not exploitable.")
+    state.save_run_data(mark_complete=True)
+
+    diff = compare_runs(baseline, state.get_run_dir())
+
+    assert [item.title for item in diff.withdrawn] == ["SQL Injection in get_user"]
+    assert [item.title for item in diff.fixed] == ["CSRF on settings form"]
+    assert diff.to_json()["summary"]["withdrawn"] == 1
+
+
+@pytest.mark.parametrize(
+    ("baseline_mode", "current_mode", "narrowed"),
+    [("deep", "quick", True), ("standard", "quick", True), ("quick", "deep", False)],
+)
+def test_compare_runs_narrower_scan_mode_marks_missing_findings_not_rechecked(
+    tmp_path: Path, baseline_mode: str, current_mode: str, narrowed: bool
+) -> None:
+    baseline = write_fixture_run(
+        tmp_path,
+        "a",
+        [sample_finding("vuln-0001", "SQL Injection in get_user")],
+        scan_mode=baseline_mode,
+    )
+    current = write_fixture_run(tmp_path, "b", [], scan_mode=current_mode)
+
+    diff = compare_runs(baseline, current)
+
+    assert diff.scope_narrowed is narrowed
+    assert len(diff.not_rechecked) == (1 if narrowed else 0)
+    assert len(diff.fixed) == (0 if narrowed else 1)
+
+
 @pytest.mark.parametrize("status", ["running", "interrupted", "failed", "stopped"])
 def test_incomplete_current_run_reports_missing_findings_as_not_rechecked(
     tmp_path: Path, status: str

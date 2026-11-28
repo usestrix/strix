@@ -21,6 +21,8 @@ if TYPE_CHECKING:
 
 MatchMode = Literal["strict", "class"]
 
+_SCAN_MODE_RANK = {"quick": 0, "standard": 1, "deep": 2}
+
 _SEVERITY_RANK = {
     "critical": 0,
     "high": 1,
@@ -119,6 +121,7 @@ class RunMeta:
     targets: list[str]
     status: str
     raw_targets: list[str] = field(compare=False, repr=False)
+    withdrawn_titles: frozenset[str] = field(default=frozenset(), compare=False, repr=False)
 
     @property
     def completed(self) -> bool:
@@ -146,6 +149,12 @@ class RunDiff:
     fixed: list[DiffFinding]
     still_present: list[DiffFinding]
     not_rechecked: list[DiffFinding]
+    withdrawn: list[DiffFinding] = field(default_factory=list)
+
+    @property
+    def scope_narrowed(self) -> bool:
+        """Whether the current run used a narrower or unknown scan mode."""
+        return not _covers_scan_mode(self.current.scan_mode, self.baseline.scan_mode)
 
     @property
     def severity_changed(self) -> int:
@@ -170,8 +179,10 @@ class RunDiff:
                 "not_rechecked": len(self.not_rechecked),
                 "severity_changed": self.severity_changed,
                 "still_present": len(self.still_present),
+                "withdrawn": len(self.withdrawn),
             },
             "warnings": list(self.warnings),
+            "withdrawn": [finding.to_json() for finding in self.withdrawn],
         }
 
 
@@ -240,9 +251,20 @@ def compare_runs(
         current_findings,
         match=match,
     )
+    # A finding the current run reported and then withdrew as a false
+    # positive was seen again and judged not real: that is not a fix.
+    withdrawn = [
+        item
+        for item in unmatched_baseline
+        if _normalized_title(item.title) in current_meta.withdrawn_titles
+    ]
+    unmatched_baseline = [item for item in unmatched_baseline if item not in withdrawn]
     # A running or interrupted re-test may already have saved one finding
-    # while others have not been checked. Those absences are unknown, not fixes.
-    if current_meta.completed:
+    # while others have not been checked, and a narrower scan mode may never
+    # have looked. Those absences are unknown, not fixes.
+    if current_meta.completed and _covers_scan_mode(
+        current_meta.scan_mode, baseline_meta.scan_mode
+    ):
         fixed = unmatched_baseline
         not_rechecked: list[DiffFinding] = []
     else:
@@ -257,7 +279,17 @@ def compare_runs(
         fixed=_sort_findings(fixed),
         still_present=_sort_findings(still_present),
         not_rechecked=_sort_findings(not_rechecked),
+        withdrawn=_sort_findings(withdrawn),
     )
+
+
+def _covers_scan_mode(current: str, baseline: str) -> bool:
+    """Whether a run in *current* scan mode re-checks a *baseline* scan's scope."""
+    if current.strip().lower() == baseline.strip().lower():
+        return True
+    current_rank = _SCAN_MODE_RANK.get(current.strip().lower())
+    baseline_rank = _SCAN_MODE_RANK.get(baseline.strip().lower())
+    return current_rank is not None and baseline_rank is not None and current_rank >= baseline_rank
 
 
 def match_findings(
@@ -390,6 +422,11 @@ def _meta(run_dir: Path, record: dict[str, Any]) -> RunMeta:
         targets=[_redact_target(target) for target in raw_targets],
         status=str(record.get("status") or ""),
         raw_targets=raw_targets,
+        withdrawn_titles=frozenset(
+            _normalized_title(str(entry.get("title") or ""))
+            for entry in _json_objects(record.get("deleted_vulnerability_reports")) or []
+            if entry.get("title")
+        ),
     )
 
 

@@ -97,6 +97,10 @@ def run_diff(argv: list[str]) -> int:
     # baseline may be missing findings, so its "new" list cannot gate a job.
     if not (diff.baseline.completed and diff.current.completed):
         return 1
+    # A narrower re-test never looked for some baseline findings, so it cannot
+    # pass a regression gate.
+    if args.fail_on_new and diff.scope_narrowed:
+        return 1
     if args.fail_on_new and _new_findings_fail(diff, args.fail_on_new):
         return 1
     return 0
@@ -115,15 +119,16 @@ def _is_ranked(severity: object) -> bool:
 def _escalated_past(finding: DiffFinding, threshold: str) -> bool:
     """Whether a still-present finding crossed the threshold since the baseline.
 
-    An unrankable baseline label counts as below a ranked current severity, so
-    ``unknown -> critical`` fails the gate. Two unrankable labels stay unchanged.
+    A change between a ranked and an unrankable label counts as crossing, so
+    ``unknown -> critical`` and ``high -> severe`` fail the gate. Two
+    unrankable labels stay unchanged.
     """
     if not severity_meets_fail_on(finding.severity_current, threshold):
         return False
     baseline = finding.severity_baseline
     if baseline is None or not severity_meets_fail_on(baseline, threshold):
         return True
-    return not _is_ranked(baseline) and _is_ranked(finding.severity_current)
+    return _is_ranked(baseline) != _is_ranked(finding.severity_current)
 
 
 def _print_plain(console: Console, text: str) -> None:
@@ -147,6 +152,8 @@ def _print_human(console: Console, diff: RunDiff) -> None:
     _print_section(console, "Still present", diff.still_present, kind="still")
     if diff.not_rechecked:
         _print_section(console, "Not re-checked", diff.not_rechecked, kind="fixed")
+    if diff.withdrawn:
+        _print_section(console, "Withdrawn as false positive", diff.withdrawn, kind="fixed")
 
     _print_plain(console, _summary_line(diff))
     console.print()
@@ -160,6 +167,8 @@ def _summary_line(diff: RunDiff) -> str:
     ]
     if diff.not_rechecked:
         parts.append(f"{len(diff.not_rechecked)} not re-checked")
+    if diff.withdrawn:
+        parts.append(f"{len(diff.withdrawn)} withdrawn")
     return ", ".join(parts)
 
 

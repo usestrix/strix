@@ -148,8 +148,10 @@ def test_diff_json_schema(
         "not_rechecked": 0,
         "severity_changed": 1,
         "still_present": 1,
+        "withdrawn": 0,
     }
     assert payload["not_rechecked"] == []
+    assert payload["withdrawn"] == []
     required = {
         "id_baseline",
         "id_current",
@@ -223,6 +225,38 @@ def test_fail_on_new_high_for_reused_id_without_weakness(
 
     assert run_diff(["before-fix", "after-fix", "--fail-on-new", "high"]) == 1
     assert "1 new, 1 fixed, 0 still present" in capsys.readouterr().out
+
+
+def test_fail_on_new_high_for_ranked_to_unrankable_severity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_fixture_run(
+        tmp_path, "before-fix", [sample_finding("vuln-0001", "Finding", severity="high")]
+    )
+    write_fixture_run(
+        tmp_path, "after-fix", [sample_finding("vuln-0001", "Finding", severity="severe")]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert run_diff(["before-fix", "after-fix", "--fail-on-new", "high"]) == 1
+
+
+def test_fail_on_new_high_for_deep_baseline_and_quick_retest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_fixture_run(
+        tmp_path,
+        "before-fix",
+        [sample_finding("vuln-0001", "SQL Injection in get_user")],
+        scan_mode="deep",
+    )
+    write_fixture_run(tmp_path, "after-fix", [], scan_mode="quick")
+    monkeypatch.chdir(tmp_path)
+
+    assert run_diff(["before-fix", "after-fix", "--fail-on-new", "high"]) == 1
+    out = capsys.readouterr().out
+    assert "scan modes differ (deep vs quick)" in out
+    assert "0 new, 0 fixed, 0 still present, 1 not re-checked" in out
 
 
 def test_fail_on_new_critical_passes_when_new_is_high(
