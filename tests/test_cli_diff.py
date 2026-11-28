@@ -604,14 +604,31 @@ def test_path_arguments(
     assert "0 new, 0 fixed, 1 still present" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    ("target", "secret", "redacted"),
+    [
+        ("https://admin:s3cret@example.com/app", "s3cret", "https://admin:***@example.com/app"),
+        ("https://ghp_example@example.com/app", "ghp_example", "https://***@example.com/app"),
+        (
+            "https://example.com/app?access_token=query-secret",
+            "query-secret",
+            "https://example.com/app?access_token=***",
+        ),
+    ],
+)
 def test_different_targets_warning_does_not_refuse(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    target: str,
+    secret: str,
+    redacted: str,
 ) -> None:
     write_fixture_run(
         tmp_path,
         "run-a",
         [sample_finding("vuln-0001", "SQL Injection in get_user")],
-        targets=["https://admin:s3cret@example.com/app"],
+        targets=[target],
     )
     write_fixture_run(
         tmp_path,
@@ -621,11 +638,11 @@ def test_different_targets_warning_does_not_refuse(
         scan_mode="deep",
     )
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("COLUMNS", "160")
 
     assert run_diff(["run-a", "run-b"]) == 0
     output = capsys.readouterr().out
-    redacted = "https://admin:***@example.com/app"
-    assert "s3cret" not in output
+    assert secret not in output
     assert any("run-a" in line and redacted in line for line in output.splitlines())
     assert f"Warning: targets differ ({redacted} vs" in output
     assert "Warning: scan modes differ" in output
@@ -633,7 +650,7 @@ def test_different_targets_warning_does_not_refuse(
 
     assert run_diff(["run-a", "run-b", "--json"]) == 0
     output = capsys.readouterr().out
-    assert "s3cret" not in output
+    assert secret not in output
     assert json.loads(output)["baseline"]["targets"] == [redacted]
 
 

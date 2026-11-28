@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from strix.core.paths import RUNS_DIR_NAME, run_dir_for, run_record_path
 from strix.report.sarif import _build_physical_locations, _weakness_id, fingerprints_for_finding
@@ -27,6 +28,40 @@ _SEVERITY_RANK = {
     "low": 3,
     "info": 4,
 }
+
+_TOKEN_PREFIXES = (
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "ghr_",
+    "github_pat_",
+    "glpat-",
+    "x-access-token",
+    "xox",
+)
+_SENSITIVE_QUERY_KEYS = frozenset(
+    {
+        "token",
+        "access_token",
+        "refresh_token",
+        "id_token",
+        "api_key",
+        "apikey",
+        "key",
+        "sig",
+        "signature",
+        "secret",
+        "client_secret",
+        "password",
+        "passwd",
+        "pwd",
+        "auth",
+        "x-amz-signature",
+        "x-amz-credential",
+        "x-amz-security-token",
+    }
+)
 
 
 class DiffError(ValueError):
@@ -362,10 +397,33 @@ def _meta(run_dir: Path, record: dict[str, Any]) -> RunMeta:
 def _redact_target(value: str) -> str:
     try:
         parts = urlsplit(value)
-        if not parts.scheme or not parts.netloc or parts.password is None:
+        if not parts.scheme or not parts.netloc:
             return value
-        _, _, host = parts.netloc.rpartition("@")
-        return urlunsplit(parts._replace(netloc=f"{parts.username}:***@{host}"))
+
+        netloc = parts.netloc
+        _, _, host = netloc.rpartition("@")
+        username = parts.username
+        if parts.password is not None:
+            netloc = f"{username}:***@{host}"
+        elif username and (
+            username.startswith(_TOKEN_PREFIXES) or re.fullmatch(r"[A-Za-z0-9_.-]{20,}", username)
+        ):
+            netloc = f"***@{host}"
+
+        query = parts.query
+        pairs = parse_qsl(query, keep_blank_values=True)
+        if any(key.casefold() in _SENSITIVE_QUERY_KEYS for key, _ in pairs):
+            query = urlencode(
+                [
+                    (key, "***" if key.casefold() in _SENSITIVE_QUERY_KEYS else query_value)
+                    for key, query_value in pairs
+                ],
+                safe="*",
+            )
+
+        if netloc == parts.netloc and query == parts.query:
+            return value
+        return urlunsplit(parts._replace(netloc=netloc, query=query))
     except ValueError:
         return value
 

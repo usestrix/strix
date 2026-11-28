@@ -503,6 +503,18 @@ def test_class_fingerprint_without_cwe_or_cve_keeps_classes_apart() -> None:
         ("https://admin:s3cret@example.com/app", "https://admin:***@example.com/app"),
         ("https://user:pass@[::1]:8443/app?x=1#top", "https://user:***@[::1]:8443/app?x=1#top"),
         ("https://user@example.com/app", "https://user@example.com/app"),
+        ("ssh://git@github.com/org/repo.git", "ssh://git@github.com/org/repo.git"),
+        ("https://alice@example.com/app", "https://alice@example.com/app"),
+        ("https://ghp_example@github.com/org/repo.git", "https://***@github.com/org/repo.git"),
+        ("https://aZ0bY1cX2dW3eV4fU5gT@[::1]:8443/app", "https://***@[::1]:8443/app"),
+        (
+            "https://example.com/app?token=one&access_token=two&API_KEY=three&view=full#top",
+            "https://example.com/app?token=***&access_token=***&API_KEY=***&view=full#top",
+        ),
+        (
+            "HTTPS://example.com/app?view=a%20b&empty#top",
+            "HTTPS://example.com/app?view=a%20b&empty#top",
+        ),
         ("https://example.com/app", "https://example.com/app"),
         ("/work/repo", "/work/repo"),
         ("owner/repo", "owner/repo"),
@@ -513,20 +525,28 @@ def test_redact_target(target: str, expected: str) -> None:
     assert _redact_target(target) == expected
 
 
-def test_compare_runs_redacts_target_passwords(tmp_path: Path) -> None:
-    baseline = write_fixture_run(
-        tmp_path, "baseline", [], targets=["https://admin:s3cret@example.com/app"]
-    )
+@pytest.mark.parametrize(
+    ("target", "secret", "redacted"),
+    [
+        ("https://admin:{}@example.com/app", "s3cret", "https://admin:***@example.com/app"),
+        ("https://{}@example.com/app", "ghp_example", "https://***@example.com/app"),
+        ("https://example.com/app?token={}", "query-secret", "https://example.com/app?token=***"),
+    ],
+)
+def test_compare_runs_redacts_target_credentials(
+    tmp_path: Path, target: str, secret: str, redacted: str
+) -> None:
+    baseline = write_fixture_run(tmp_path, "baseline", [], targets=[target.format(secret)])
     current = write_fixture_run(
-        tmp_path, "current", [], targets=["https://admin:changed@example.com/app"]
+        tmp_path, "current", [], targets=[target.format(f"{secret}-changed")]
     )
 
     diff = compare_runs(baseline, current)
 
-    redacted = "https://admin:***@example.com/app"
     metadata = diff.baseline.to_json()
     assert metadata["targets"] == [redacted]
-    assert "s3cret" not in json.dumps(metadata)
+    assert diff.current.to_json()["targets"] == [redacted]
+    assert secret not in json.dumps(metadata)
     assert diff.warnings == [f"targets differ ({redacted} vs {redacted})"]
 
 
